@@ -210,7 +210,7 @@ minutes.
 > history. Pointing this at it produces a plausible, fully-rendering, entirely wrong view.
 
 > ⚠️ **There is one node.** Its absence is a first-class state, not an error to retry through.
-> Observed unreachable **continuously from 12:26Z to 12:38Z on 2026-08-20** — twelve minutes,
+> Observed unreachable **continuously from 12:26Z to 12:43Z on 2026-08-20** — seventeen minutes,
 > longer than the "several minutes" seen on 2026-08-19. The failure mode is worth knowing because
 > it is not a routing problem: the `CONNECT` tunnel to `bulletin-paseo.tservices.es:8443`
 > establishes and returns `200`, and then the TLS handshake is reset by the origin. DNS, egress

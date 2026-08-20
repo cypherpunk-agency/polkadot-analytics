@@ -670,3 +670,95 @@ Invariants already available to watch, with no new machinery: `Σ ForeignAssets:
 `supply`; a parachain's sovereign balance on Asset Hub vs its local mirror's issuance; `Σ` sovereign
 holdings vs total issuance; and a chain's `Timestamp::Now` against the wall clock — which today
 would have caught Moonbeam, Interlay, and Equilibrium's thirteen-month absence.
+
+---
+
+## 11. Session record — 2026-08-20
+
+§9 audited the plan and is already out of date, because most of §9.6's list shipped the same day.
+This is what changed, what it cost, and what it taught. Written before a context compaction, so
+the next session starts from fact rather than from summary.
+
+### 11.1 Shipped
+
+| | |
+|---|---|
+| **`server/sources/asset-hub.mjs`** | The first module here that reads Polkadot's own chains. `bridged-inventory`, `bridged-holders`, `sovereign-dot`. Every read pinned to one finalized head. |
+| **`server/sources/interlay.mjs`** | BTC bridged in. One storage read, a three-layer canary, and a liveness assertion that catches the chain being 24 days stale. |
+| **`/bridged/`** | 34 bridged assets, 37 holdings across 8 parachains, issuer-minted USDC/USDt kept separate, reconciliation shown as a finding. |
+| **`/netflows/`** | The 2023 archive gains a live half. The three-year gap is drawn to scale, not crossed by a line. |
+| **`segmentedRows`** | A seventh chart form. Segments must sum to a separately-stated total; the shortfall is drawn. |
+| **Liveness** | 3 sources → 5; `/bulletin/`, `/hydration/`, `/hyperfx/` now render or deliberately abstain. |
+| **Nav grouping** | Four Hydration pages under one entry. Top level 9 → 6. |
+| **Knowledge** | `docs/platform/bridges.md`, `docs/platform/moonbeam.md`, and substantial additions to `asset-hub.md`, `hydration.md`, `data-sources.md`. |
+| **Process** | The `research-and-build` skill, `docs/concept/research-queue.md`, and three working agreements in CLAUDE.md. |
+
+### 11.2 Found — the things that would have shipped as wrong numbers
+
+- **Moonbeam was deregistered on 2026-08-10**, by `Registrar.deregister(2004)` at relay block
+  32,489,786, signed by its own manager, deposit refunded to the last decimal. **Three more had
+  left unnoticed**: Moonriver, Parallel, and **Equilibrium — thirteen months ago.** This site had
+  been listing all of them as ordinary chains.
+- **`Σ ForeignAssets::Account ≠ supply`** on 6 of 34 assets. Not a read error: bisected to a single
+  block where supply rose 15.000000 USDT while every holder balance and the account count stayed
+  put. **Supply can be minted with no account credited.**
+- **Two chains answer RPC normally while frozen** — Moonbeam 10 days, Interlay 24. `system_health`
+  reports `isSyncing: false` on a dead chain. Picasso on Kusama has been dead **310 days** and
+  strands 4,431 KSM + $15,396 behind a chain that cannot send an XCM to move it.
+- **Dotlake's `daily-usdc`/`daily-usdt` silently truncate at 1000 rows**, returning the *oldest*
+  ones, with HTTP 200 and no envelope. Its chain keys **disagree between its own endpoints**
+  (`hydradx` vs `hydration`), so joining on `chain` drops the two largest rows and looks complete.
+  `defi-tvl` carries the `0.0`-means-unknown disease — 54 of 446 rows in 90 days.
+- **`ParaLifecycles` reads `Parathread` for 86 of 89 paras, Asset Hub included.** It is a
+  registration state, not a description. Printed unqualified it calls Hydration a parathread.
+- **`rpc-composable.luckyfriday.io` serves Centrifuge.** Resolves, answers, wrong chain, silently.
+
+### 11.3 Corrected — claims this project had already written down and got wrong
+
+Each was believed, recorded, and repeated before being checked.
+
+- **DOT was declared unpriceable.** It is not, and this repo has been publishing its price in
+  production all along — `hydration-evm.mjs`'s oracle, **$0.826**, three independent paths agreeing
+  to 0.05%. The claim contradicted a canary in `arbs-hydration.mjs:196` that throws if the chain
+  disagrees. *A pool-membership search concluded "no DOT↔stable pool" — true, and irrelevant: DOT
+  reaches the dollar through a 1:1 AAVE wrap to aDOT, over 200 routed trades a day.*
+- **"11 iBTC against 19 WBTC"** — those were asset **ids**, not amounts. iBTC chain-wide is
+  **2.118 BTC** against tBTC's 71.08.
+- **B1's "removes the 7-day window cap immediately"** — the cap was **doubled to 14**, not removed.
+- **Centrifuge, Composable and Darwinia were written off as dead.** All three produce blocks. What
+  died was the *business*: Centrifuge's $1.14bn book is a year-old photograph — tranche supply
+  unchanged since 2025-08-19, pool NAV unrecalculated since 2025-08-22.
+- **The `parents == 2` discriminator** is guaranteed by `CreateOrigin`, not by the matcher first
+  credited with it.
+
+### 11.4 Decided
+
+| Decision | Call |
+|---|---|
+| Moonbeam band on `/bridged/` | **A dated "stranded value" row**, frozen at its final block, never updating |
+| DOT pricing | **The money-market oracle**, live. Historical from the same oracle at archive blocks, back to 2024-11-12 |
+| Yahoo Finance for history | **Rejected** — `robots.txt` is `Disallow: /` on the serving host, and the chain matches it to 0.16% median over 45 days |
+| The store | **Not blocked by the disk.** Nobody wrote a handler; that is the whole reason. Build one, then decide the volume on a measured fill rate |
+
+### 11.5 Learned about the method itself
+
+- **The render is a probe.** A chart that reasoned correctly drew four of five rows as invisible
+  slivers, and later drew a real shortfall as pixel-identical to none. Both were found by looking.
+- **A probe tells you WHAT; only source tells you WHY.** Both mattered on the same fact today.
+- **Ask the runtime instead of transcribing it.** `LocationToAccountApi_convert_location` cannot go
+  stale across an upgrade, because it *is* the tuple. Same principle as computing storage keys.
+- **"The RPC answered" is not "the chain is live", and "the chain is live" is not "the numbers on
+  it are live."** Three separate facts; all three were confused today.
+- **The shared git index is a race that instruction does not close.** Three separate incidents.
+  Writing agents now report; the orchestrator stages and commits.
+
+### 11.6 Next
+
+§9.6 items 1, 2 and 4 shipped. What remains, in order:
+
+1. **`jobs.swaps` on `hydration.mjs`** — unstrands ~2,430 lines and produces the disk number.
+2. **The disk conversation**, once that number exists.
+3. **O21 — the whole-network sweep.** 86 paras, `System::Account(sibl)` plus `Paras::Heads`
+   deltas, ~1 hour, and `asset-hub.mjs` already has most of the machinery. Highest leverage open.
+4. **E4 `moonbeam.mjs`** for the stranded-value row.
+5. **Liveness on the four sources and remaining pages still without it.**

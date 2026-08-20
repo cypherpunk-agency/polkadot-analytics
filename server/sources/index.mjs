@@ -7,6 +7,8 @@
 // Adding a data source means adding a module here. It does not mean touching the HTTP layer,
 // the cache, the design system or any page — see docs/architecture/middleware.md.
 
+import arbsBifrost from './arbs-bifrost.mjs'
+import arbsHydration from './arbs-hydration.mjs'
 import bulletin from './bulletin.mjs'
 import dotlake from './dotlake.mjs'
 import hydration from './hydration.mjs'
@@ -14,7 +16,15 @@ import hydrationEvm from './hydration-evm.mjs'
 import hyperbridge from './hyperbridge.mjs'
 
 export const SOURCES = Object.fromEntries(
-  [dotlake, hyperbridge, hydration, hydrationEvm, bulletin].map((source) => [source.id, source]),
+  [
+    dotlake,
+    hyperbridge,
+    hydration,
+    hydrationEvm,
+    arbsHydration,
+    arbsBifrost,
+    bulletin,
+  ].map((source) => [source.id, source]),
 )
 
 export function resolve(sourceId, operationId) {

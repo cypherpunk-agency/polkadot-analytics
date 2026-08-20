@@ -48,6 +48,28 @@ export const PAGES = [
     live: true,
   },
   {
+    key: 'hydration-wraps',
+    kind: 'dashboard',
+    href: '/hydration-wraps/',
+    nav: 'Wrap map',
+    title: 'Hydration’s wrap map',
+    blurb:
+      'Every form each asset exists in on Hydration — the token, the aToken the money market mints against it, and the share token of the pool that joins them — with the configured limits on each.',
+    source: 'Hydration RPC (Substrate + EVM)',
+    live: true,
+  },
+  {
+    key: 'hydration-peg',
+    kind: 'dashboard',
+    href: '/hydration-peg/',
+    nav: 'Pegs & OTC',
+    title: 'Hydration pegs, the HSM, and the OTC book',
+    blurb:
+      'What every peg-aware stableswap pool currently believes an asset is worth, how stale that belief is, how HOLLAR’s peg is configured to be defended, and what is resting on the OTC book.',
+    source: 'Hydration RPC + Bifrost',
+    live: true,
+  },
+  {
     key: 'hyperfx',
     kind: 'dashboard',
     href: '/hyperfx/',

@@ -123,15 +123,26 @@ a stress signal.
 paying an interest rate on the minted amount — documented at around 5% annually, governance-set, and
 subject to change.
 
-Verified live 2026-08-19:
+**HOLLAR's supply is not in `Tokens::TotalIssuance`.** It is an `Erc20`-typed registry asset, so its
+balances and its supply live in the EVM contract; the Substrate-side `Tokens` mirror holds only a
+small residue. Reading the mirror understates the supply by roughly 560x and the number means
+nothing. This generalises to **every `Erc20`-typed asset in the registry** — assets 1001 (aDOT),
+420 (GETH) and 9001 (GSOL) all report `0` there. Read the contract.
+
+Verified live 2026-08-20:
 
 | | Value |
 |---|---|
 | `AssetRegistry::Assets(222)` | name `"Hydrated Dollar"`, symbol `"HOLLAR"`, `AssetType::Erc20`, 18 decimals |
-| `Tokens::TotalIssuance(222)` | 20,631.55 HOLLAR |
+| `totalSupply()` at `0x531a654d1696ed52e7275a8cede955e82620f99a` | **11,489,093.53 HOLLAR** |
+| `Tokens::TotalIssuance(222)` | 20,257.08 — a mirror residue, not the supply |
 
-Twenty thousand. HOLLAR is a young, small stablecoin, and any chart of it should be scaled
-accordingly.
+The contract figure cross-checks: summing `bucketLevel` over the Aave facilitators (Hydration Market,
+the HSM, GIGAHDX, the FlashMinter) reproduces `totalSupply()` to the wei. Two independent sources,
+one number. So HOLLAR is an eleven-and-a-half-million-dollar stablecoin as of that date — small next
+to the majors, but not the twenty thousand the mirror suggests — and on that reading roughly 94% of
+it was minted by the money market rather than by the HSM. It is a young token and the figure moves;
+date any chart of it, and take the supply from the contract.
 
 The **HSM (HOLLAR Stability Module)** is the peg mechanism, and it is deliberately **asymmetric**:
 
@@ -370,7 +381,11 @@ Hydration uses `orml-tokens`, not `pallet-balances`, for everything except HDX:
 - `Balances` (the FRAME pallet) holds HDX only.
 
 Verified live 2026-08-19: `Tokens::TotalIssuance(22)` = 5,285,081.65 USDC,
-`Tokens::TotalIssuance(5)` = 4,539,428.23 DOT, `Tokens::TotalIssuance(222)` = 20,631.55 HOLLAR.
+`Tokens::TotalIssuance(5)` = 4,539,428.23 DOT.
+
+`TotalIssuance` is only the supply for `Token`-typed assets. For an `Erc20`-typed asset it is a
+mirror residue: `Tokens::TotalIssuance(222)` read 20,257.08 on 2026-08-20 while HOLLAR's contract
+reported 11,489,093.53. See [HOLLAR and the HSM](#hollar-and-the-hsm).
 
 The USDC figure is the one to cross-check against Hydration's sovereign account on Asset Hub — see the
 reserve invariant in [xcm.md](xcm.md). They agreed to within 425 USDC on 2026-08-19.
@@ -389,7 +404,8 @@ reserve invariant in [xcm.md](xcm.md). They agreed to within 425 USDC on 2026-08
 | Omnipool state | `Omnipool::Assets(u32) -> AssetState { hub_reserve, shares, protocol_shares, cap, tradable }` |
 | Stableswap | `Stableswap::Pools(u32)` |
 | Money market | `EVM` storage plus the `Erc20`-typed entries in `AssetRegistry`; `Liquidation` pallet events |
-| HOLLAR | `Tokens::TotalIssuance(222)`; `HSM` pallet storage |
+| HOLLAR supply | `eth_call totalSupply()` at `0x531a654d1696ed52e7275a8cede955e82620f99a`; cross-checked against the squid's `aaveFacilitators` bucket levels. **Not** `Tokens::TotalIssuance(222)` |
+| HOLLAR peg mechanism | `HSM` pallet storage |
 | Prices | `EmaOracle` — exponential moving-average oracle used by the runtime itself |
 | XCM in/out | `PolkadotXcm`, `XTokens` extrinsics; `MessageQueue` events |
 

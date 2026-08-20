@@ -563,7 +563,7 @@ export function matrix(host, { rows, cols, cells, format = compact, bands = null
  * The matrix as a table: one row per observed pair, biggest first. The accessibility fallback,
  * and the better view for anyone who wants the number rather than the shape.
  */
-export function matrixTable(host, { cells, rows, cols, format = compact, unit = 'Value', open = false }) {
+export function matrixTable(host, { cells, rows, cols, format = compact, unit = 'Value', countLabel = 'Count', open = false }) {
   host.replaceChildren()
   const labelOf = new Map([...asNodes(rows), ...asNodes(cols)].map((node) => [node.key, node.label]))
   const observed = (cells ?? []).filter((cell) => typeof cell.value === 'number').sort((a, b) => b.value - a.value)
@@ -602,7 +602,7 @@ export function matrixTable(host, { cells, rows, cols, format = compact, unit = 
               el('th', { text: 'Origin' }),
               el('th', { text: 'Destination' }),
               el('th.num', { text: unit }),
-              el('th.num', { text: 'Count' }),
+              el('th.num', { text: countLabel }),
             ),
           ),
           body,
@@ -808,7 +808,7 @@ export function flowGraph(host, { nodes, edges, groups = null, format = compact,
 }
 
 /** The corridors as a table, heaviest first — the fallback view, and the one with the numbers. */
-export function flowTable(host, { nodes, edges, format = compact, unit = 'Value', open = false }) {
+export function flowTable(host, { nodes, edges, format = compact, unit = 'Value', countLabel = 'Count', open = false }) {
   host.replaceChildren()
   const labelOf = new Map((nodes ?? []).map((node) => [node.id, node.label ?? node.id]))
   const sorted = (edges ?? []).filter((edge) => Number.isFinite(edge.value)).sort((a, b) => b.value - a.value)
@@ -847,7 +847,7 @@ export function flowTable(host, { nodes, edges, format = compact, unit = 'Value'
               el('th', { text: 'From' }),
               el('th', { text: 'To' }),
               el('th.num', { text: unit }),
-              el('th.num', { text: 'Count' }),
+              el('th.num', { text: countLabel }),
             ),
           ),
           body,

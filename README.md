@@ -71,6 +71,11 @@ Federation — no long-lived cloud credential. See
 **This repository contains no secrets and needs none.** Every upstream is anonymous public HTTP.
 See [`docs/decisions/0003-no-secrets.md`](docs/decisions/0003-no-secrets.md).
 
+## Licence
+
+Public domain, under the [Unlicense](LICENSE). Copy it, change it, ship it — no attribution
+required and none asked for.
+
 ## Provenance
 
 The HyperFX and Bulletin dashboards began as apps in `yolodot`; the Hydration page is the

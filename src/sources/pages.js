@@ -65,7 +65,7 @@ export const PAGES = [
     nav: 'Netflows',
     title: 'Parachain netflows, 2021–2023',
     blurb:
-      'The archived Polkalytics study of DOT and KSM held in parachain sovereign accounts, from the first parachain to March 2023.',
+      'The archived Polkalytics study of DOT and KSM held in parachain sovereign accounts, from the first parachain to April 2023.',
     source: 'Archived dataset',
     live: false,
   },

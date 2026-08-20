@@ -19,7 +19,7 @@ import { decodeTransactionInfoVec, KIND_NAME } from '../../src/core/codec/scale.
 import { buildCid, codecLabel, HASH_NAME } from '../../src/core/codec/cid.js'
 import { fromHex } from '../../src/core/codec/bytes.js'
 import { classifyShape } from '../../src/core/codec/shapes.js'
-import { TRANSACTIONS_PREFIX, blockOfKey, RETENTION_BLOCKS, NOMINAL_BLOCK_MS, timestampOfBlock } from './bulletin-chain.js'
+import { TRANSACTIONS_PREFIX, blockOfKey, NOMINAL_BLOCK_MS, readRetentionBlocks, timestampOfBlock } from './bulletin-chain.js'
 
 /** The ONLY devnet Bulletin RPC endpoint we know of. Its absence is a first-class state. */
 const RPC = 'https://bulletin-paseo.tservices.es:8443'
@@ -80,6 +80,59 @@ async function blockTime(block) {
 
 const rank = (map) => [...map.values()].sort((a, b) => b.count - a.count)
 
+const fmtCount = (n) => Number(n).toLocaleString('en-US')
+
+/** Coarse on purpose: "47 minutes ago" implies a precision this staleness does not need. */
+function ago(ms) {
+  const minutes = Math.max(0, Math.round(ms / 60_000))
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  return `${Math.round(hours / 24)} days ago`
+}
+
+/**
+ * The retention caveat, written from the reading itself rather than beside it.
+ *
+ * This is rule 3 at its sharpest. The retention period is the input to every expiry number on
+ * the page, and the three ways it can arrive — read now, read earlier, never read — produce
+ * identical-looking output. If the note were a fixed string it would eventually describe a
+ * provenance the number does not have, which is worse than no note.
+ */
+function retentionNote(retention) {
+  const why =
+    'RetentionPeriod is a STORAGE value rather than a runtime constant, so it does not appear in the runtime metadata at ' +
+    'all. The one 201,600 the metadata does contain belongs to AuthorizationPeriod, a different constant governing how long ' +
+    'an upload allowance lasts — so reading "the retention constant" out of metadata yields a plausible number that is not ' +
+    'the retention period. Being storage also means governance can change it with no runtime upgrade and no specVersion ' +
+    'bump, which is why it is re-read rather than trusted.'
+
+  const blocks = fmtCount(retention.blocks)
+
+  if (retention.source !== 'chain') {
+    return (
+      `The retention figure is the INHERITED literal ${blocks} blocks, not a reading — ${retention.reason}. Every block and ` +
+      'day figure on this page therefore rests on a number this load could not confirm, and it would be wrong in the same ' +
+      `direction for all of them at once. ${why}`
+    )
+  }
+
+  if (retention.stale || retention.unreachable) {
+    return (
+      `The retention figure is ${blocks} blocks and it is NOT a fresh reading: the key ${retention.key} returned ` +
+      `${retention.raw} (a little-endian u32) at ${retention.readAt}, ${ago(retention.ageMs)}, and the devnet node did not ` +
+      'answer when this load tried to re-read it. For a single-node devnet that is an ordinary state rather than an outage, ' +
+      `but what is drawn below is that earlier reading. It comes from chain STATE, not from a constant. ${why}`
+    )
+  }
+
+  return (
+    `The retention figure is ${blocks} blocks, read live from chain state on this load: the key ${retention.key} returned ` +
+    `${retention.raw}, a little-endian u32, at ${retention.readAt}. It is read from STATE rather than taken from a runtime ` +
+    `constant, and that distinction is the whole point. ${why}`
+  )
+}
+
 export default {
   id: 'bulletin',
   label: 'Polkadot Bulletin chain (Products Devnet)',
@@ -102,9 +155,17 @@ export default {
         const headHeader = await rpc('chain_getHeader', [])
         const headBlock = parseInt(headHeader.number, 16)
 
+        // And read the retention period rather than trusting the literal. One extra call, on a
+        // shorter timeout than the index reads: it is the input to every expiry figure here, it
+        // lives in mutable storage that governance can change without a specVersion bump, and if
+        // the node does not answer it the page says "inherited" instead of quietly implying a
+        // measurement. Short timeout because unreachable is an ordinary state for this node and
+        // waiting a minute to discover it would be a minute of nothing.
+        const retention = await readRetentionBlocks((method, params) => rpc(method, params, 15_000))
+
         const keys = await allKeys()
         if (!keys.length) {
-          return { empty: true, headBlock, fetchedAt: new Date().toISOString() }
+          return { empty: true, headBlock, retention, fetchedAt: new Date().toISOString() }
         }
 
         const blocks = keys.map(blockOfKey).sort((a, b) => a - b)
@@ -233,8 +294,10 @@ export default {
             blockKeyCount: keys.length,
             blockMs,
             nominalBlockMs: NOMINAL_BLOCK_MS,
-            retentionBlocks: RETENTION_BLOCKS,
-            retentionDays: (RETENTION_BLOCKS * blockMs) / 86_400_000,
+            retentionBlocks: retention.blocks,
+            retentionDays: (retention.blocks * blockMs) / 86_400_000,
+            /** Where `retentionBlocks` came from. The page renders the difference. */
+            retention,
           },
           totals: {
             count,
@@ -255,7 +318,7 @@ export default {
           notes: [
             'Per-day buckets use interpolated timestamps: only two blocks are timed exactly and the rest are placed by the measured block rate, so an object stored near midnight can land in the neighbouring day. The totals come from exact counts and do not have this problem.',
             'Every expiry figure is denominated in BLOCKS, which is exact. The figure in days is a projection off the measured rate and is only as good as that rate.',
-            'The retention period itself is inherited from the explorer this page came from rather than re-read here, and it is worth one check: on the sibling chain paseo-bulletin-next, AuthorizationPeriod is also 201,600 while RetentionPeriod is a different number. If the wrong constant was ever transcribed, the block figure and the day figure would both be wrong and neither would look it.',
+            retentionNote(retention),
             'Submitter leaderboards are not here. A signer lives inside its block’s signed extrinsic, so reading them costs two requests per block — about 7,600 for this window. That is a reasonable thing for one person to opt into in the explorer, and an unreasonable thing to do on every load of a public page.',
           ],
         }

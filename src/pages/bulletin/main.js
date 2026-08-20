@@ -37,7 +37,11 @@ function render(host, data) {
     statRow([
       statTile('Objects', formatCount(totals.count), `across ${formatCount(chain.blockKeyCount)} blocks that stored something`, { hero: true }),
       statTile('Total stored', formatBytes(totals.totalBytes), `mean ${formatBytes(totals.meanBytes)}`),
-      statTile('Retention', `${formatCount(chain.retentionBlocks)} blocks`, `≈ ${chain.retentionDays.toFixed(1)} days at the measured rate`),
+      statTile(
+        'Retention',
+        `${formatCount(chain.retentionBlocks)} blocks`,
+        `≈ ${chain.retentionDays.toFixed(1)} days at the measured rate · ${retentionProvenance(chain.retention)}`,
+      ),
       statTile('Head', `block ${formatCount(chain.headBlock)}`, `oldest indexed: ${formatCount(chain.oldestBlock)}`),
     ]),
 
@@ -49,6 +53,19 @@ function render(host, data) {
     sizeCard(buckets, totals.count),
     notesSection(chain, sourceNotes),
   )
+}
+
+/**
+ * Four words on the retention tile saying where its number came from.
+ *
+ * The tile is the one place the retention figure is read at a glance, and a live reading and an
+ * inherited literal render identically without this. The long version is in the data notes; this
+ * is the marker that sends a reader there.
+ */
+function retentionProvenance(retention) {
+  if (!retention) return 'provenance not recorded'
+  if (retention.source !== 'chain') return 'inherited literal, not read'
+  return retention.stale || retention.unreachable ? 'read from chain state earlier' : 'read live from chain state'
 }
 
 /* ------------------------------------------------------------------------- the leases ---- */
@@ -222,9 +239,18 @@ function notesSection(chain, sourceNotes) {
     el('p', {
       text: `Read from the Bulletin devnet RPC. Measured block rate is ${(chain.blockMs / 1000).toFixed(3)}s against the pallet's nominal ${(chain.nominalBlockMs / 1000).toFixed(3)}s — a drift of ${percent(drift, 1)}, which is why the retention figure in days is derived rather than assumed.`,
     }),
+    // Prominent, not buried in the list, for the one case where the page is showing a number
+    // nobody on this load confirmed. The list entry below carries the full explanation.
+    chain.retention?.source === 'fallback'
+      ? notice(
+          'warning',
+          'The retention period was not read from the chain on this load',
+          `${chain.retention.reason}. The ${formatCount(chain.retentionBlocks)}-block figure above, and every day figure derived from it, is the value this repo inherited rather than one it measured.`,
+        )
+      : null,
     el('ul', null, ...(sourceNotes ?? []).map((note) => el('li', { text: note }))),
     el('p', {
-      text: 'Storage keys here are computed from the pallet and map names, never hardcoded. A hardcoded prefix stays right until a runtime upgrade moves it, and then reads as "this map is empty" rather than as an error.',
+      text: 'Storage keys here are computed from the pallet and item names, never hardcoded — the transaction-index prefix and the RetentionPeriod key alike. A hardcoded prefix stays right until a runtime upgrade moves it, and then reads as "this map is empty" rather than as an error.',
     }),
     el(
       'p',

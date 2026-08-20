@@ -123,9 +123,11 @@ Two operations:
 - **`renew(block, index)`** — extends the lease on data already on chain, identified by where it was
   first stored. It does **not** re-upload the bytes.
 
-The lease length is `RetentionPeriod`, a runtime constant measured in blocks, documented in the
-runtime as "Number of blocks for which stored data must [be retained]". On the Products Devnet it is
-**201,600 blocks**.
+The lease length is `RetentionPeriod`, measured in blocks, documented in the runtime as "Number of
+blocks for which stored data must [be retained]". On the Products Devnet it is **201,600 blocks**,
+read from state on 2026-08-20. It is a **storage value, not a runtime constant** — the section
+"`RetentionPeriod` is 201,600 — and it is mutable state, not a constant", below, is the part to read
+before you copy the number anywhere.
 
 **How long is that in wall-clock time?** Blocks, not seconds, are what the chain counts, so this
 conversion is the soft part of every expiry calculation. **The two deployments run at measurably
@@ -277,8 +279,8 @@ Three consequences, in descending order of how much they should change your plan
 
 ### `RetentionPeriod` is 201,600 — and it is mutable state, not a constant
 
-This gets its own heading because `201_600` is hard-coded in this project, and the way it is stored
-matters more than its value.
+This gets its own heading because the way the value is stored matters more than the value itself, and
+because getting it from the obvious place returns a different number that looks identical.
 
 **Why it is not in the metadata.** `RetentionPeriod` is **not a runtime constant**. The
 `TransactionStorage` constants are `MaxBlockTransactions` (512), `MaxTransactionSize` (2 MiB),
@@ -287,7 +289,7 @@ matters more than its value.
 because it lives in **storage**, and storage values never appear in metadata — so a byte search of the
 blob finds 201,600 exactly once, under `AuthorizationPeriod`, which is why looking there misled us.
 
-**Read directly from state** on the Products Devnet, 2026-08-19:
+**Read directly from state** on the Products Devnet, 2026-08-19 and again 2026-08-20:
 
 ```
 key  twox128("TransactionStorage") ++ twox128("RetentionPeriod")
@@ -298,6 +300,19 @@ raw  0x80130300  →  u32 LE = 201,600
 Confirmed independently by two agents; the same derivation reproduces the known `Timestamp::Now` key
 byte for byte, and `ByteFee` (10) and `EntryFee` (1,000) read correctly off the same pallet, so this
 is not a lucky offset. It matches the observed pruning boundary to within 5 blocks.
+
+The metadata claim above was re-checked byte for byte on 2026-08-20 against the Products Devnet
+(`specVersion` 2003001, `system_chain` = `Bulletin Paseo`), because the whole argument rests on it:
+
+| Check on the 166,531-byte `state_getMetadata` blob | Result |
+|---|---|
+| occurrences of the u32-LE pattern `80 13 03 00` (= 201,600) | **exactly 1**, at offset 154,798 |
+| distance from that value to the name `AuthorizationPeriod` (offset 154,776) | **22 bytes** — it *is* `AuthorizationPeriod`'s value |
+| occurrences of the string `RetentionPeriod` | 8, all of them doc-comment prose or the storage-entry name at offset 153,145 — **never next to a value** |
+
+So the single 201,600 anyone can find in the metadata belongs to the other constant. A byte search,
+a metadata-constant reader, and an eyeball all land on the same wrong number, and it renders
+perfectly.
 
 Both `RetentionPeriod` and `AuthorizationPeriod` are 201,600 here. They remain different things
 governing different mechanisms, and nothing guarantees they stay equal.
@@ -310,10 +325,28 @@ So a hard-coded `RETENTION_BLOCKS = 201_600` is a snapshot of mutable state: cor
 wrong next week. Were retention ever shortened, it would overstate every expiry countdown *and* the
 ingest safety margin, in the same direction, with nothing in the data to reveal it.
 
-**Read it at runtime from that storage key, cache it, and keep the literal only as a fallback.** This
-is cheaper than it sounds: `server/sources/bulletin-chain.js` already imports `twox128` (line 9) and
-hard-codes `RETENTION_BLOCKS` (line 42), so it is a key plus one `state_getStorage` — about three
-lines, in the file that already has both, with no new dependency.
+**This repo reads it at runtime.** `server/sources/bulletin-chain.js` computes the key from the pallet
+and item names — never hard-codes the hash — and `readRetentionBlocks()` fetches it with one
+`state_getStorage`, memoised for an hour. `RETENTION_BLOCKS_FALLBACK` is the old literal, kept for
+exactly one case and labelled wherever it surfaces. The reading is returned *with its provenance*
+rather than as a bare number, because a caller handed `201600` cannot tell a measurement from an
+inheritance:
+
+| `source` | when | what the page says |
+|---|---|---|
+| `chain`, `stale: false` | read on this load | "read live from chain state", with the key, the raw `0x80130300` and the timestamp |
+| `chain`, `stale: true`, `unreachable: true` | read earlier, node not answering now | "read from chain state earlier", with how long ago — an ordinary state for a single node, not an outage |
+| `fallback` | never read successfully in this process | "inherited literal, not read", plus a warning notice and the reason |
+
+Degradation rules that are the point of the exercise, not incidental:
+
+- **One attempt, never a retry.** The node is a single machine that does go down; a retry loop turns
+  a nap into a slow page and returns the same answer.
+- **Anything that is not a `u32` falls to the labelled literal rather than being coerced.** A null, a
+  wrong width, or a zero are three different failures and none of them is a lease length — and a
+  wrong retention is invisible downstream, so a surprise has to be loud at the point it happens.
+- **The fallback is never rendered as if it were a reading.** That is the only property that makes
+  keeping the literal safe at all.
 
 **The generalised trap: a null from a storage read never means "zero".** Three reads on this pallet
 return null for three different reasons, and only one of them is "empty":
@@ -405,7 +438,7 @@ deployment, which differs by up to 11%.
 | Fees | `TransactionStorage::ByteFee`, `TransactionStorage::EntryFee` |
 | Permanent tier usage | `TransactionStorage::PermanentStorageUsed` (storage). Its cap `MaxPermanentStorageSize` is a *constant* — reading that name from storage returns null, which does not mean zero |
 | Constants | `AuthorizationPeriod`, `MaxTransactionSize`, `MaxBlockTransactions`, `MaxPermanentStorageSize`, `StoreRenewLongevity` — via `state_getMetadata` |
-| **Retention period** | **`TransactionStorage::RetentionPeriod` — a STORAGE value, not a constant.** Key `0x0e7b504e5df47062be129a8958a7a1278d69b77f53c8c31f3b84d472fdb7de2b`. Read it at runtime; governance can change it without a `specVersion` bump |
+| **Retention period** | **`TransactionStorage::RetentionPeriod` — a STORAGE value, not a constant.** Key `0x0e7b504e5df47062be129a8958a7a1278d69b77f53c8c31f3b84d472fdb7de2b`, computed rather than pasted. Read at runtime by `readRetentionBlocks()` in `server/sources/bulletin-chain.js`; governance can change it without a `specVersion` bump. Do **not** look for it among the metadata constants — the 201,600 there is `AuthorizationPeriod` |
 | Real block rate | `Timestamp::Now` read at two heights via `chain_getBlockHash` + `state_getStorageAt`, divided by the block delta. Use a window of days, not minutes, and never your own wall clock |
 | Extrinsics | `transactionStorage.store(data)`, `transactionStorage.renew(block, index)` |
 | Events | `TransactionStorage.Stored { cid, index }`, `TransactionStorage.Renewed` |

@@ -10,7 +10,7 @@ import { twox128 } from '../../src/core/codec/xxhash.js'
 import { blake2b } from '../../src/core/codec/blake2b.js'
 import { encodeSs58 } from '../../src/core/codec/ss58.js'
 import { decodeCompact } from '../../src/core/codec/scale.js'
-import { concat, toHex, fromHex, u32le, utf8 } from '../../src/core/codec/bytes.js'
+import { concat, toHex, fromHex, leHexToNumber, u32le, utf8 } from '../../src/core/codec/bytes.js'
 
 /**
  * `TransactionStorage.Transactions: BlockNumber -> Vec<TransactionInfo>`.
@@ -28,18 +28,145 @@ export const TRANSACTIONS_PREFIX = `0x${toHex(concat(twox128(utf8('TransactionSt
  * block rate and is only as good as that rate — which is why `blockMs` is measured rather than
  * assumed, and why the UI leads with blocks and offers days as the derived number.
  *
- * ⚠️ **INHERITED, NOT VERIFIED BY THIS REPO.** The value came from `yolodot/bulletin-explorer`,
- * where it is documented as read from the live devnet chain. We have not re-read it here, and
- * there is a specific reason to be careful: on the sibling chain `paseo-bulletin-next`,
- * `AuthorizationPeriod` is *also* 201,600 while `RetentionPeriod` is a different number. A
- * transcription that grabbed the wrong constant would be invisible — the figure is plausible,
- * the arithmetic downstream is correct, and the resulting "≈ 15.7 days" would simply be wrong.
- *
- * To settle it: fetch `state_getMetadata` from the Bulletin RPC and read the
- * `TransactionStorage` pallet's constants, rather than trusting either this line or the sibling
- * chain. The page states the caveat until someone does.
+ * ⚠️ **FALLBACK ONLY — never import this to compute with.** Call `readRetentionBlocks()`, which
+ * reads the live value and hands back the provenance alongside it. This literal exists for one
+ * case: the single-node devnet is unreachable and there is no earlier reading to serve. It is
+ * then LABELLED as inherited everywhere it reaches the screen, because an unlabelled 201,600 is
+ * indistinguishable from a measured one and would be wrong in the same direction for every
+ * expiry figure on the page at once.
  */
-export const RETENTION_BLOCKS = 201_600
+export const RETENTION_BLOCKS_FALLBACK = 201_600
+
+/**
+ * `TransactionStorage.RetentionPeriod` — a STORAGE key, and the fact that it is storage rather
+ * than a runtime constant is the whole point of this block.
+ *
+ * ⚠️ **It is NOT in `state_getMetadata`, and looking for it there is the trap.** Storage values
+ * never appear in metadata. Verified against the Products Devnet (`specVersion` 2003001,
+ * `system_chain` = "Bulletin Paseo") on 2026-08-20: in the whole 166,531-byte metadata blob the
+ * u32-LE byte pattern for 201,600 (`80 13 03 00`) occurs exactly ONCE, 22 bytes after the name
+ * `AuthorizationPeriod` — so the only 201,600 the metadata contains belongs to a DIFFERENT
+ * constant governing a DIFFERENT mechanism (how long an upload allowance lasts). The string
+ * `RetentionPeriod` occurs in that blob only as a storage-entry name and inside doc comments,
+ * never with a value. Reading "the retention constant" out of metadata therefore returns a
+ * plausible number that is not the retention period, and nothing downstream would reveal it.
+ *
+ * ⚠️ **And because it is storage, governance can change it at any moment** — no runtime upgrade,
+ * no `specVersion` bump, no signal of any kind. That is why it is re-read rather than trusted.
+ *
+ * Verified live 2026-08-20: this computes to
+ * `0x0e7b504e5df47062be129a8958a7a1278d69b77f53c8c31f3b84d472fdb7de2b`, and `state_getStorage`
+ * on it returns `0x80130300` = 201,600. The same derivation, run against the pallet's other
+ * items, reproduces `ByteFee` and `EntryFee` correctly, so this is not a lucky offset.
+ */
+export const RETENTION_PERIOD_KEY = `0x${toHex(concat(twox128(utf8('TransactionStorage')), twox128(utf8('RetentionPeriod'))))}`
+
+/**
+ * How long a live reading stays good. An hour: governance CAN move a storage value at any time,
+ * but it does not do so often enough to justify a read on every request — and the read is a
+ * round-trip at a node that is one machine.
+ */
+const RETENTION_TTL_MS = 3_600_000
+
+/** @type {{ blocks: number, raw: string, readAt: number } | null} The last reading that worked. */
+let lastLiveRetention = null
+
+/** @typedef {{
+ *   blocks: number,
+ *   source: 'chain'|'fallback',
+ *   key: string,
+ *   raw: string|null,
+ *   readAt: string|null,
+ *   ageMs: number|null,
+ *   stale: boolean,
+ *   unreachable: boolean,
+ *   reason: string|null,
+ * }} Retention */
+
+/** @returns {Retention} */
+function fromReading(entry, ttlMs, unreachable) {
+  const ageMs = Date.now() - entry.readAt
+  return {
+    blocks: entry.blocks,
+    source: 'chain',
+    key: RETENTION_PERIOD_KEY,
+    raw: entry.raw,
+    readAt: new Date(entry.readAt).toISOString(),
+    ageMs,
+    stale: ageMs >= ttlMs,
+    unreachable,
+    reason: null,
+  }
+}
+
+/**
+ * @param {string} reason stated on the page verbatim — it is the difference between "we read
+ *   this" and "we inherited this", and a reader is owed which one they are looking at.
+ * @returns {Retention}
+ */
+function fromLiteral(reason, unreachable = false) {
+  return {
+    blocks: RETENTION_BLOCKS_FALLBACK,
+    source: 'fallback',
+    key: RETENTION_PERIOD_KEY,
+    raw: null,
+    // null rather than 0 or "now": there was no read, and a zero-age would read as a fresh one.
+    readAt: null,
+    ageMs: null,
+    stale: false,
+    unreachable,
+    reason,
+  }
+}
+
+/**
+ * The retention period, read from chain state, with where it came from attached.
+ *
+ * ONE attempt, never a retry. The Products Devnet is a single node and it does go down — it was
+ * unreachable for several minutes on 2026-08-19 and answering normally later the same day. That
+ * is an ordinary state to report, not a fault to hammer through; a retry loop here would turn a
+ * node taking a nap into a slow page and still produce the same answer.
+ *
+ * Degradation is in two steps, and both are labelled:
+ *   1. the last reading that worked, if there is one — stale, dated, but a real measurement;
+ *   2. the inherited literal, which is the only case where the page is showing a number nobody
+ *      on this deployment has ever confirmed.
+ *
+ * An answer that arrives but is not a u32 goes straight to (2) rather than being coerced. A
+ * wrong retention is invisible downstream — every block and day figure would be consistently,
+ * plausibly wrong — so anything surprising has to fail to the labelled literal.
+ *
+ * @param {(method: string, params?: unknown[]) => Promise<unknown>} call
+ * @returns {Promise<Retention>}
+ */
+export async function readRetentionBlocks(call, { ttlMs = RETENTION_TTL_MS } = {}) {
+  const cached = lastLiveRetention
+  if (cached && Date.now() - cached.readAt < ttlMs) return fromReading(cached, ttlMs, false)
+
+  let raw
+  try {
+    raw = await call('state_getStorage', [RETENTION_PERIOD_KEY])
+  } catch {
+    return cached
+      ? fromReading(cached, ttlMs, true)
+      : fromLiteral('the devnet node could not be reached for the storage read', true)
+  }
+
+  if (raw === null || raw === undefined) {
+    return fromLiteral('the chain answered, and has nothing stored under the RetentionPeriod key')
+  }
+  const hex = String(raw).replace(/^0x/, '')
+  if (hex.length !== 8) {
+    return fromLiteral(`the RetentionPeriod key holds ${hex.length / 2} bytes, not the u32 this item is`)
+  }
+  const blocks = leHexToNumber(hex)
+  if (!Number.isFinite(blocks) || blocks <= 0) {
+    return fromLiteral(`the chain returned RetentionPeriod = ${blocks}, which is not a lease length`)
+  }
+
+  lastLiveRetention = { blocks, raw: `0x${hex}`, readAt: Date.now() }
+  return fromReading(lastLiveRetention, ttlMs, false)
+}
 
 /** The pallet's nominal block time. Kept only to show the drift against the measured rate. */
 export const NOMINAL_BLOCK_MS = 6_030
@@ -117,6 +244,10 @@ export async function calibrateClock(rpc, { spanBlocks = 200_000 } = {}) {
   const header = await rpc.call('chain_getHeader')
   const headBlock = parseInt(header.number, 16)
 
+  // Read, not assumed — and the provenance travels with it, because a caller that gets a bare
+  // number back has no way to tell a measurement from an inherited literal.
+  const retention = await readRetentionBlocks((method, params) => rpc.call(method, params))
+
   const timestampAt = async (block) => {
     const hash = await rpc.call('chain_getBlockHash', [block])
     if (!hash) return null
@@ -142,13 +273,15 @@ export async function calibrateClock(rpc, { spanBlocks = 200_000 } = {}) {
     measured: Boolean(headTime && farTime),
     /** Anchor is head-1, the block we actually read. */
     anchorBlock: headBlock - 1,
+    /** Where the retention figure came from — `chain` or the labelled `fallback`. */
+    retention,
     timeOf(block) {
       return this.headTime + (block - this.anchorBlock) * this.blockMs
     },
     /** The block at which the index entry for `block` is pruned, and when that lands. */
-    expiryBlockOf: (block) => block + RETENTION_BLOCKS,
+    expiryBlockOf: (block) => block + retention.blocks,
     retentionMs() {
-      return RETENTION_BLOCKS * this.blockMs
+      return retention.blocks * this.blockMs
     },
   }
 }

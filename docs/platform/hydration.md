@@ -6,11 +6,16 @@ every trade is routed through a single hub asset. On top of that sit a stableswa
 Aave-v3-derived money market, an over-collateralised stablecoin (HOLLAR), an OTC book, a DCA
 scheduler, and a router that stitches them together. From an analytics point of view the important
 thing is that Hydration emits **one event type for every swap on the chain, from every venue** —
-`Broadcast.Swapped3` — with a call stack attached. That event is what this repository's dashboard
-reads.
+`Broadcast.Swapped3` — with a call stack attached. That event, regrouped into trades, is what this
+repository's dashboard draws.
 
 Live readings below are from `https://rpc.hydradx.cloud` and `https://explorer.hydradx.cloud/graphql`
-on **2026-08-19**, against runtime `specName: hydradx`, `specVersion: 435`.
+on **2026-08-19**, against runtime `specName: hydradx`, `specVersion: 435`. From **2026-08-20** the
+dashboard no longer reads the generic Subsquid archive: it reads `routedTrades` on Hydration's own
+liquidity-pools squid, which has already done the leg-grouping described below. The grouping rule is
+unchanged and still the thing you have to understand — see
+[the trade grouping](#operationstack-the-call-stack-and-how-to-deduplicate) and
+[where we read this from](#where-we-read-this-from).
 
 ---
 
@@ -277,20 +282,32 @@ executed with no enclosing context arrives with a zero-length stack, so there is
 to group on. It is not rare enough to ignore — 42 of 12,545 legs in the sample below.
 
 Read literally, "group on `operationStack[0]`" would key every one of those legs to the same missing
-value and merge unrelated single-hop trades into one giant fake trade. That is a trap in the *prose*,
-not in this repository: `server/sources/hydration.mjs` handles it explicitly. `origin()` returns a
-synthetic `{ kind: 'Direct', key: null }` for an empty stack, and the caller then keys off the event
-instead of the stack:
+value and merge unrelated single-hop trades into one giant fake trade. If you implement the grouping
+rule yourself, decide what an empty stack means before you write the key expression, not after: a
+stackless leg is its own single-leg trade.
 
-```js
-// A leg with no operation stack stands alone — its own trade, one hop long.
-const groupKey = key ? `${event.block.height}:${key}` : `solo:${event.id}`
+**This repository no longer implements the rule; it checks that somebody else did.** Hydration's own
+liquidity-pools squid exposes `routedTrades`, one row per user action, and its `routeId` is the same
+`Broadcast::IncrementalId` this rule groups on — so the two agree by construction rather than by
+agreement. `server/sources/hydration.mjs` reads those rows and reports
+`legCount / tradeCount` on the page, so the factor the grouping removes stays a visible number instead
+of becoming an invisible assumption. Measured over 2026-08-07…08-20: **80,656 trades from 182,178
+legs, a factor of 2.26.**
+
+A stackless leg arrives from the squid as a `routedTrade` whose `routeId` is `null` and whose single
+swap has `operationId: null`. This codebase labels those **`Direct`**, which is a name we invent —
+**it is not a chain-side `ExecutionType` variant** and you will not find it in the runtime metadata.
+
+The squid flattens the stack into a string, `Kind:value[:value][/Kind:value…]`, and the first segment
+is `operationStack[0]`. Live examples:
+
 ```
-
-So a stackless leg becomes its own single-leg trade, keyed on its event id, and `Direct` is a label
-this codebase invents to describe it — **it is not a chain-side `ExecutionType` variant** and you will
-not find it in the runtime metadata. If you implement the grouping rule yourself, decide what an empty
-stack means before you write the key expression, not after.
+Omnipool:10633826                                     a direct Omnipool swap
+Router:10633824/Omnipool:10633825                     a routed trade
+DCA:30104:10619288/Router:10619289                    one instalment of DCA schedule 30104
+Batch:10500710/Router:10500711                        a swap inside a batch
+Xcm:e7f485122fbaa3c2247c61b1bfc62b66:10623796/Router:10623797   a swap triggered by an XCM message
+```
 
 ### Observed first-element distribution
 
@@ -312,6 +329,13 @@ kinds we've seen" gets written and then silently drops a real trade. Second, `Xc
 appear in this window, which is not evidence it cannot: absence over one day at these rates tells you
 very little. Enumerate from the runtime metadata, not from an observed sample, and treat any
 unrecognised `__kind` as a value to surface rather than discard.
+
+**Re-confirmed on 2026-08-20 against the squid, over a fourteen-day window** (2026-08-07…08-20,
+80,656 trades): `Router`, `DCA`, `Omnipool`, `Batch`, empty-stack, **and `Xcm`** — five `Xcm`-initiated
+legs between blocks 13,608,128 and 13,690,441, each carrying a 32-byte XCM message id in the payload
+(`Xcm:e7f485122fbaa3c2247c61b1bfc62b66:10623796`). One day of sampling saw `Xcm` once; two weeks saw
+it five times. It is rare, it is real, and a fixed five-variant list would have dropped it.
+`XcmExchange` still has not been observed.
 
 For volume, the correct figure for a routed trade is the **first leg's `inputs`** and the **last leg's
 `outputs`**; the intermediate hops are the same money moving. In the sample, the user sold 38.2 DOT
@@ -382,8 +406,9 @@ reserve invariant in [xcm.md](xcm.md). They agreed to within 425 USDC on 2026-08
 | What | Endpoint / storage |
 |---|---|
 | RPC | `https://rpc.hydradx.cloud` (public, no key). `specName: hydradx`, `specVersion: 435` on 2026-08-19 |
-| Subsquid archive | `https://explorer.hydradx.cloud/graphql` — generic archive with `blocks`, `events`, `calls`, `extrinsics`, `metadata` |
-| Swaps | `events(where: {name_eq: "Broadcast.Swapped3"})` |
+| **Trades (what the dashboard reads)** | `https://orca-prod-pool-01.orca.hydration.cloud/graphql` — Hydration's own liquidity-pools squid, `routedTrades`. Second host `https://orca-prod-pool-02.catfish.hydration.cloud/graphql`, identical schema |
+| Subsquid archive | `https://explorer.hydradx.cloud/graphql` — generic archive with `blocks`, `events`, `calls`, `extrinsics`, `metadata`. **No longer read by this repository** |
+| Swaps, the hard way | `events(where: {name_eq: "Broadcast.Swapped3"})` on the generic archive, then group by hand |
 | Asset registry | `AssetRegistry::Assets(u32)`, `AssetRegistry::AssetIds`, `AssetRegistry::AssetLocations` |
 | Balances | `Tokens::Accounts(AccountId32, u32)`, `Tokens::TotalIssuance(u32)`, `Balances::*` for HDX |
 | Omnipool state | `Omnipool::Assets(u32) -> AssetState { hub_reserve, shares, protocol_shares, cap, tradable }` |
@@ -395,7 +420,37 @@ reserve invariant in [xcm.md](xcm.md). They agreed to within 425 USDC on 2026-08
 
 **Archive query hygiene.** `https://explorer.hydradx.cloud/graphql` will return
 `canceling statement due to statement timeout` on an unbounded `Broadcast.Swapped3` scan — the table
-is very large. Always constrain with a block height range (`block: {height_gt: N}`) and page.
+is very large. Always constrain with a block height range (`block: {height_gt: N}`) and page. Verified
+again on 2026-08-20: asking it for the single oldest `Broadcast.Swapped3` timed out after 12.3 s. That
+is the reason this repository stopped reading it.
+
+### How far back the trade data goes, and why the chart starts where it does
+
+Three different floors, and confusing them is how a chart acquires an unexplained start date:
+
+| Floor | Block | Date | What it means |
+|---|---:|---|---|
+| squid `swaps` (legs) | 5,000,006 | 2024-04-28 | oldest individual leg the squid indexes |
+| squid `routedTrades` | **6,837,788** | **2025-01-25** | oldest leg-grouping — **the floor for this page** |
+| first `Broadcast.Swapped3` | 7,567,547 | 2025-05-19 | the event our old source depended on |
+
+All three read live on 2026-08-20. The middle row is the one that bounds the dashboard: orca reaches
+**730,000 blocks / almost four months earlier** than the event the previous implementation needed,
+because it also indexes the older `Swapped` event versions that `Swapped3` replaced. The page reads
+this floor on every request rather than hard-coding it, states it in its data notes, and clamps a
+window that would reach past it instead of drawing empty days that only look like a dead market.
+
+**The window is capped at 14 days by us, not by the data.** Measured against orca on 2026-08-20:
+~8,500 routed trades a day, 468 bytes a row on the wire, ~330 ms per 1,000-row page — so one day costs
+~3 s and fourteen days ~24 s. Thirty days is ~181,000 trades and about a minute, which is a page load
+nobody waits through. Longer windows need the job queue, not a bigger number in the schema.
+
+**Two "Hydration volume" numbers, both defensible.** Over blocks 13,494,903–13,700,931 orca's own
+`platformTotalVolumesByPeriod` reports **$18,454,010** of pool volume while this dashboard reports
+**$7,193,917** — 2.57×. The first is the notional that crossed each *pool*, so a route through a
+stableswap and the Omnipool is counted in both; the second is what the traders sent, once. The
+dashboard fetches both and states the ratio, because a volume figure without that sentence is
+unfalsifiable.
 
 Operational detail for these endpoints — rate limits, caching policy, and the known
 quirks of each — lives in [data-sources.md](data-sources.md).

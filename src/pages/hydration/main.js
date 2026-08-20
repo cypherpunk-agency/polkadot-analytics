@@ -6,22 +6,23 @@ import { choiceControl, renderPage } from '../../design/page.js'
 import { read } from '../../core/client.js'
 import { pageByKey } from '../../sources/pages.js'
 
-// The window is short and capped on purpose: every extra day is another ~11,000 events pulled
-// from an archive we do not own. The control says so rather than presenting seven days as a
-// free preference.
-const DAYS = new URLSearchParams(location.search).get('days') ?? '3'
+// The window is a count of whole UTC days ending with today, and the server resolves both edges
+// to real block heights before it fetches anything. Fourteen is a cost cap of ours, not the edge
+// of the data — the source holds routed trades back to January 2025, and the page's data notes
+// say so along with the exact days and blocks drawn.
+const DAYS = new URLSearchParams(location.search).get('days') ?? '7'
 
 renderPage({
   page: pageByKey('hydration'),
   intro:
-    'Hydration emits one event per swap leg, not per trade — a single router route through four pools is four events. These are the legs regrouped into the trades people actually made, priced against the dollar-pegged legs in the same window.',
+    'Hydration emits one event per swap leg, not per trade — a single router route through four pools is four events. These are the trades those legs add up to, as Hydration’s own indexer groups them, priced against the dollar-pegged legs in the same window. The newest day is still in progress.',
   controls: [
     choiceControl({
       label: 'Window',
       param: 'days',
       value: DAYS,
-      options: [1, 2, 3, 5, 7].map((n) => ({ value: n, label: `${n}d` })),
-      hint: 'Capped at seven days: each day is ~11,000 events fetched from a public archive.',
+      options: [1, 3, 7, 14].map((n) => ({ value: n, label: `${n}d` })),
+      hint: 'Whole UTC days, ending with today. Capped at fourteen because a day is ~8,500 trades pulled from an indexer we do not own — not because the history stops there.',
     }),
   ],
   load: () => read('hydration', 'swaps', { days: DAYS }),

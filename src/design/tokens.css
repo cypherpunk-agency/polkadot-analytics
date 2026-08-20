@@ -76,6 +76,16 @@
   --step-3: clamp(1.7rem, 1.4rem + 1.5vw, 2.6rem);
   --step-4: clamp(2.1rem, 1.6rem + 2.5vw, 3.6rem);
 
+  /* Every step above is a VIEWPORT clamp, and a viewport clamp does not know how wide the box
+     it lands in turned out to be. For a headline number in a grid tile that gap is not
+     cosmetic: the tail of the number gets cut and the result still reads as a number. So a
+     stat value is capped at a share of its own tile as well (see `.stat` in components.css,
+     which makes the tile a query container). This is that share — a budget in glyphs rather
+     than a size: across the system stacks a digit costs 0.55–0.59em, so 16% of the tile buys
+     about twelve characters of `money2`, "$123,456,789", one comma group past anything these
+     dashboards have printed. Raise it and the number gets bigger and the budget shorter. */
+  --fit-value: 16cqi;
+
   /* ── space: a 4px scale, so nothing is ever "about 15px" ────────────────────────────── */
   --s1: 0.25rem;
   --s2: 0.5rem;

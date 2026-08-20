@@ -199,7 +199,25 @@
 
 /* ── stat tiles ───────────────────────────────────────────────────────────────────────────
  * A number that needs no chart. Grid rather than flex so tiles line up across rows even when
- * one label wraps to two lines. */
+ * one label wraps to two lines.
+ *
+ * THE VALUE IS SIZED AGAINST ITS OWN TILE, NOT THE VIEWPORT. `--step-4` is a viewport clamp,
+ * and a viewport clamp knows nothing about how many columns `auto-fit` handed this tile — so
+ * below about 1200px the row was putting a 34px number into a 150px tile and its own
+ * `overflow: hidden` ate the tail. That does not render as an error. It renders as
+ * "$55,687,70": a plausible number, off by a factor of ten, with nothing on the page saying
+ * so. Rule 3 of this repo exists to stop exactly that.
+ *
+ * So each tile is a query container and its value is `min(<viewport step>, --fit-value)`: full
+ * size whenever the tile can hold the number, smaller only when the tile genuinely cannot.
+ * `--fit-value` is a glyph budget and tokens.css says what it buys. Past the budget the
+ * ellipsis below takes over: a value ending in "…" is unreadable, which is the correct
+ * failure. A value ending in a digit it does not own is a lie.
+ *
+ * The cap is applied inside `@supports`, not as a second declaration. `min(var(--step-4),
+ * var(--fit-value))` in a browser without `cqi` would not fall back to the line above it — a
+ * `var()` that fails to substitute takes the whole property with it and the value would
+ * inherit body text. The feature query keeps that browser on the plain step. */
 
 .stat-row {
   display: grid;
@@ -215,6 +233,10 @@
 .stat {
   padding: var(--s4);
   background: var(--surface);
+  /* Free on the grid above: the tracks are `minmax(11rem, 1fr)`, whose floor is a length and
+     whose ceiling is a fraction, so no tile's width ever depended on its contents. Inline-size
+     containment therefore takes nothing away — it only makes `cqi` mean this tile. */
+  container-type: inline-size;
 }
 
 .stat .k {
@@ -232,10 +254,33 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   line-height: 1.1;
+  /* Wrapping stays as it was — "201,600 blocks" has always broken at its space, and a value
+     with a unit word is better on two lines than shortened. What is new is where a value that
+     cannot break gets cut: here, with a mark, rather than at the row's edge, silently. The
+     padding is what a comma's tail needs — at line-height 1.1 the clip box ends just above it
+     — and the matching negative margin hands that space straight back, so the tile is exactly
+     as tall as it was before this rule existed. */
+  padding-bottom: 0.15em;
+  margin-bottom: -0.15em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat .v.hero {
   font-size: var(--step-4);
+  /* The headline is one token — `money2`, `compact`, a count — so there is nothing in it to
+     break at, and a headline that found somewhere to break would be read as two numbers. */
+  white-space: nowrap;
+}
+
+@supports (font-size: 1cqi) {
+  .stat .v {
+    font-size: min(var(--step-2), var(--fit-value));
+  }
+
+  .stat .v.hero {
+    font-size: min(var(--step-4), var(--fit-value));
+  }
 }
 
 .stat .sub {

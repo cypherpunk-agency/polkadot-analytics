@@ -15,3 +15,6 @@ dist/
 *-key.json
 credentials.json
 service-account*.json
+
+# The persistent store (server/lib/store.mjs) lives here. Derived, re-fetchable, never committed.
+server/data/

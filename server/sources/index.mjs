@@ -25,6 +25,22 @@ export function resolve(sourceId, operationId) {
 }
 
 /**
+ * Job handlers resolve through the same table, for the same reason: the job engine
+ * (server/lib/job-worker.mjs) contains no URL and no fetch, so the only way a job reaches an
+ * upstream is a handler that lives in this directory. A source that supports long-running
+ * ingest exports a `jobs` object next to `operations`, mapping an operation name to
+ * `{ summary, immutable(params), plan?(ctx), nextBatch(ctx) }` — the full contract is
+ * documented at the top of server/lib/job-worker.mjs.
+ */
+export function resolveJob(sourceId, operationId) {
+  const source = SOURCES[sourceId]
+  if (!source) return { error: `Unknown source \`${sourceId}\`.` }
+  const handler = source.jobs?.[operationId]
+  if (!handler) return { error: `Source \`${sourceId}\` has no job \`${operationId}\`.` }
+  return { source, handler }
+}
+
+/**
  * The self-description served at `/api`. It is the same object the registry is built from, so
  * it cannot drift from what the service will actually answer — a hand-maintained API listing
  * is wrong within a month.

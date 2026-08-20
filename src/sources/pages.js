@@ -30,6 +30,15 @@
  */
 export const GROUPS = [
   {
+    key: 'asset-hub',
+    nav: 'Asset Hub',
+    // Made the moment the second Asset Hub page landed, which is what the note on `bridged`
+    // said to do. Two pages, one question asked twice: what does Asset Hub actually custody —
+    // once for what came in from another consensus system, once for what the parachains left
+    // behind. Flat, "Bridged" and "Sovereign DOT" read as two unrelated subjects.
+    blurb: 'What Asset Hub holds: assets bridged in from elsewhere, and the parachains’ own reserves.',
+  },
+  {
     key: 'hydration',
     nav: 'Hydration',
     // Shown at the top of the open panel. Not decoration: it is the only chance to say what
@@ -51,21 +60,30 @@ export const PAGES = [
     live: true,
   },
   {
-    // Standalone rather than in a group, and deliberately so. A group exists to say that
-    // several pages are one subject — it is the only thing that makes four Hydration labels
-    // legible as four views of one chain. A group of one says nothing and costs a click, so
-    // this sits flat next to XCM, which is the page it is actually kin to: both answer "what
-    // crosses between chains", one as flow and one as inventory. If a second Asset Hub page
-    // lands (sovereign DOT is the obvious one), that is the moment to make an "Asset Hub"
-    // group and move both under it.
+    // This was standalone until `sovereign` landed, with a note saying that a second Asset Hub
+    // page was the moment to make the group. It landed, so the group exists — see GROUPS. The
+    // nav label inside the panel drops "Asset Hub", which the panel has already said.
     key: 'bridged',
     kind: 'dashboard',
+    group: 'asset-hub',
     href: '/bridged/',
-    nav: 'Bridged',
+    nav: 'Bridged in',
     title: 'Bridged onto Asset Hub',
     blurb:
       'Everything that entered Polkadot from another consensus system, keyed by the XCM location its storage key spells out: which parachain holds each asset now, and where the holder balances do not add back up to the supply the pallet claims.',
     source: 'Polkadot Asset Hub RPC',
+    live: true,
+  },
+  {
+    key: 'sovereign',
+    kind: 'dashboard',
+    group: 'asset-hub',
+    href: '/sovereign/',
+    nav: 'Sovereign DOT',
+    title: 'Parachain sovereign holdings, then and now',
+    blurb:
+      'What every parachain holds in its sovereign accounts today, read live from both legs — the relay and Asset Hub — set beside the archived study that ends in April 2023. The three years between them are drawn as the silence they are, not joined by a line.',
+    source: 'Polkadot relay + Asset Hub RPC, and an archived dataset',
     live: true,
   },
   {
@@ -146,15 +164,16 @@ export const PAGES = [
     kind: 'dashboard',
     href: '/netflows/',
     nav: 'Netflows',
-    title: 'Parachain sovereign holdings, then and now',
+    title: 'Parachain netflows, 2021–2023',
     blurb:
-      'What every parachain holds in its sovereign accounts today, read live from both legs — the relay and Asset Hub — set beside the archived Polkalytics study that ends in April 2023. The three years between them are drawn as the silence they are, not joined by a line.',
-    // `live: true` as of 2026-08-20: the page reads `asset-hub/sovereign-dot` on every load. The
-    // ARCHIVE half is still a fixed 2023 dataset and says so on the page — but the tile must
-    // describe what the page does now, and "archive — fixed dataset" would be a plain lie about
-    // a page whose first section is today's number.
-    source: 'Polkadot relay + Asset Hub RPC, and an archived dataset',
-    live: true,
+      'DOT and KSM held in parachain sovereign accounts, day by day from the first parachain to April 2023 — the Polkalytics study redrawn from its source CSVs, one line per chain on one shared scale, with the three places its own report and its data disagree.',
+    // `live: false`, and back to it. This carried `live: true` for a day while the page also
+    // read `asset-hub/sovereign-dot`; that half now has its own page (`sovereign`, above) and
+    // this one reads nothing at run time again. The dataset is compiled into the bundle and its
+    // newest number is from 2023-04-08, so a tile promising live data would be a plain lie —
+    // which is the entire reason this flag exists.
+    source: 'Archived Polkalytics dataset',
+    live: false,
   },
   {
     key: 'knowledge',

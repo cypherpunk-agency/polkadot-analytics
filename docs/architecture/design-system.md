@@ -190,6 +190,32 @@ A page in the group marks its summary `aria-current="true"` and its panel link
 `aria-current="page"` — being *in* a section and *being* the page are different facts, and the
 stylesheet marks them differently.
 
+## A page has one subject, and it goes first
+
+Every dashboard here is `renderPage({ page, intro, load, render })`, and `render` appends blocks
+to one host in order. That makes adding a block the cheapest possible edit and re-asking what the
+page is *for* the most expensive one — so pages drift by accretion, each new block defensible on
+its own while the page as a whole stops answering its title.
+
+`/netflows/` is the worked example. It exists for one chart, and for one day it carried eight
+blocks above that chart, every one of them true. The fix was not to reorder them: the live half
+became `/sovereign/`, and `/netflows/` opens on its time series again. See
+[decision 0011](../decisions/0011-a-page-has-one-subject.md), which carries the list and the
+alternatives that were rejected.
+
+Two practical consequences for anyone adding to a page:
+
+- **The test is the title.** After the edit, does the page still open on the thing its title
+  names, under at most a lede and a control row? If not, the new material wants a page of its
+  own — which costs one directory, one entry in `src/sources/pages.js`, and no config at all.
+- **`live` on the page entry is part of the page's identity, not metadata.** A page that stops
+  reading an upstream goes back to `live: false`, and its home tile goes back to saying
+  *archive — fixed dataset*. That flag is the only thing standing between a reader and taking a
+  2023 archive for today's numbers.
+
+A lede is prose and prose grows. At 390px the page head is the whole first screen before anything
+is drawn, so a lede that runs past four lines is spending the reader's only screen on sentences.
+
 ## The four-state page
 
 `renderPage()` owns the states a data page actually has, which is the thing pages get wrong when

@@ -444,7 +444,7 @@ flows dwarf every bridge here** — "value bridged in" is not "value that arrive
 |---|---|---|
 | **E1** | **`server/sources/asset-hub.mjs`** — `bridged-inventory`, `bridged-holders`, `sovereign-dot`. ~30 requests per TTL, two hosts, no key, no store | — |
 | E2 | **`/bridged/`** — the bridged-value page. Stacked bars per asset, segments = holding chain, summing to supply by construction; issuer-minted USDC/USDT in a separate labelled tile; Moonbeam band separate | E1 |
-| E3 | **Netflows v2, current value only** — second series on `/netflows/`, turning the 2023 archive into a comparison rather than the whole page | E1 (`sovereign-dot`) |
+| E3 | **Netflows v2, current value only** — ~~second series on `/netflows/`~~ **shipped 2026-08-20, then split into its own page `/sovereign/` the same day**: eight blocks had accumulated above the archive's chart. The comparison, the gap strip and the live read live there; `/netflows/` is the archive alone and is `live: false` again. See [decision 0011](../decisions/0011-a-page-has-one-subject.md) | E1 (`sovereign-dot`) |
 | E4 | **`moonbeam.mjs` + `interlay.mjs`** — the separate band, and BTC-in. Interlay is one `state_getStorage`; Moonbeam is `eth_call totalSupply()` over `pallet_moonbeam_foreign_assets` | E1 |
 | E5 | `docs/platform/bridges.md`, the trap entries in `CLAUDE.md`, and the `check.mjs` local-path gap | — |
 | E6 | Call Dotlake's `defi-tvl` / `daily-usdc` / `daily-usdt` — **registered since v1 and never called by anything.** Cross-check column only, never the lead figure | — |
@@ -632,7 +632,7 @@ most accurate description of what is actually blocked — more so than this file
 
 | # | Item | Why it is next | Effort |
 |---|---|---|---|
-| 1 | **E3 — netflows live** | Biggest visitor-visible delta open. Page code only: `sovereign-dot` already returns 127 chains, 254 holdings and a `missing[]` with a per-chain `why` | ~0.5 day |
+| 1 | ~~**E3 — netflows live**~~ **SHIPPED 2026-08-20 as `/sovereign/`** | Page code only, as predicted: `sovereign-dot` needed no change. What was not predicted is that it did not belong on `/netflows/` — decision 0011 | done |
 | 2 | **Liveness on the 5 sources and 7 pages missing it** | The site's premise is saying what is wrong with a number, and staleness is the commonest thing wrong. Two chains were caught today answering RPC while 10 and 24 days behind | 2–4 h |
 | 3 | ~~**`jobs.swaps` on `hydration.mjs`**~~ **SHIPPED 2026-08-20 as `jobs.swaps-daily`** | §9.3 — unstranded ~2,430 lines and produced the disk number. See §12 | done |
 | 4 | **`interlay.mjs`** | One `state_getStorage`. Unblocked: the canary band is settled (reject thousands of BTC; actual issuance 2.118) | hours |
@@ -686,7 +686,7 @@ the next session starts from fact rather than from summary.
 | **`server/sources/asset-hub.mjs`** | The first module here that reads Polkadot's own chains. `bridged-inventory`, `bridged-holders`, `sovereign-dot`. Every read pinned to one finalized head. |
 | **`server/sources/interlay.mjs`** | BTC bridged in. One storage read, a three-layer canary, and a liveness assertion that catches the chain being 24 days stale. |
 | **`/bridged/`** | 34 bridged assets, 37 holdings across 8 parachains, issuer-minted USDC/USDt kept separate, reconciliation shown as a finding. |
-| **`/netflows/`** | The 2023 archive gains a live half. The three-year gap is drawn to scale, not crossed by a line. |
+| **`/netflows/` and `/sovereign/`** | The 2023 archive gained a live half, and the live half then gained its own page — the three-year gap is drawn to scale on `/sovereign/`, never crossed by a line, and `/netflows/` opens on the time series it is named for. Decision 0011. |
 | **`segmentedRows`** | A seventh chart form. Segments must sum to a separately-stated total; the shortfall is drawn. |
 | **Liveness** | 3 sources → 5; `/bulletin/`, `/hydration/`, `/hyperfx/` now render or deliberately abstain. |
 | **Nav grouping** | Four Hydration pages under one entry. Top level 9 → 6. |
@@ -824,8 +824,8 @@ measured 428 kB over the wire.
 
 ### 12.4 Still open
 
-`docs/concept/research-queue.md` **O23** is the one that matters: *does orca ever revise a day it
+`docs/concept/research-queue.md` **O34** is the one that matters: *does orca ever revise a day it
 has already indexed?* A stored day is never re-fetched, so a revision would be invisible forever.
 It is defended by three checks that refuse rather than annotate, but confirming it needs elapsed
-time, not cleverness. **O24** is the visible gap: nothing renders the stored history yet, and the
+time, not cleverness. **O35** is the visible gap: nothing renders the stored history yet, and the
 seam between stored months and the live 14-day window needs a decision before anything does.

@@ -267,6 +267,27 @@ npm run preview
 about to change anything about routing, caching, headers or the container — the dev server is not
 the thing that gets deployed, and `preview` is.
 
+### Behind an HTTP proxy — including any sandboxed agent session
+
+Node 22's `fetch` **ignores `HTTPS_PROXY`**. It has no proxy support switched on by default and
+`undici` only reads the environment when `NODE_USE_ENV_PROXY=1` is set. So in an environment where
+all outbound traffic must go through a local proxy — the usual shape of a sandboxed agent session
+— every `server/sources/` module fails while `curl` to the same host succeeds, and the failure is
+not a timeout: the interception layer answers, so it arrives as a plausible **HTTP 403 from the
+upstream**. `/api/asset-hub/sovereign-dot` returns
+`{"error":{"kind":"upstream","source":"polkadot-rpc","message":"polkadot-rpc returned HTTP 403."}}`
+and every page renders its "this upstream is having a bad day" branch, correctly and for entirely
+the wrong reason. Observed 2026-08-20.
+
+```
+NODE_USE_ENV_PROXY=1 node server/index.mjs
+```
+
+is the whole fix, and it belongs in the shell rather than in the repository: nothing about the
+deployed container needs it, and hard-coding a dispatcher would be a proxy the production image
+does not want. The trap worth knowing is the diagnosis, not the flag — a page's error branch
+rendering perfectly is *not* evidence that an upstream is down.
+
 ```
 npm run check
 ```

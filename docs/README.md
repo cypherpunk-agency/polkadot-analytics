@@ -47,6 +47,7 @@ written account of what it is querying.
 | [0008](decisions/0008-no-off-chain-price-oracle.md) | prices come from chains, not from Yahoo Finance |
 | [0009](decisions/0009-pricing-is-a-composed-source.md) | pricing is a source others compose, not a library others import |
 | [0010](decisions/0010-unreachable-is-data.md) | an unreachable upstream returns a payload, it does not throw |
+| [0011](decisions/0011-a-page-has-one-subject.md) | a page has one subject, and it goes first |
 
 ## `concept/` — working notes, deliberately not published
 

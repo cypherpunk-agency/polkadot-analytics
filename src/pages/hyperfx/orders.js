@@ -252,7 +252,7 @@ function summaryCard(data) {
       null,
       el('h2', { text: described.length ? `Filtered: ${described.join(', ')}` : 'Every order' }),
       el('p.note', {
-        text: `The indexer holds ${count(shown.matching)} order(s) matching this filter, out of ${count(totals.orders)} ever placed. The table below is the ${count(shown.rows)} on this page; the totals in this row are over those rows only, never over the whole filter.`,
+        text: `The indexer holds ${count(shown.matching)} order${shown.matching === 1 ? '' : 's'} matching this filter, out of ${count(totals.orders)} ever placed. The table below is the ${count(shown.rows)} on this page; the totals in this row are over those rows only, never over the whole filter.`,
       }),
     ),
     statRow([
@@ -513,7 +513,7 @@ export function renderOrders(host, data) {
         ? notice(
             'warning',
             'Nothing on this page',
-            `This filter matches ${count(data.shown.matching)} order(s), but the page you asked for starts after the last of them.`,
+            `This filter matches ${count(data.shown.matching)} order${data.shown.matching === 1 ? '' : 's'}, but the page you asked for starts after the last of them.`,
             'The link below goes back to the first page with the same filter.',
           )
         : notice(

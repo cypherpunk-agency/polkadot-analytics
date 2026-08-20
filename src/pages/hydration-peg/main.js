@@ -389,7 +389,7 @@ function otcCard(otc) {
     ),
     otc.unpricedAssets.length
       ? el('p.note', {
-          text: `${otc.unpricedOrders} order(s) show no amount: ${otc.unpricedAssets.length} of the assets on this book have no decimals recorded in the asset registry (${otc.unpricedAssets
+          text: `${otc.unpricedOrders} order${otc.unpricedOrders === 1 ? '' : 's'} show${otc.unpricedOrders === 1 ? 's' : ''} no amount: ${otc.unpricedAssets.length} of the assets on this book have no decimals recorded in the asset registry (${otc.unpricedAssets
             .map((asset) => `${asset.id}${asset.type ? ` · ${asset.type}` : ''}`)
             .join(', ')}), and an amount without its decimals is wrong by a power of ten while looking entirely reasonable.`,
         })

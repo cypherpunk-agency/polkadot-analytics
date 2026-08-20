@@ -110,7 +110,15 @@ export function money2(value) {
   return `$${Math.round(Number(value) || 0).toLocaleString('en-US')}`
 }
 
-/** 1.2M / 34.5k / 912 — the same idea without a currency, for counts and token amounts. */
+/**
+ * 1.2M / 34.5k / 912 — the same idea without a currency, for counts and token amounts.
+ *
+ * Below ten, an INTEGER keeps no decimals and a fraction keeps two. Both halves of that matter.
+ * This function is used for trade counts as much as for token amounts, and "3.00 trades" is not
+ * a rounding preference, it is a wrong sentence — it reads as a measured quantity when the thing
+ * counted is discrete. The fractional branch stays because 5.61 WBTC is not 6 WBTC, and coarsening
+ * it the way `money()` coarsens dollars would throw away digits that are the whole point.
+ */
 export function compact(value) {
   const n = Number(value) || 0
   const sign = n < 0 ? '-' : ''
@@ -120,6 +128,7 @@ export function compact(value) {
   if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(1)}k`
   if (abs >= 10) return `${sign}${abs.toFixed(0)}`
   if (abs === 0) return '0'
+  if (Number.isInteger(abs)) return `${sign}${abs}`
   return `${sign}${abs.toFixed(2)}`
 }
 

@@ -1,0 +1,295 @@
+name: deploy
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+#  THIS WORKFLOW IS A PLACEHOLDER. THE DEPLOY JOB IS GATED OFF AND WILL BE SKIPPED.
+#
+#  The image job below is real and runs on every push to main: it builds and publishes
+#  ghcr.io/cypherpunk-agency/polkadot-analytics:<sha> and :latest. Publishing an image is
+#  harmless — nothing pulls it yet.
+#
+#  The `deploy` job is deliberately unable to run until somebody sets the repository variable
+#  DEPLOY_ENABLED to the string 'true'. It is gated with `if:`, which SKIPS the job rather than
+#  failing it, so main stays green while the server side is still being stood up. Everything
+#  it needs from the infra session is listed under "OWED BY INFRA" below, and there is a
+#  preflight step that refuses to proceed if the flag is flipped before those values exist —
+#  a half-configured deploy that runs is worse than one that does not.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+on:
+  push:
+    branches: [main]
+  # So a deploy can be re-run without an empty commit once this is live.
+  workflow_dispatch:
+
+# Minimal and explicit. Nothing is inherited, nothing is implied:
+#   contents: read     check out the source
+#   packages: write    push to GHCR as GITHUB_TOKEN
+#   id-token: write    mint the short-lived OIDC token that Workload Identity Federation
+#                      exchanges for GCP credentials. This is why there is no GCP_SA_KEY
+#                      secret in this repository and why there must never be one: a
+#                      downloaded service-account key is a long-lived credential sitting in
+#                      a settings page, and the whole point of WIF is not having it.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+# Never cancel a deploy that is already touching the VM — a half-applied deploy is the one
+# state nobody can reason about. Queue instead.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/cypherpunk-agency/polkadot-analytics
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────────────────
+  image:
+    name: build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # The digest, not the tag, is what the deploy pins to. `:latest` is a moving pointer and
+      # `:<sha>` can in principle be re-pushed; a digest cannot mean two things.
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Check out
+        # Pinned to a commit SHA, not a tag: a tag is a mutable pointer, and whatever it points
+        # at runs with this workflow's token.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # GITHUB_TOKEN, scoped by the `packages: write` permission above. No PAT, no secret to
+      # rotate, and the credential dies with the job.
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        id: push
+        run: |
+          set -euo pipefail
+          DOCKER_BUILDKIT=1 docker build \
+            --build-arg "BUILD_STAMP=${GITHUB_SHA}" \
+            --tag "${IMAGE}:${GITHUB_SHA}" \
+            --tag "${IMAGE}:latest" \
+            .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
+
+          # RepoDigests is only populated after a successful push, so this doubles as proof the
+          # push landed.
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}:${GITHUB_SHA}")
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "Published ${digest}"
+
+  # ─────────────────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: deploy to the VM
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    # ╔═══════════════════════════════════════════════════════════════════════════════════╗
+    # ║ THE GUARD. While the repository variable DEPLOY_ENABLED is anything other than    ║
+    # ║ the string 'true', this job is SKIPPED — not failed. That distinction is the       ║
+    # ║ whole design: an unconfigured deploy must not turn main red, because a red main    ║
+    # ║ that everybody knows to ignore is worse than no check at all.                      ║
+    # ║                                                                                    ║
+    # ║ To enable: Settings → Secrets and variables → Actions → Variables, and only        ║
+    # ║ AFTER the four values under "OWED BY INFRA" below actually exist.                  ║
+    # ╚═══════════════════════════════════════════════════════════════════════════════════╝
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+
+    steps:
+      # ═══════════════════════════════════════════════════════════════════════════════════
+      #  OWED BY INFRA — nothing below can work until these exist.
+      #
+      #  Repository VARIABLES (not secrets — none of these is confidential, and storing them
+      #  as variables keeps the "this repo has no secrets" claim literally true):
+      #
+      #   1. GCP_WORKLOAD_IDENTITY_PROVIDER
+      #        projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+      #        The pool's attribute condition MUST restrict the principal to this repository,
+      #        e.g. assertion.repository == 'cypherpunk-agency/polkadot-analytics'. Without
+      #        that condition any GitHub repository in the world can assume this identity.
+      #
+      #   2. GCP_SERVICE_ACCOUNT
+      #        deploy-polkadot-analytics@<PROJECT_ID>.iam.gserviceaccount.com
+      #        Needs only: pull the image, and run the pinned restart command on one instance.
+      #        Not project editor. Not compute admin.
+      #
+      #   3. GCP_INSTANCE and GCP_ZONE
+      #        The e2-small this service shares with the others, and its zone.
+      #
+      #   4. THE PINNED PRIVILEGED COMMAND — the exact remote command that swaps the running
+      #      container. It is written inline in the last step of this file, NOT read from a
+      #      repository variable, and that is deliberate: a command injected from a variable
+      #      is arbitrary remote code execution for anyone who can edit repository settings.
+      #      Pinned here, it goes through code review like everything else. Infra supplies the
+      #      text; it lands in this file in a reviewed PR.
+      #
+      #  There is deliberately NO GCP_SA_KEY. Keyless OIDC only. If anyone proposes adding a
+      #  downloaded service-account JSON to this repository's secrets, that is the thing this
+      #  whole workflow was written to avoid.
+      # ═══════════════════════════════════════════════════════════════════════════════════
+
+      # Belt and braces for the guard above. `if:` stops the job while nobody has flipped the
+      # flag; this stops it if somebody flips the flag before the values exist. Failing here
+      # with a readable message beats failing three steps later inside gcloud.
+      - name: Preflight — refuse to deploy with placeholder infra values
+        env:
+          WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          INSTANCE: ${{ vars.GCP_INSTANCE }}
+          ZONE: ${{ vars.GCP_ZONE }}
+          # Compared, never interpolated: this is 'true'/'false', not the secret's value.
+          HAS_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+        run: |
+          set -uo pipefail
+
+          # Flip this to 'true' in the SAME pull request that replaces the TODO(infra) remote
+          # command in the last step of this file. It is a literal in the workflow rather than
+          # a repository variable so that "the deploy command is real now" is a reviewed code
+          # change. Checked first, so a misconfigured run never authenticates to GCP or opens
+          # an SSH session at all.
+          PINNED_COMMAND_SUPPLIED=false
+          if [ "$PINNED_COMMAND_SUPPLIED" != 'true' ]; then
+            echo '::error::The pinned privileged deploy command is still a TODO(infra) placeholder.'
+            echo '::error::Nothing was deployed. See the OWED BY INFRA block in .github/workflows/deploy.yml.'
+            exit 1
+          fi
+
+          missing=0
+          for name in WIF_PROVIDER SERVICE_ACCOUNT INSTANCE ZONE; do
+            value="${!name:-}"
+            case "$value" in
+              ''|*TODO*|*REPLACE*|*PLACEHOLDER*)
+                echo "::error::Repository variable for ${name} is missing or still a placeholder."
+                missing=1
+                ;;
+            esac
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo '::error::DEPLOY_ENABLED is true but the infra values are not in place. Unset'
+            echo '::error::DEPLOY_ENABLED until they are — see the OWED BY INFRA block in this file.'
+            exit 1
+          fi
+          # A downloaded key would defeat the point of the OIDC setup. Catch it loudly.
+          if [ "$HAS_SA_KEY" = 'true' ]; then
+            echo '::error::A GCP_SA_KEY secret exists. This repository uses keyless OIDC on purpose.'
+            echo '::error::Delete the secret and rotate the underlying service-account key.'
+            exit 1
+          fi
+          echo 'Preflight passed.'
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Keyless. This exchanges the job's short-lived OIDC token for a GCP access token that
+      # expires in minutes. Nothing long-lived is stored anywhere.
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          # TODO(infra): both of these resolve to empty until the repository variables exist.
+          # The preflight step above is what stops an empty value reaching this action.
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # ╔═══════════════════════════════════════════════════════════════════════════════════╗
+      # ║  EVERY `gcloud compute ssh` AND `gcloud compute scp` BELOW MUST PASS               ║
+      # ║  `--ssh-key-file`. THIS IS NOT STYLE.                                              ║
+      # ║                                                                                    ║
+      # ║  Without it, gcloud looks for ~/.ssh/google_compute_engine, does not find one on a  ║
+      # ║  fresh ephemeral runner, GENERATES A NEW KEYPAIR, and pushes the public half into   ║
+      # ║  PROJECT-WIDE metadata. Project metadata keys grant root-equivalent access to       ║
+      # ║  EVERY instance in the project, they never expire, and nothing removes them.        ║
+      # ║  One per deploy. Twenty-five had accumulated before they were pruned — twenty-five  ║
+      # ║  standing root keys whose private halves were destroyed with the runners that made  ║
+      # ║  them, which means nobody could even tell which were still live.                    ║
+      # ║                                                                                    ║
+      # ║  `--ssh-key-file` points gcloud at a key we control, generated fresh for this run   ║
+      # ║  and gone when the runner is torn down.                                            ║
+      # ║                                                                                    ║
+      # ║  TODO(infra): the durable fix is OS Login (`enable-oslogin=TRUE` in project or      ║
+      # ║  instance metadata). With OS Login on, keys land in the service account's login     ║
+      # ║  profile with a TTL instead of in project metadata, access is governed by IAM       ║
+      # ║  roles, and this failure mode stops being possible rather than being remembered.    ║
+      # ║  Ask infra to enable it and to add `--tunnel-through-iap` so the VM needs no public  ║
+      # ║  SSH exposure at all.                                                              ║
+      # ╚═══════════════════════════════════════════════════════════════════════════════════╝
+      - name: Generate a run-scoped SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          # Named so it can never collide with the file gcloud would have created on its own.
+          ssh-keygen -t ed25519 -N '' -C "github-actions-deploy-${GITHUB_RUN_ID}" \
+            -f "$HOME/.ssh/gha_deploy"
+          chmod 600 "$HOME/.ssh/gha_deploy"
+
+      - name: Restart the service on the pinned image digest
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          INSTANCE: ${{ vars.GCP_INSTANCE }}
+          ZONE: ${{ vars.GCP_ZONE }}
+        run: |
+          set -euo pipefail
+
+          # TODO(infra): this is the pinned privileged command, and it is a stub.
+          #
+          # The shape we expect is: pull "$DIGEST", swap the running container, wait for
+          # health. The exact text is owed by the infra session, because only they know how
+          # this VM runs its services (compose file path or unit name, which user owns it,
+          # where the image is pulled from). Replace the body of REMOTE with their text in a
+          # reviewed PR, and flip PINNED_COMMAND_SUPPLIED in the preflight step in the same PR.
+          #
+          # It stays inline in this file rather than coming from a repository variable on
+          # purpose — see the OWED BY INFRA note above.
+          #
+          # DIGEST is exported below and is deliberately unused by this stub: the real command
+          # MUST deploy the digest, not `:latest`. A tag can be re-pushed; a digest cannot mean
+          # two different things, and "which build is actually on the box" has to be answerable.
+          REMOTE=$(cat <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          echo "TODO(infra): pinned deploy command not supplied yet."
+          exit 1
+          REMOTE_SCRIPT
+          )
+
+          # `--ssh-key-file` — read the box above before touching this line. It is the
+          # difference between one ephemeral key and a permanent root-equivalent key added to
+          # project metadata on every single run.
+          #
+          # Once infra enables OS Login and IAP, add `--tunnel-through-iap` to this invocation
+          # and close public SSH on the instance. It is left out rather than commented into the
+          # command, because a half-uncommented continuation line is its own kind of outage.
+          gcloud compute ssh "$INSTANCE" \
+            --zone "$ZONE" \
+            --ssh-key-file="$HOME/.ssh/gha_deploy" \
+            --quiet \
+            --command "$REMOTE"
+
+      # The deploy is not done when the command returns; it is done when the service answers.
+      # /api/health also reports `build`, so this proves the NEW image is what is serving —
+      # a restart that silently kept the old container would still pass a plain 200 check.
+      - name: Verify the deployed service
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            body=$(curl -fsS --max-time 5 https://analytics.cypherpunk.agency/api/health || true)
+            if [ -n "$body" ]; then
+              echo "$body"
+              echo "$body" | grep -q "\"build\":\"${GITHUB_SHA}\"" && exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::analytics.cypherpunk.agency is not serving build ${GITHUB_SHA} after 150s."
+          exit 1

@@ -1,0 +1,122 @@
+# The design system
+
+One stylesheet, one component vocabulary, one chart kit. Every page is built from them and adds
+no CSS of its own — which is what "uniform design" has to mean in practice, because otherwise it
+lasts until the third page.
+
+| file | what it holds |
+|---|---|
+| `src/design/tokens.css` | every colour, size, space and typeface. Nothing else in the repo names one. |
+| `src/design/base.css` | reset, page frame, header, footer |
+| `src/design/components.css` | stat tile, card, notice, legend, bar row, table, chart frame, tooltip |
+| `src/design/dom.js` | element construction, and the CSP-safe style setter |
+| `src/design/shell.js` | header, nav, theme toggle, footer |
+| `src/design/page.js` | the four-state page harness |
+| `src/design/charts.js` | four chart forms |
+| `src/design/swap-dashboard.js` | the whole dashboard for any venue that produces `Trade[]` |
+
+## The palette is validated, not chosen
+
+The eight categorical hues are a **validated set**, not a taste decision. Both modes pass:
+
+| check | light | dark |
+|---|---|---|
+| lightness band | all 8 inside L 0.43–0.77 | all 8 inside L 0.48–0.67 |
+| chroma floor | all ≥ 0.1 | all ≥ 0.1 |
+| worst adjacent CVD separation | ΔE 9.1 (protan) | ΔE 8.4 (protan) |
+| worst adjacent normal-vision | ΔE 19.6 | ΔE 19.3 |
+| contrast vs surface | 3 hues under 3:1 — see below | all ≥ 3:1 |
+
+Rules that follow, and are not negotiable:
+
+- **Fixed order, never cycled.** Series 9 and beyond are `--series-rest`, a chromaless grey.
+  A ninth hue would either be indistinguishable from an existing one or outside the validated
+  set, and a repeated colour reads as a repeated thing. The "n others" row is grey for the same
+  reason: it is a residual, not a category.
+- **Colour follows the entity, not the rank.** A filter that changes the series count must not
+  repaint the survivors.
+- **Dark is selected, not inverted.** The same eight hues re-stepped for the dark surface,
+  declared under both `prefers-color-scheme` and `[data-theme]` so a reader's explicit choice
+  beats their OS in both directions. The toggle has three states — light, dark, and *auto* —
+  because the third is what most people actually want and a two-state toggle takes it away.
+- **Three light-mode hues sit under 3:1 contrast.** That is a documented WARN, and it obligates
+  relief. The relief here is that **every legend carries the value, not just the name**, and
+  every chart has a table view. Colour never carries meaning alone on this site.
+- **Status colours are reserved.** `--good` / `--warning` / `--critical` are never a series
+  colour. The one place they appear in a chart is the XCM delivery breakdown, where the segments
+  genuinely *are* states — and even there the legend spells out the word.
+
+Sequential encoding is one hue light→dark (`--seq-*`). Never a rainbow.
+
+## Chart forms
+
+Four, hand-rolled as inline SVG:
+
+- `stackedBars` — daily volume by series. The default chart of this site.
+- `lineChart` — one line over an ordered index: cumulative totals, concentration curves.
+- `multiLine` — several series on one shared scale, for the netflows archive.
+- bar rows in CSS — rankings, breakdowns, routes.
+
+No charting library. The CSP forbids external scripts, and a multi-megabyte plotting bundle to
+draw a stacked bar chart would dominate the page weight of a site whose entire payload is 50 kB
+gzipped. More to the point, the forms are *chosen* rather than configured.
+
+Mark rules:
+
+- **Linear from zero, always.** A log scale on a ranking makes a long tail look like a
+  distribution of equals, which is the opposite of what the chart is for.
+- **Rounded on the data end only.** The zero end stays square against the baseline, so a bar
+  never looks like it starts slightly above zero.
+- **A 1px surface-coloured stroke between stacked segments,** or two adjacent hues read as one
+  taller segment.
+- **Empty days are drawn empty, never dropped.** A gap in activity is information; compressing
+  it out makes a dead fortnight look like a busy one.
+- **`null` breaks a line; it does not draw to zero.** "No data yet" and "the value was zero" are
+  different facts.
+- **One y-axis.** There is deliberately no dual-axis variant.
+- Crosshair and tooltip on every plot; a table view under or beside every chart.
+
+## The four-state page
+
+`renderPage()` owns the states a data page actually has, which is the thing pages get wrong when
+each one hand-rolls it: **loading**, **ready**, **failed**, and — the one usually missing —
+**succeeded but empty**. A page that draws only the first two shows a permanently empty chart
+when an upstream is down, and it reads as "there was no activity".
+
+Failure copy comes from the error's `kind`, so a reader is told whether this site is broken,
+the chain is down, or a format changed. Those imply different actions.
+
+Filter controls navigate rather than refetch in place, so the choice lives in the URL and can be
+linked, bookmarked and reported in a bug. `choiceControl` rebuilds the whole query string, not
+just its own parameter — a page with two controls where each link carries only its own would
+silently reset the other.
+
+## The CSP trap, written down because it already bit
+
+**Never set styles with `setAttribute('style', …)`.**
+
+Production serves `style-src 'self'` with no `'unsafe-inline'`. Under it the browser *silently*
+refuses inline style attributes. The page renders, every request returns 200, and every
+proportional bar on the site draws at **zero width** — indistinguishable from a dataset with no
+values in it.
+
+Setting the same declarations through CSSOM (`node.style.setProperty`) is not governed by
+`style-src` and works under the same policy. The `style` prop on `el()` and `svg()` routes
+through `style()` in `dom.js`, which parses the declaration string and sets each property that
+way. Every dynamic dimension and series colour on this site goes through there.
+
+Tooltips are built as DOM, never as an HTML string, for the same reason plus one more: their
+labels are chain data — token symbols, addresses — and building them as text nodes means there
+is no string concatenation for anything to be injected into.
+
+SVG `fill` and `stroke` are *presentation attributes*, not CSS. They are unaffected and are set
+as ordinary attributes.
+
+## Typography and assets
+
+System font stacks only. The CSP has no external origins, so a webfont from a CDN would not
+merely be slow — it would silently not load and the page would render in a fallback nobody chose.
+Mono for anything numeric or identifier-shaped (`font-variant-numeric: tabular-nums` everywhere a
+column of figures appears), sans for prose.
+
+The only image asset is a 400-byte inline SVG favicon.

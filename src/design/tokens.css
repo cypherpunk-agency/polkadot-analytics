@@ -1,0 +1,150 @@
+/*
+ * Design tokens. Every colour, size and typeface the site uses is declared here once.
+ *
+ * Two rules make this file worth having rather than just tidy:
+ *
+ *   · NOTHING ELSE IN THE REPO NAMES A COLOUR. A page that reaches for a raw hex is a page that
+ *     will drift out of the theme the first time the theme changes. `npm run check` is where
+ *     that would be caught.
+ *
+ *   · THE SERIES PALETTE IS NOT A TASTE DECISION. The eight categorical hues below are a
+ *     validated set: both modes pass the lightness band, the chroma floor, colour-vision
+ *     separation (worst adjacent pair ΔE 9.1 light / 8.4 dark) and the normal-vision floor
+ *     (19.6 / 19.3). They are assigned in FIXED ORDER and never cycled — a ninth series folds
+ *     into "other" rather than reusing slot 1, because a repeated colour reads as a repeated
+ *     thing. The light surface leaves three hues under 3:1 contrast, which is why every chart
+ *     on this site carries a legend with values and a table view: colour never carries meaning
+ *     on its own here.
+ *
+ * Dark is a SELECTED palette, not an inverted one — the same eight hues re-stepped for the
+ * dark surface. Declared under both the media query and the explicit toggle so a reader who
+ * chose a theme wins over their OS in both directions.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ── surfaces & ink ─────────────────────────────────────────────────────────────────── */
+  --plane: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-sunken: #f2f1ed;
+  --ink: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+  --rule: #e1e0d9;
+  --rule-strong: #c3c2b7;
+
+  /* ── categorical series, fixed order ────────────────────────────────────────────────── */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  /* Everything past slot 8, and every "n others" row. Deliberately chromaless: it is a
+     residual, not a category, and giving it a hue would make it look like one. */
+  --series-rest: #898781;
+
+  /* ── sequential: one hue, light to dark. Never a rainbow. ───────────────────────────── */
+  --seq-100: #cde2fb;
+  --seq-250: #86b6ef;
+  --seq-400: #3987e5;
+  --seq-550: #1c5cab;
+  --seq-700: #0d366b;
+
+  /* ── status: reserved. Never reused as a series colour, always paired with a label. ─── */
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+
+  --accent: var(--series-1);
+
+  /* ── type ───────────────────────────────────────────────────────────────────────────── */
+  /* System stacks only. The production CSP is `default-src 'self'` with no external origins,
+     so a webfont from a CDN would not merely be slow — it would silently not load, and the
+     page would render in a fallback nobody chose. */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --step--1: clamp(0.78rem, 0.76rem + 0.1vw, 0.83rem);
+  --step-0: clamp(0.94rem, 0.9rem + 0.18vw, 1rem);
+  --step-1: clamp(1.1rem, 1.02rem + 0.4vw, 1.28rem);
+  --step-2: clamp(1.35rem, 1.2rem + 0.75vw, 1.75rem);
+  --step-3: clamp(1.7rem, 1.4rem + 1.5vw, 2.6rem);
+  --step-4: clamp(2.1rem, 1.6rem + 2.5vw, 3.6rem);
+
+  /* ── space: a 4px scale, so nothing is ever "about 15px" ────────────────────────────── */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --s7: 3rem;
+  --s8: 4.5rem;
+
+  --radius: 4px;
+  --radius-lg: 8px;
+  --measure: 68ch;
+  --page: 76rem;
+
+  /* Flat, not floaty. A drop shadow on a data card implies depth that the data does not have. */
+  --border: 1px solid var(--rule);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --plane: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-sunken: #141413;
+    --ink: #ffffff;
+    --ink-secondary: #c3c2b7;
+    --ink-muted: #898781;
+    --rule: #2c2c2a;
+    --rule-strong: #383835;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+
+    --seq-100: #0d366b;
+    --seq-250: #184f95;
+    --seq-400: #2a78d6;
+    --seq-550: #5598e7;
+    --seq-700: #9ec5f4;
+  }
+}
+
+:root[data-theme='dark'] {
+  --plane: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-sunken: #141413;
+  --ink: #ffffff;
+  --ink-secondary: #c3c2b7;
+  --ink-muted: #898781;
+  --rule: #2c2c2a;
+  --rule-strong: #383835;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  --seq-100: #0d366b;
+  --seq-250: #184f95;
+  --seq-400: #2a78d6;
+  --seq-550: #5598e7;
+  --seq-700: #9ec5f4;
+}

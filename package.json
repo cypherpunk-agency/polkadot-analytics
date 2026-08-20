@@ -1,0 +1,23 @@
+{
+  "name": "polkadot-analytics",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Public analytics dashboards for the Polkadot ecosystem — one shared data layer, one design system, many pages",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "dev:api": "node server/index.mjs --dev",
+    "build": "vite build",
+    "preview": "npm run build && node server/index.mjs",
+    "start": "node server/index.mjs",
+    "check": "node scripts/check.mjs",
+    "data:netflows": "node scripts/build-netflows-dataset.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,247 @@
+name: ci
+
+# Every push and every pull request against main. There is no staging branch and no manual
+# gate: this repo deploys from main, so main is the thing that has to stay green.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Read-only. CI verifies; it publishes nothing. Publishing lives in deploy.yml, which asks for
+# the extra scopes it needs and nothing more.
+permissions:
+  contents: read
+
+# A superseded run on the same branch is wasted CI minutes and a confusing second red X.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Every third-party action below is pinned to a COMMIT SHA, not a tag. A tag is a mutable
+# pointer: whoever controls the action repository can move `v4` to new code at any time, and
+# that code runs with this workflow's token. The `# vN.N.N` trailing comment is only a human
+# label for the pin — it is not what resolves.
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          # Requires package-lock.json, which `npm ci` requires anyway. If this step complains
+          # about a missing lockfile, the fix is to commit one, not to drop the cache.
+          cache: npm
+
+      # `npm ci` and not `npm install`: install exactly the lockfile or fail. The only
+      # dependency is vite, and it is a devDependency — the runtime image installs nothing.
+      - name: Install
+        run: npm ci
+
+      # The repo's own verification script. Syntax, the secret tripwire, the source-registry
+      # contract, and the "no third-party origin in the browser bundle" invariant.
+      # Deliberately the same command a developer runs locally, so green means the same thing
+      # in both places. See scripts/check.mjs for what each group defends and why.
+      - name: Verify (npm run check)
+        run: npm run check
+
+      # ── secret scan ────────────────────────────────────────────────────────────────────
+      #
+      # Two layers, on purpose.
+      #
+      # WHY NOT gitleaks: its official GitHub Action requires a `GITLEAKS_LICENSE` secret for
+      # organisation-owned repositories. Adding a mandatory secret to the repo whose entire
+      # premise is "this service has no secrets and no secret store" is a worse trade than a
+      # short list of regexes we can read, audit and run on a laptop. (docs/decisions/0003.)
+      #
+      # Layer 1 is `npm run check` above, which owns the full pattern list — one source of
+      # truth, shared by CI and by developers.
+      #
+      # Layer 2 is this step: a handful of the highest-signal patterns, grepped here in the
+      # workflow, depending on NO file in the repository. It exists because layer 1 lives in
+      # a file that a bad commit could also edit; this one would still have to be defeated in
+      # the same PR, in the workflow, in plain sight.
+      #
+      # `git grep` searches tracked content only — an untracked local file is not a leak, and
+      # the two files that necessarily contain these patterns (this workflow and the scanner
+      # itself) are excluded by pathspec rather than silently.
+      - name: Secret scan (independent tripwire)
+        run: |
+          set -euo pipefail
+          pattern='-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          pattern="$pattern"'|-----BEGIN OPENSSH PRIVATE KEY-----'
+          pattern="$pattern"'|AKIA[0-9A-Z]{16}'
+          pattern="$pattern"'|"type"[[:space:]]*:[[:space:]]*"service_account"'
+          pattern="$pattern"'|(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}'
+          pattern="$pattern"'|xox[abprs]-[A-Za-z0-9-]{10,}'
+
+          # `-e` is load-bearing: the pattern starts with `-`, and without it grep parses the
+          # PEM header as a run of command-line options.
+          #
+          # The exit code is handled by value rather than as a boolean, because grep has three
+          # answers and only two of them are "no". 0 = found something, 1 = clean, anything
+          # else = grep itself failed. A plain `if git grep ...; then` would quietly treat that
+          # third case as clean — a secret scan that never runs and always passes is worse than
+          # no secret scan, because it is believed.
+          set +e
+          git grep -I -n -E -e "$pattern" -- \
+            ':(exclude).github/workflows/ci.yml' \
+            ':(exclude)scripts/check.mjs'
+          status=$?
+          set -e
+
+          case "$status" in
+            1)
+              echo 'No credential-shaped content in tracked files.'
+              ;;
+            0)
+              echo "::error::Something credential-shaped is committed to this repository."
+              echo "This service has no secrets by design. If the match above is real: delete it,"
+              echo "rotate it, and rewrite the history containing it — the repo is public."
+              exit 1
+              ;;
+            *)
+              echo "::error::The secret scan could not run (git grep exited ${status}). Failing"
+              echo "::error::closed: an unverified commit is not a clean commit."
+              exit 1
+              ;;
+          esac
+
+      - name: Build
+        run: npm run build
+
+      # ── smoke test ─────────────────────────────────────────────────────────────────────
+      #
+      # The build succeeding proves the bundler ran. It does not prove the server starts, finds
+      # dist/, resolves its imports from src/core/, or answers. This is the cheapest possible
+      # check that the thing we are about to ship is actually alive — and it is exactly what the
+      # container HEALTHCHECK and the external monitor will call, so a failure here is a failure
+      # that would otherwise have been discovered by a crash-looping deploy.
+      #
+      # No network is required: neither endpoint touches an upstream, by design.
+      - name: Smoke test the built server
+        run: |
+          set -euo pipefail
+
+          BUILD_STAMP="ci-${GITHUB_SHA}" PORT=8080 HOST=127.0.0.1 node server/index.mjs &
+          server_pid=$!
+          # Make sure the server is reaped even if an assertion below exits early.
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          # Poll rather than sleep a fixed amount: fast when it is fast, and it reports the
+          # difference between "slow to start" and "never started".
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "::error::The server exited during startup."
+              exit 1
+            fi
+            sleep 0.25
+          done
+
+          # /healthz — liveness. Must be exactly `ok`, so a 200 from anything other than this
+          # server (a proxy error page, say) still fails.
+          code=$(curl -s -o /tmp/healthz.body -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/healthz)
+          body=$(cat /tmp/healthz.body)
+          echo "GET /healthz -> $code $body"
+          if [ "$code" != '200' ]; then echo "::error::/healthz answered $code, expected 200."; exit 1; fi
+          if [ "$body" != 'ok' ]; then echo "::error::/healthz body was '$body', expected exactly 'ok'."; exit 1; fi
+
+          # /api/health — the deeper one. Reaching it means the source registry imported, the
+          # cache constructed and the JSON layer works, which is what monitoring should watch.
+          code=$(curl -s -o /tmp/apihealth.body -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/api/health)
+          echo "GET /api/health -> $code $(cat /tmp/apihealth.body)"
+          if [ "$code" != '200' ]; then echo "::error::/api/health answered $code, expected 200."; exit 1; fi
+          node -e '
+            const body = require("node:fs").readFileSync("/tmp/apihealth.body", "utf8")
+            const parsed = JSON.parse(body)
+            if (parsed.ok !== true) { console.error("::error::/api/health did not report ok:true"); process.exit(1) }
+            if (parsed.build !== process.env.EXPECTED_STAMP) {
+              console.error(`::error::/api/health reported build ${parsed.build}, expected ${process.env.EXPECTED_STAMP} — BUILD_STAMP is not reaching the app.`)
+              process.exit(1)
+            }
+          '
+        env:
+          EXPECTED_STAMP: ci-${{ github.sha }}
+
+      # The shutdown handler in server/index.mjs exists so a redeploy finishes in-flight
+      # requests rather than cutting them. If it regressed, every deploy would show up in
+      # monitoring as a blip and nobody would know why — so assert it here, where it is cheap.
+      - name: Server shuts down cleanly on SIGTERM
+        run: |
+          set -euo pipefail
+          PORT=8081 HOST=127.0.0.1 node server/index.mjs &
+          server_pid=$!
+          for _ in $(seq 1 40); do
+            curl -fsS --max-time 2 http://127.0.0.1:8081/healthz >/dev/null 2>&1 && break
+            sleep 0.25
+          done
+          kill -TERM "$server_pid"
+          for _ in $(seq 1 40); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo 'Server exited on SIGTERM.'
+              exit 0
+            fi
+            sleep 0.25
+          done
+          echo '::error::The server did not exit within 10s of SIGTERM; a redeploy would hard-kill it.'
+          kill -9 "$server_pid" 2>/dev/null || true
+          exit 1
+
+  # A separate job so it runs in parallel with `verify` — the image build is the slow one, and
+  # a Dockerfile that stops building is exactly the kind of breakage that is only ever noticed
+  # at deploy time otherwise. This job BUILDS ONLY. Publishing lives in deploy.yml.
+  image:
+    name: image builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Plain `docker build`, no build-push-action. Docker and BuildKit are preinstalled on the
+      # runner, and every third-party action skipped here is one less mutable dependency with
+      # access to this workflow. The tradeoff is losing the action's registry-backed layer
+      # cache, which for a two-stage build of a repo with one dependency is not worth it.
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          DOCKER_BUILDKIT=1 docker build \
+            --build-arg "BUILD_STAMP=ci-${GITHUB_SHA}" \
+            --tag polkadot-analytics:ci \
+            .
+
+      # Prove the claims the Dockerfile makes, rather than trusting them: it must run as a
+      # non-root user, with a READ-ONLY root filesystem, no volume, no environment beyond PORT,
+      # and no secrets — and still answer both health endpoints.
+      - name: Run the image read-only and hit both health endpoints
+        run: |
+          set -euo pipefail
+          docker run -d --name pa-smoke \
+            --read-only \
+            --memory 256m \
+            --publish 127.0.0.1:8080:8080 \
+            polkadot-analytics:ci
+
+          trap 'docker logs pa-smoke || true; docker rm -f pa-smoke >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 60); do
+            curl -fsS --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+          test "$(curl -fsS --max-time 5 http://127.0.0.1:8080/healthz)" = 'ok'
+          curl -fsS --max-time 5 http://127.0.0.1:8080/api/health | tee /dev/stderr | grep -q '"ok":true'
+
+          # It must not be running as root. A container that answers correctly but runs as uid 0
+          # is a container that got lucky.
+          uid=$(docker exec pa-smoke id -u)
+          echo "container uid: $uid"
+          if [ "$uid" = '0' ]; then echo '::error::The image runs as root.'; exit 1; fi
+
+          echo 'Image runs non-root on a read-only rootfs and answers both health endpoints.'

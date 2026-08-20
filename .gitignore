@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.vite/
+
+# There are no secrets in this repo and there never should be. These patterns are a
+# tripwire, not a workflow: if one of them ever matches something real, the answer is to
+# delete the file and rethink, not to rely on the ignore.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*-key.json
+credentials.json
+service-account*.json

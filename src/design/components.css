@@ -1,0 +1,842 @@
+/*
+ * The component vocabulary. Every page is built from these and adds no CSS of its own — that
+ * is what "uniform design" has to mean in practice, otherwise it lasts until the third page.
+ *
+ * Stat tile · card · notice · legend · bar row · rank table · chart frame · state machine.
+ */
+
+/* ── the page state machine ───────────────────────────────────────────────────────────────
+ * A dashboard has four states and a page that shows only two of them lies about the other
+ * two. `data-state` on <body> drives which is visible; nothing else toggles display. */
+
+[data-state] .on-loading,
+[data-state] .on-error,
+[data-state] .on-ready {
+  display: none;
+}
+
+[data-state='loading'] .on-loading,
+[data-state='error'] .on-error,
+[data-state='ready'] .on-ready {
+  display: revert;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s5);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
+.status.error {
+  border-color: var(--critical);
+}
+
+.spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  border: 2px solid var(--rule-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── stat tiles ───────────────────────────────────────────────────────────────────────────
+ * A number that needs no chart. Grid rather than flex so tiles line up across rows even when
+ * one label wraps to two lines. */
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--s1);
+  margin-bottom: var(--s5);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.stat {
+  padding: var(--s4);
+  background: var(--surface);
+}
+
+.stat .k {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.stat .v {
+  margin-top: var(--s2);
+  font-size: var(--step-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.stat .v.hero {
+  font-size: var(--step-4);
+}
+
+.stat .sub {
+  margin-top: var(--s1);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+}
+
+/* ── cards ────────────────────────────────────────────────────────────────────────────── */
+
+.card {
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--s5);
+  margin-bottom: var(--s5);
+}
+
+.card > header {
+  margin-bottom: var(--s4);
+}
+
+.card h2 {
+  font-size: var(--step-1);
+}
+
+.note {
+  max-width: var(--measure);
+  margin-top: var(--s2);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+}
+
+/* ── notices ──────────────────────────────────────────────────────────────────────────────
+ * Status colour never travels alone: every notice carries a word as well as a hue, because
+ * three of the four status colours are under 3:1 on the light surface by design. */
+
+.notice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s2) var(--s3);
+  padding: var(--s4);
+  margin-block: var(--s4);
+  border: var(--border);
+  border-inline-start: 3px solid var(--ink-muted);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--step--1);
+}
+
+.notice[data-tone='info'] {
+  border-inline-start-color: var(--series-1);
+}
+.notice[data-tone='good'] {
+  border-inline-start-color: var(--good);
+}
+.notice[data-tone='warning'] {
+  border-inline-start-color: var(--warning);
+}
+.notice[data-tone='critical'] {
+  border-inline-start-color: var(--critical);
+}
+
+.notice .tag {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.notice strong {
+  display: block;
+  color: var(--ink);
+}
+
+.notice p {
+  color: var(--ink-secondary);
+  max-width: var(--measure);
+}
+
+.notice p + p {
+  margin-top: var(--s2);
+}
+
+/* ── legend ───────────────────────────────────────────────────────────────────────────────
+ * Always present for two or more series, and it carries the VALUE, not just the name — that
+ * is the "relief" the light-mode contrast warning requires, and it is more useful anyway. */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  list-style: none;
+  padding: 0;
+  margin-bottom: var(--s3);
+  font-size: var(--step--1);
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--ink-secondary);
+}
+
+.swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  flex: none;
+}
+
+.legend .amt {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* ── bar rows ─────────────────────────────────────────────────────────────────────────────
+ * Linear from zero, always. A log scale on a ranking makes a long tail look like a
+ * distribution of equals, which is the opposite of what the chart is for. */
+
+.rows {
+  display: grid;
+  gap: var(--s1);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 12rem) 1fr auto;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+}
+
+.row:hover,
+.row:focus-visible {
+  background: var(--surface-sunken);
+}
+
+.row .name {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track {
+  height: 0.55rem;
+  background: var(--surface-sunken);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  /* Rounded only on the data end; the zero end stays square against the baseline, so a bar
+     never looks like it starts a little above zero. */
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+.row .amt {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.row .amt .cnt {
+  color: var(--ink-muted);
+}
+
+.rank-row {
+  grid-template-columns: 2.5rem minmax(7rem, 1fr) 2fr auto auto;
+}
+
+.rank-row .rank {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  text-align: end;
+}
+
+/* ── tables ───────────────────────────────────────────────────────────────────────────────
+ * Every chart on this site has a table beside or beneath it. That is the accessibility
+ * fallback and, for anyone who wants the actual number, the better view. */
+
+.tablewrap {
+  overflow-x: auto;
+  border: var(--border);
+  border-radius: var(--radius);
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+table.data th,
+table.data td {
+  padding: var(--s2) var(--s3);
+  text-align: start;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+table.data th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+table.data td.num,
+table.data th.num {
+  text-align: end;
+  font-family: var(--font-mono);
+}
+
+table.data tbody tr:hover {
+  background: var(--surface-sunken);
+}
+
+table.data tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+details.data-table {
+  margin-block: var(--s5);
+}
+
+details.data-table > summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  padding: var(--s2) 0;
+}
+
+details.data-table > summary:hover {
+  color: var(--ink);
+}
+
+details.data-table[open] > summary {
+  margin-bottom: var(--s3);
+}
+
+.scroll-y {
+  max-height: 28rem;
+  overflow-y: auto;
+}
+
+/* ── chart frame ──────────────────────────────────────────────────────────────────────── */
+
+.plot {
+  position: relative;
+  width: 100%;
+}
+
+.plot svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.grid-line {
+  stroke: var(--rule);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.axis-line {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.axis-text {
+  fill: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* A 2px gap between stacked segments, drawn as a stroke in the surface colour. Without it,
+   two adjacent segments of similar hue read as one taller segment. */
+.stack-seg {
+  stroke: var(--surface);
+  stroke-width: 1;
+}
+
+.line-mark {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.area-mark {
+  stroke: none;
+  opacity: 0.14;
+}
+
+/* ── tooltip ──────────────────────────────────────────────────────────────────────────── */
+
+.tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  min-width: 11rem;
+  padding: var(--s3);
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 6px 20px -8px rgb(0 0 0 / 0.35);
+  font-size: var(--step--1);
+}
+
+.tip[data-open='1'] {
+  opacity: 1;
+}
+
+.tip .t-d {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  margin-bottom: var(--s1);
+}
+
+.tip .t-v {
+  font-size: var(--step-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tip table {
+  margin-top: var(--s2);
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.tip td {
+  padding: 1px 0;
+  color: var(--ink-secondary);
+}
+
+.tip td.n {
+  text-align: end;
+  font-family: var(--font-mono);
+  color: var(--ink);
+  padding-inline-start: var(--s3);
+}
+
+.crosshair {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+/* ── misc ─────────────────────────────────────────────────────────────────────────────── */
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.pill {
+  display: inline-block;
+  padding: 0 var(--s2);
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+}
+
+.pill[data-tone='good'] {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.pill[data-tone='warning'] {
+  border-color: var(--warning);
+}
+
+.meta {
+  max-width: var(--measure);
+  margin-top: var(--s6);
+  padding-top: var(--s4);
+  border-top: var(--border);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+}
+
+.meta h2 {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: var(--s3);
+}
+
+.meta li + li,
+.meta p + p {
+  margin-top: var(--s3);
+}
+
+.meta ul {
+  padding-inline-start: var(--s4);
+}
+
+/* ── index cards (home) ───────────────────────────────────────────────────────────────── */
+
+.deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: var(--s4);
+}
+
+.deck a.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s5);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-decoration: none;
+  transition: border-color 0.12s;
+}
+
+.deck a.tile:hover {
+  border-color: var(--rule-strong);
+}
+
+.deck a.tile[data-live='0'] {
+  border-style: dashed;
+}
+
+.tile .k {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.tile h3 {
+  font-size: var(--step-1);
+}
+
+.tile p {
+  color: var(--ink-secondary);
+  font-size: var(--step--1);
+}
+
+.tile .foot {
+  margin-top: auto;
+  padding-top: var(--s3);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* ── prose ────────────────────────────────────────────────────────────────────────────────
+ * The one long-form block on this site: the knowledge base at /knowledge/, which is
+ * `docs/**` rendered to static HTML at build time. Every other page is tiles, charts and
+ * tables and needs none of this.
+ *
+ * It lives here rather than in a stylesheet of its own for the reason the rest of this file
+ * exists: a page that brings its own CSS is the end of a uniform design, and there is no
+ * second place where a colour or a size is named. Everything below is tokens. */
+
+.doc-layout {
+  display: grid;
+  /* `minmax(0, 1fr)`, not the implicit `auto`. A grid item's default `min-width: auto` is its
+     MIN-CONTENT width, so one unbreakable token in the prose — a storage key, a long
+     identifier in a code span — stretches the column past the viewport and the whole page
+     scrolls sideways. The same reason `min-width: 0` is on the children. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+.doc-layout > * {
+  min-width: 0;
+}
+
+/* The table of contents. It comes FIRST in the markup — after the heading, before the body,
+   which is the order it should be read and tabbed in — and is moved to the side column with
+   `order` on wide viewports. Sticky under the sticky header, and scrollable on its own when a
+   document has more headings than the viewport has room for. */
+.doc-toc {
+  font-size: var(--step--1);
+  border-inline-start: var(--border);
+  padding-inline-start: var(--s4);
+}
+
+@media (min-width: 60rem) {
+  .doc-layout {
+    grid-template-columns: minmax(0, 1fr) 14rem;
+  }
+
+  .doc-layout .prose {
+    order: 1;
+  }
+
+  .doc-toc {
+    position: sticky;
+    top: 4.5rem;
+    max-height: calc(100dvh - 6rem);
+    overflow-y: auto;
+    order: 2;
+  }
+}
+
+.doc-toc-title {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: var(--s3);
+}
+
+.doc-toc ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+
+.doc-toc li[data-level='3'] {
+  padding-inline-start: var(--s4);
+}
+
+.doc-toc a {
+  color: var(--ink-secondary);
+  text-decoration: none;
+}
+
+.doc-toc a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+/* The edit strip. This is the point of publishing the knowledge base rather than leaving it in
+   the repository: the file it came from, named, with a link that opens it. */
+.doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2) var(--s4);
+  margin-top: var(--s4);
+  font-size: var(--step--1);
+}
+
+.doc-edit {
+  padding: var(--s1) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.doc-edit:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.doc-path,
+.doc-updated {
+  color: var(--ink-muted);
+}
+
+.prose {
+  max-width: var(--measure);
+  /* These documents are full of identifiers longer than a phone is wide (`Broadcast.Swapped3`,
+     `AssetRegistry.Assets`, 32-byte hex). Breaking one is ugly; a page that scrolls sideways
+     because of one is worse. */
+  overflow-wrap: break-word;
+}
+
+.prose > * + * {
+  margin-top: var(--s4);
+}
+
+.prose h2 {
+  font-size: var(--step-2);
+  margin-top: var(--s7);
+}
+
+.prose h3 {
+  font-size: var(--step-1);
+  margin-top: var(--s6);
+}
+
+.prose h4 {
+  font-size: var(--step-0);
+  font-weight: 600;
+  margin-top: var(--s5);
+}
+
+/* A heading targeted by a #fragment must not land under the sticky header. */
+.prose :is(h2, h3, h4) {
+  scroll-margin-top: 4.5rem;
+}
+
+.prose ul,
+.prose ol {
+  padding-inline-start: var(--s5);
+}
+
+.prose li + li {
+  margin-top: var(--s2);
+}
+
+.prose a {
+  color: var(--accent);
+}
+
+.prose code {
+  padding: 0 0.2em;
+  border-radius: 2px;
+  background: var(--surface-sunken);
+}
+
+.prose pre {
+  overflow-x: auto;
+  padding: var(--s4);
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--step--1);
+  line-height: 1.5;
+}
+
+.prose pre code {
+  padding: 0;
+  background: none;
+}
+
+.prose hr {
+  border: 0;
+  border-top: var(--border);
+  margin-block: var(--s6);
+}
+
+/* Blockquotes in these documents are always a caveat about a number or a claim, so they get
+   the notice treatment rather than a decorative bar. Same reasoning as `.notice`: the tone is
+   carried by the words, and the rule is there to stop the eye skipping it. */
+.prose .callout {
+  padding: var(--s4);
+  border: var(--border);
+  border-inline-start: 3px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+}
+
+/* `table.data` is built for figures: one line per cell, tabular numerals. A prose table holds
+   sentences, so it wraps — and it may be wider than the measure the prose is set to. */
+.prose .tablewrap {
+  max-width: none;
+}
+
+table.prose-table th,
+table.prose-table td {
+  white-space: normal;
+  vertical-align: top;
+  min-width: 8rem;
+}
+
+table.prose-table th {
+  position: static;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--step--1);
+}
+
+table.prose-table code {
+  white-space: nowrap;
+}
+
+/* ── the knowledge index ──────────────────────────────────────────────────────────────────
+ * Reuses `.deck` and `.tile` from the home page: a document is a thing you go and read, which
+ * is what a tile already means here. */
+
+.kb-intro {
+  margin-bottom: var(--s6);
+}
+
+.kb-section {
+  margin-bottom: var(--s7);
+}
+
+.kb-section > h2 {
+  margin-bottom: var(--s3);
+}
+
+.kb-section > p {
+  max-width: var(--measure);
+  margin-bottom: var(--s4);
+  color: var(--ink-secondary);
+}
+
+/* The knowledge-base summary on the home page: three sections, each a row of document links.
+   Deliberately not a deck of tiles — the tiles above are dashboards, and giving documents the
+   same weight would say the site has twenty dashboards. */
+
+.kb-group + .kb-group {
+  margin-top: var(--s4);
+}
+
+.kb-group .k {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.kb-group ul {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--s2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  font-size: var(--step--1);
+}

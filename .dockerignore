@@ -1,0 +1,32 @@
+node_modules
+dist
+.git
+.github
+
+# `*.md` is ROOT-LEVEL ONLY — a dockerignore pattern's `*` does not cross a `/`. That matters
+# now: `docs/**/*.md` IS part of the build context and must stay that way, because the build
+# stage renders it into `dist/knowledge/` via `scripts/knowledge-plugin.mjs`. Excluding
+# `docs` and `scripts` (as this file used to) breaks `npm run build` inside the image at the
+# point where vite.config.mjs imports the plugin.
+#
+# Neither directory reaches the runtime image: stage 2 copies dist/, server/, src/core,
+# src/data and package.json, and nothing else.
+#
+# `.git` stays out, so the "last updated" dates fall back to the build stamp in a container
+# build. That is why scripts/knowledge.mjs treats a missing git history as normal.
+*.md
+
+# Credential-shaped files, mirroring .gitignore.
+#
+# Nothing here matches anything today and nothing should ever match. The reason to list them
+# anyway is that .gitignore does NOT protect a build context: `COPY . .` reads the working
+# directory, so a stray local key that git is correctly ignoring would still be baked into an
+# image layer and pushed to a registry. Ignoring it in one place and not the other is exactly
+# the gap that lets that happen.
+.env
+.env.*
+*.pem
+*.key
+*-key.json
+credentials.json
+service-account*.json

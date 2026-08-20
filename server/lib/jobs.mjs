@@ -385,6 +385,66 @@ export class JobQueue {
     })
   }
 
+  /**
+   * Everything the queue knows about ONE identity, in the three facts a reader's request needs
+   * (server/lib/demand.mjs):
+   *
+   *   · `live`   — the queued/running/partial/failed job, if any. At most one can exist, and
+   *                that is the database's guarantee (the `jobs_live_identity` partial unique
+   *                index), not this query's.
+   *   · `done`   — the most recent job for this identity that ran to completion. Its existence
+   *                is what "coverage is complete" MEANS here: the store cannot know what it was
+   *                never asked to fetch, so completeness is a fact about a job, not the world.
+   *   · `latest` — the newest job of any state, which is how a `gave-up` surrender stays
+   *                visible. Without it the next reader would mint a fresh job and grind the
+   *                same empty range again, which is the exact failure `gave-up` exists to stop.
+   *
+   * Three small indexed lookups rather than one clever one: each is a primary-key-ish read on
+   * (source, operation, params), and the clever version would have to be re-read every time
+   * someone changes what LIVE_STATES means.
+   */
+  describeIdentity(source, operation, params) {
+    const key = canonicalParams(params)
+    const live = this.db
+      .prepare(
+        `SELECT * FROM jobs WHERE source = ? AND operation = ? AND params = ?
+         AND state IN (${LIVE_STATES.map(() => '?').join(', ')})`,
+      )
+      .get(source, operation, key, ...LIVE_STATES)
+    const done = this.db
+      .prepare(
+        `SELECT * FROM jobs WHERE source = ? AND operation = ? AND params = ? AND state = 'done'
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(source, operation, key)
+    const latest = this.db
+      .prepare('SELECT * FROM jobs WHERE source = ? AND operation = ? AND params = ? ORDER BY id DESC LIMIT 1')
+      .get(source, operation, key)
+    return {
+      live: live ? toJob(live) : undefined,
+      done: done ? toJob(done) : undefined,
+      latest: latest ? toJob(latest) : undefined,
+    }
+  }
+
+  /**
+   * How many jobs for this (source, operation) are live right now — across ALL params.
+   *
+   * The dedup in `enqueue` bounds N identical readers to one job; it does nothing about one
+   * caller walking a parameter through a thousand distinct values, each of which is honestly
+   * a different identity. This count is what the HTTP layer caps that with. See
+   * MAX_LIVE_JOBS_PER_OPERATION in demand.mjs for the number and why.
+   */
+  countLive(source, operation) {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS live FROM jobs WHERE source = ? AND operation = ?
+         AND state IN (${LIVE_STATES.map(() => '?').join(', ')})`,
+      )
+      .get(source, operation, ...LIVE_STATES)
+    return Number(row?.live ?? 0)
+  }
+
   /** Is anything claimable right now? What the server checks before spawning the worker.
    *  Same predicate as claim(), so a lapsed-lease orphan counts — it IS runnable. */
   hasRunnable() {

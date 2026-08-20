@@ -39,8 +39,15 @@ export function readParams(raw, schema) {
 
   // An unknown parameter is a caller bug — usually a typo in a name that then silently does
   // nothing. Saying so costs nothing and saves an afternoon.
+  // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so `?__proto__=`, `?toString=`
+  // and `?constructor=` were all "known" parameters of every schema and slipped through this
+  // check silently. They were then dropped from `out` (which is built from the schema, so no
+  // pollution and no key divergence) — but silently accepting a parameter that does nothing is
+  // precisely what this loop exists to prevent.
   for (const name of Object.keys(raw)) {
-    if (!(name in schema)) throw new ParamError(`Unknown parameter \`${name}\`.`)
+    if (!Object.prototype.hasOwnProperty.call(schema, name)) {
+      throw new ParamError(`Unknown parameter \`${name}\`.`)
+    }
   }
   return out
 }

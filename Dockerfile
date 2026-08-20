@@ -109,9 +109,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Node is PID 1 and receives signals directly.
 CMD ["node", "server/index.mjs"]
 
-# No `org.opencontainers.image.licenses` label: this repo has no LICENSE file and no `license`
-# field in package.json yet, and a label asserting one would be a claim nobody checked.
 LABEL org.opencontainers.image.title="polkadot-analytics" \
+      org.opencontainers.image.licenses="Unlicense" \
       org.opencontainers.image.description="Public analytics dashboards for the Polkadot ecosystem" \
       org.opencontainers.image.url="https://analytics.cypherpunk.agency" \
       org.opencontainers.image.source="https://github.com/cypherpunk-agency/polkadot-analytics" \

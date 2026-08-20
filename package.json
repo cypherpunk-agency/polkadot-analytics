@@ -1,6 +1,7 @@
 {
   "name": "polkadot-analytics",
   "private": true,
+  "license": "Unlicense",
   "version": "0.1.0",
   "type": "module",
   "description": "Public analytics dashboards for the Polkadot ecosystem — one shared data layer, one design system, many pages",

@@ -32,8 +32,8 @@ export const PAGES = [
     nav: 'Hydration',
     title: 'Hydration DEX activity',
     blurb:
-      'Swaps on the Omnipool, reconstructed from per-leg chain events into the trades people actually made, and valued in dollars.',
-    source: 'Hydration archive + RPC',
+      'Swaps on the Omnipool: the per-leg chain events as the trades people actually made, valued in dollars, over a window the page states in days and in blocks.',
+    source: 'Hydration liquidity-pools squid (orca) + chain registry',
     live: true,
   },
   {

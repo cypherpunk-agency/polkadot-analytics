@@ -1,10 +1,12 @@
 // Hydration — the Omnipool DEX on Polkadot.
 //
 // Two upstreams, both anonymous and both public:
-//   · the Subsquid archive at explorer.hydradx.cloud/graphql, which is the same indexer the
-//     official Hydration UI uses, for the swap events;
+//   · orca — Hydration's own liquidity-pools squid (`galacticcouncil/hydration-data-lake`,
+//     self-hosted, CORS-open, PostGraphile). We read `routedTrades`, which is the swap LEGS
+//     already grouped into trades. Two hosts are listed and the first one that answers wins.
 //   · the chain itself at rpc.hydradx.cloud, for the asset registry, because an indexer that
-//     hands you `asset: 1000624` and nothing else is not enough to say what was traded.
+//     hands you `asset: 1000624` and nothing else is not enough to say what was traded — and
+//     because the registry, not any indexer, is the authority on a symbol and its decimals.
 //
 // This page is the descendant of the 2022 Mangata X DEX-stats work in `subflow DEX stats`:
 // same questions — what traded, for how much, by whom — against a venue that is still live.
@@ -13,8 +15,22 @@
 // Hydration emits ONE `Broadcast.Swapped3` per swap LEG, not per trade. A single user swap of
 // USDT→GDOT is four legs: AAVE unwrap, stableswap, omnipool in, omnipool out. Summing legs
 // would count the same money up to four times, and the result would look entirely plausible.
-// Legs of one trade share the first element of `operationStack`, so that is what we group on.
-// See docs/platform/hydration.md.
+// Legs of one trade share the first element of `operationStack`.
+//
+// We used to do that grouping by hand against the generic Subsquid archive at
+// explorer.hydradx.cloud. orca has already done it, keyed on the same `Broadcast::IncrementalId`
+// our decoder used, so the two agree by construction — and orca answers a whole day in one
+// second where the generic archive times out at twelve. The grouping is still the fact that
+// matters; it is just no longer ours to get wrong. `swaps.totalCount` on each row is the leg
+// count, and the page reports the leg-inflation factor so the grouping stays visible rather
+// than becoming an invisible assumption. See docs/platform/hydration.md.
+//
+// ── the window ──────────────────────────────────────────────────────────────────────────────
+// orca's `routedTrades` begin at a specific block, and before that block this source has
+// nothing — not "no trading". That floor is read live and stated on the page, because a chart
+// that starts on a date for a reason nobody wrote down is the exact failure this repo's third
+// rule exists to prevent. Window edges are whole UTC days resolved to real block heights by
+// asking the chain which block a day started at, never by multiplying an assumed block time.
 
 import { graphql, jsonRpc, UpstreamError } from '../lib/upstream.mjs'
 import { deriveRates } from '../../src/core/pricing.js'
@@ -24,13 +40,26 @@ import { blake2b } from '../../src/core/codec/blake2b.js'
 import { toHex, fromHex, utf8, concat, u32le } from '../../src/core/codec/bytes.js'
 import { decodeCompact } from '../../src/core/codec/scale.js'
 
-const ARCHIVE = 'https://explorer.hydradx.cloud/graphql'
+/** Trap 7 in docs/concept/research/hydration.md: the URL orca's own README documents is dead,
+ *  and the live one was found by watching the app's network traffic. It can move again, so a
+ *  second host with an identical schema is listed and the failure of the first is reported
+ *  rather than swallowed. */
+const ORCA_HOSTS = [
+  'https://orca-prod-pool-01.orca.hydration.cloud/graphql',
+  'https://orca-prod-pool-02.catfish.hydration.cloud/graphql',
+]
 const RPC = 'https://rpc.hydradx.cloud'
 
-/** ~6 s blocks. Only used to turn "N days" into a height range; every bucket is then stamped
- *  from the block's own timestamp, so drift in this constant cannot mis-date anything. */
-const BLOCKS_PER_DAY = 14_400
 const PAGE = 1000
+
+/** Nominal 6 s blocks. Used ONLY to guess where to start looking for a UTC day boundary — the
+ *  boundary itself comes from the chain, and the guess is checked before it is trusted. Real
+ *  block time on this chain is a trailing average around 5.6–6.2 s and is never a constant. */
+const NOMINAL_BLOCKS_PER_DAY = 14_400
+
+/** A ceiling on how much of somebody else's database we will pull into a 256 MB container in
+ *  one request. Reaching it is a bug or a runaway window, so it throws rather than truncating. */
+const MAX_TRADES = 250_000
 
 /* ------------------------------------------------------------------- asset registry ---- */
 
@@ -98,8 +127,8 @@ export function decodeAssetDetails(hex) {
 
 /**
  * Resolve exactly the assets that appeared in the window, rather than sweeping the whole
- * registry — there are thousands of entries and almost all of them are share tokens nobody
- * traded today.
+ * registry — there are ~1,400 entries and almost all of them are share tokens nobody traded
+ * today.
  */
 async function fetchAssets(ids) {
   const wanted = [...new Set(ids)].filter((id) => Number.isInteger(id) && id >= 0)
@@ -156,55 +185,133 @@ async function verifyRegistry() {
   }
 }
 
-/* ---------------------------------------------------------------------- swap events ---- */
+/* ------------------------------------------------------------------------------ orca ---- */
 
-const HEAD = '{ blocks(limit: 1, orderBy: height_DESC) { height timestamp } }'
+const ORCA = 'hydration-orca'
 
-const SWAPS = `
-query Swaps($from: Int!, $to: Int!, $limit: Int!, $after: String) {
-  events(
-    where: { name_eq: "Broadcast.Swapped3", block: { height_gte: $from, height_lt: $to }, id_gt: $after }
-    orderBy: id_ASC
-    limit: $limit
-  ) {
-    id
-    indexInBlock
-    args
-    block { height timestamp }
+/** Head, and the oldest routed trade orca holds. One request, because the second is the thing
+ *  that decides whether the requested window even exists in this source. */
+const HEAD_AND_FLOOR = `
+query HeadAndFloor {
+  blocks(orderBy: HEIGHT_DESC, first: 1) { nodes { height timestamp } }
+  floor: routedTrades(orderBy: PARA_BLOCK_HEIGHT_ASC, first: 1) {
+    nodes { id paraBlockHeight block { height timestamp } }
   }
 }`
 
 /**
- * Keyset paging on `id`, not `offset`. Offset paging over a hundred thousand rows makes the
- * archive re-scan from the top on every page, and the last page costs the most; keyset paging
- * costs the same for page 1 and page 90.
+ * The first block at or after an instant, with the guess that made it fast checked before the
+ * answer is used.
+ *
+ * `blocks(timestamp_gte)` unassisted takes 1–4 s on a 13.7 M-row table; the same query with a
+ * height floor takes 190 ms. But a height floor that is accidentally ABOVE the real boundary
+ * returns the floor block itself and the window then starts silently late — so `probe` reads
+ * the guess's own timestamp and the guess is only trusted when it really does sit before the
+ * instant we are looking for.
  */
-async function fetchLegs(from, to, onPage) {
-  let after = ''
-  let total = 0
-  for (;;) {
-    const data = await graphql({
-      source: 'hydration-archive',
-      url: ARCHIVE,
-      query: SWAPS,
-      variables: { from, to, limit: PAGE, after },
-      timeoutMs: 60_000,
-    })
-    const events = data.events ?? []
-    if (!events.length) break
-    onPage(events)
-    total += events.length
-    after = events[events.length - 1].id
-    if (events.length < PAGE) break
+const BOUNDARY = `
+query Boundary($est: Int!, $at: Datetime!) {
+  probe: blocks(filter: { height: { equalTo: $est } }) { nodes { height timestamp } }
+  boundary: blocks(
+    filter: { height: { greaterThanOrEqualTo: $est }, timestamp: { greaterThanOrEqualTo: $at } }
+    orderBy: HEIGHT_ASC
+    first: 1
+  ) { nodes { height timestamp } }
+}`
+
+const BOUNDARY_SCAN = `
+query BoundaryScan($at: Datetime!) {
+  boundary: blocks(filter: { timestamp: { greaterThanOrEqualTo: $at } }, orderBy: HEIGHT_ASC, first: 1) {
+    nodes { height timestamp }
   }
-  return total
+}`
+
+const COUNT = `
+query Count($from: Int!, $to: Int!) {
+  routedTrades(filter: { paraBlockHeight: { greaterThanOrEqualTo: $from, lessThan: $to } }) { totalCount }
+}`
+
+/**
+ * Keyset paging through the connection's own cursor, not `offset`. Offset paging over a
+ * hundred thousand rows makes the database re-scan from the top on every page and the last
+ * page costs the most; measured here, page 1 and page 6 both take ~330 ms.
+ *
+ * `swaps(first: 1)` is deliberate: only the outermost operation and the leg count are wanted,
+ * and pulling every leg back would undo most of the saving of having them pre-grouped.
+ */
+const TRADES = `
+query Trades($from: Int!, $to: Int!, $first: Int!, $after: Cursor) {
+  routedTrades(
+    filter: { paraBlockHeight: { greaterThanOrEqualTo: $from, lessThan: $to } }
+    orderBy: [PARA_BLOCK_HEIGHT_ASC, ID_ASC]
+    first: $first
+    after: $after
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      paraBlockHeight
+      participantSwappers
+      block { timestamp }
+      swaps(first: 1, orderBy: SWAP_INDEX_ASC) { totalCount nodes { operationId } }
+      routeTradeInputs { nodes { assetId amount } }
+      routeTradeOutputs { nodes { assetId amount } }
+    }
+  }
+}`
+
+const SQUID_ASSETS = `
+query SquidAssets($ids: [String!]) {
+  assets(filter: { id: { in: $ids } }) { nodes { id assetRegistryId symbol decimals } }
+}`
+
+/**
+ * orca's own published volume for exactly the blocks we read, so the page can state how far it
+ * is from the number Hydration publishes about itself and why. `…VolNorm` is USD-normalised.
+ */
+const PLATFORM_VOLUME = `
+query PlatformVolume($from: Int!, $to: Int!) {
+  platformTotalVolumesByPeriod(filter: { startBlockNumber: $from, endBlockNumber: $to }) {
+    nodes { totalVolNorm omnipoolVolNorm stableswapVolNorm xykpoolVolNorm }
+  }
+}`
+
+/** First host that answers. A dead host is a reported fact, not a silent failover. */
+async function connect() {
+  const failures = []
+  for (const url of ORCA_HOSTS) {
+    const host = url.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    try {
+      const data = await graphql({ source: ORCA, url, query: HEAD_AND_FLOOR, timeoutMs: 20_000 })
+      const head = data?.blocks?.nodes?.[0]
+      const floor = data?.floor?.nodes?.[0]
+      if (!head || !floor) {
+        throw new UpstreamError('answered without a head block or a first routed trade.', { kind: 'upstream', source: ORCA })
+      }
+      return { url, host, head, floor, failures }
+    } catch (error) {
+      failures.push(`${host}: ${error.message}`)
+    }
+  }
+  throw new UpstreamError(`no orca host answered — ${failures.join('; ')}`, { kind: 'transport', source: ORCA })
+}
+
+async function firstBlockAtOrAfter(url, instant, hint) {
+  const est = Math.max(1, Math.floor(hint))
+  const data = await graphql({ source: ORCA, url, query: BOUNDARY, variables: { est, at: instant }, timeoutMs: 30_000 })
+  const probe = data?.probe?.nodes?.[0]
+  const found = data?.boundary?.nodes?.[0]
+  if (probe && found && Date.parse(probe.timestamp) < Date.parse(instant)) return { block: found, assisted: true }
+
+  const scan = await graphql({ source: ORCA, url, query: BOUNDARY_SCAN, variables: { at: instant }, timeoutMs: 90_000 })
+  return { block: scan?.boundary?.nodes?.[0] ?? null, assisted: false }
 }
 
 /* --------------------------------------------------------------------- pallet names ---- */
 
 // A swapper beginning with the ASCII "modl" is a pallet account, not a person: Substrate
 // derives them from a PalletId. Naming them matters because several of the busiest "traders"
-// on any given day are the fee processor and the referrals pot recycling protocol income —
+// on any given day are the fee processor and the DCA machinery recycling protocol flow —
 // counting those as user flow would overstate how much anyone actually traded.
 const MODL = '6d6f646c'
 
@@ -224,12 +331,70 @@ function palletName(hexAccount) {
 
 /* ------------------------------------------------------------------------ operation ---- */
 
-/** The first element of the stack is the thing the user actually asked for; the rest are how it got done. */
-function origin(stack) {
-  const first = Array.isArray(stack) && stack.length ? stack[0] : null
-  if (!first) return { kind: 'Direct', key: null }
-  return { kind: first.__kind ?? 'Unknown', key: `${first.__kind}:${first.value}` }
+/**
+ * `operationId` is the chain's operation stack, flattened by the squid as
+ * `Kind:value[:value][/Kind:value…]` — e.g. `Router:10633824/Omnipool:10633825`, or
+ * `DCA:30104:10619288/Router:10619289` for an instalment of a DCA schedule.
+ *
+ * The FIRST segment is what the user asked for; the rest is how it got done. That is the same
+ * `operationStack[0]` the hand-rolled decoder grouped on.
+ *
+ * Whatever the chain sends is used as-is rather than mapped onto a fixed list, and this is not a
+ * theoretical worry: over fourteen days in August 2026 the kinds observed were Omnipool, Router,
+ * DCA, Batch — and `Xcm`, five times, which is exactly the rate at which somebody writes down
+ * "the four kinds we've seen" and silently loses the fifth. `XcmExchange` exists in the runtime
+ * metadata and has still never been observed. `Direct` is ours, for a trade that arrives with no
+ * operation stack at all — a single leg that nothing wrapped — and it is not a chain-side
+ * variant.
+ */
+function initiation(operationId) {
+  if (!operationId) return 'Direct'
+  const kind = String(operationId).split('/')[0].split(':')[0]
+  return kind || 'Direct'
 }
+
+/* --------------------------------------------------------------------------- windows ---- */
+
+const dayIso = (ms) => new Date(ms).toISOString().slice(0, 10)
+
+const plural = (n, word) => (n === 1 ? word : `${word}s`)
+
+/** A list a reader can actually read, that never pretends to be the whole list when it is not. */
+const some = (list, n = 6) =>
+  list.length <= n ? list.join(', ') : `${list.slice(0, n).join(', ')}, and ${list.length - n} more`
+
+const addDaysIso = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * `aggregate()` draws every day between the first and last trade, which is right when the
+ * dataset defines the window. Here the WINDOW defines the window: a reader who asked for
+ * fourteen days must see fourteen bars, and a day at either edge with no trades in it is a
+ * fact about the venue, not a reason to shorten the axis. So the series is extended out to
+ * the window the page claims to be showing.
+ *
+ * Only the span fields are corrected. Every other total was computed over the trades and is
+ * unaffected by drawing more empty days around them.
+ */
+export function spanWindow(result, firstDay, lastDay) {
+  if (result.empty) return result
+  const empty = (date) => ({ date, usd: 0, count: 0, stack: result.venues.map(() => 0) })
+
+  const days = result.days.slice()
+  for (let d = addDaysIso(days[0].date, -1); d >= firstDay; d = addDaysIso(d, -1)) days.unshift(empty(d))
+  for (let d = addDaysIso(days[days.length - 1].date, 1); d <= lastDay; d = addDaysIso(d, 1)) days.push(empty(d))
+
+  return {
+    ...result,
+    days,
+    totals: { ...result.totals, spanDays: days.length, first: days[0].date, last: days[days.length - 1].date },
+  }
+}
+
+/* ------------------------------------------------------------------------------ page ---- */
 
 export default {
   id: 'hydration',
@@ -241,139 +406,427 @@ export default {
 
   operations: {
     swaps: {
-      summary: 'Hydration swaps over a recent window, grouped into trades, valued and rolled up.',
-      // Fifteen minutes. A full window is ~55 s and ~60 MB of upstream traffic; doing that on
-      // every pageview would make this site the archive's heaviest client by a wide margin.
+      summary: 'Hydration routed trades over a recent window, valued and rolled up. Legs are grouped upstream.',
+      // Fifteen minutes. A fourteen-day window is ~79,000 trades and ~37 MB of upstream
+      // traffic; doing that on every pageview would make this site orca's heaviest client.
       ttlMs: 900_000,
       schema: {
-        // Capped at seven deliberately. Each extra day is another ~11,000 legs and another
-        // ~8 MB from an indexer we do not own. The cap is a cost decision, and the page says so
-        // rather than pretending the window is a preference.
-        days: { type: 'int', min: 1, max: 7, default: 3 },
+        // Fourteen, not seven, and not unlimited. Measured on 2026-08-20 against orca:
+        // 8,527 trades/day, 468 bytes/trade on the wire, ~330 ms per 1,000-row page — so a
+        // day costs ~3 s and fourteen days ~26 s. Thirty days is ~181,000 trades and ~60 s,
+        // which is a page load nobody waits through. The cap is OURS and it is a cost
+        // decision; the data goes back to January 2025 and the page says both.
+        days: { type: 'int', min: 1, max: 14, default: 7 },
       },
 
       async run({ days }) {
         await verifyRegistry()
 
-        const head = (await graphql({ source: 'hydration-archive', url: ARCHIVE, query: HEAD })).blocks[0]
-        const to = head.height + 1
-        const from = Math.max(0, to - days * BLOCKS_PER_DAY)
+        const { url, host, head, floor, failures } = await connect()
+        const headMs = Date.parse(head.timestamp)
+        const floorMs = Date.parse(floor.block.timestamp)
 
-        /** @type {Map<string, {legs: any[]}>} */
-        const groups = new Map()
-        const assetIds = new Set()
+        /* ---- the window, in whole UTC days, resolved to real block heights ---- */
 
-        const legCount = await fetchLegs(from, to, (events) => {
-          for (const event of events) {
-            const args = event.args ?? {}
-            const { kind, key } = origin(args.operationStack)
-            // A leg with no operation stack stands alone — its own trade, one hop long.
-            const groupKey = key ? `${event.block.height}:${key}` : `solo:${event.id}`
-            const group = groups.get(groupKey) || { legs: [], originKind: kind }
-            group.legs.push({
-              index: event.indexInBlock,
-              height: event.block.height,
-              timestamp: Math.floor(new Date(event.block.timestamp).getTime() / 1000),
-              swapper: args.swapper,
-              filler: args.fillerType?.__kind ?? 'Unknown',
-              inputs: args.inputs ?? [],
-              outputs: args.outputs ?? [],
-              id: event.id,
-            })
-            groups.set(groupKey, group)
-            for (const side of [args.inputs, args.outputs]) {
-              for (const leg of side ?? []) assetIds.add(Number(leg.asset))
-            }
+        const lastDay = dayIso(headMs)
+        const askedFirstDay = addDaysIso(lastDay, -(days - 1))
+        const floorDay = dayIso(floorMs)
+
+        let firstDay = askedFirstDay
+        let from = floor.paraBlockHeight
+        let boundaryAssisted = true
+        const clamped = askedFirstDay < floorDay
+
+        if (clamped) {
+          firstDay = floorDay
+        } else {
+          // Guess low on purpose: at ~5.6 s/block a day is ~15,400 blocks, so 18,000 per day
+          // plus a day of slack always lands before the boundary. The query checks it anyway.
+          const hint = head.height - days * Math.ceil(NOMINAL_BLOCKS_PER_DAY * 1.25) - NOMINAL_BLOCKS_PER_DAY
+          const { block, assisted } = await firstBlockAtOrAfter(url, `${askedFirstDay}T00:00:00Z`, hint)
+          if (!block) {
+            throw new UpstreamError(
+              `orca has no block at or after ${askedFirstDay}T00:00:00Z, but reports a head at ${head.timestamp}.`,
+              { kind: 'upstream', source: ORCA },
+            )
           }
-        })
+          from = Math.max(block.height, floor.paraBlockHeight)
+          boundaryAssisted = assisted
+        }
+        const to = head.height + 1
 
-        const assets = await fetchAssets([...assetIds])
-        const symbolOf = (id) => assets.get(Number(id))?.symbol ?? null
+        /* ---- the trades ---- */
+
+        const counted = await graphql({ source: ORCA, url, query: COUNT, variables: { from, to }, timeoutMs: 60_000 })
+        const expected = counted?.routedTrades?.totalCount ?? null
+        if (expected !== null && expected > MAX_TRADES) {
+          throw new UpstreamError(
+            `${expected.toLocaleString('en-US')} routed trades in blocks ${from}–${to - 1} is past the ` +
+              `${MAX_TRADES.toLocaleString('en-US')} ceiling this service will hold in memory at once. ` +
+              'Ask for a shorter window rather than being served a silently truncated one.',
+            { kind: 'upstream', source: ORCA },
+          )
+        }
+
+        const raw = []
+        const squidAssetIds = new Set()
+        let legCount = 0
+        let multiAsset = 0
+        let multiSwapper = 0
+        let withoutBalances = 0
+        let pages = 0
+
+        for (let after = null; ; pages += 1) {
+          const data = await graphql({
+            source: ORCA,
+            url,
+            query: TRADES,
+            variables: { from, to, first: PAGE, after },
+            timeoutMs: 60_000,
+          })
+          const connection = data?.routedTrades
+          const nodes = connection?.nodes ?? []
+          for (const node of nodes) {
+            const inputs = node.routeTradeInputs?.nodes ?? []
+            const outputs = node.routeTradeOutputs?.nodes ?? []
+            if (!inputs.length || !outputs.length) {
+              // A routed trade the indexer recorded without any balance rows. It cannot be
+              // valued or routed, so it is dropped — and counted, so the drop is visible.
+              withoutBalances += 1
+              continue
+            }
+            if (inputs.length > 1 || outputs.length > 1) multiAsset += 1
+            const swappers = node.participantSwappers ?? []
+            if (swappers.length > 1) multiSwapper += 1
+
+            legCount += node.swaps?.totalCount ?? 0
+            for (const record of inputs.concat(outputs)) squidAssetIds.add(String(record.assetId))
+
+            raw.push({
+              id: node.id,
+              height: node.paraBlockHeight,
+              timestamp: Math.floor(Date.parse(node.block.timestamp) / 1000),
+              swapper: swappers[0] ?? null,
+              venue: initiation(node.swaps?.nodes?.[0]?.operationId),
+              hops: node.swaps?.totalCount ?? 0,
+              inputs: inputs.map((r) => ({ assetId: String(r.assetId), amount: r.amount })),
+              output: outputs[outputs.length - 1],
+            })
+          }
+          if (raw.length > MAX_TRADES) {
+            throw new UpstreamError(`orca returned more than ${MAX_TRADES} routed trades for blocks ${from}–${to - 1}.`, {
+              kind: 'upstream',
+              source: ORCA,
+            })
+          }
+          if (!connection?.pageInfo?.hasNextPage || !nodes.length) break
+          after = connection.pageInfo.endCursor
+        }
+
+        /* ---- assets: orca supplies the key, the chain registry supplies the meaning ---- */
+
+        // orca's `assetId` is a mixed-type key — the numeric registry id for `Token` assets and
+        // the EVM contract address for `Erc20` ones (HOLLAR is `0x531a…f99a`). Joining it to the
+        // registry by a numeric cast would drop every Erc20 asset, which on this venue includes
+        // HOLLAR, aDOT and the whole GIGA family. So the squid maps its own key to a registry
+        // id, and the registry — read from the chain and self-checked above — says what that id
+        // is worth. Where both have an opinion, disagreements are reported, not averaged.
+        const squidIds = [...squidAssetIds]
+        /** @type {Map<string, {registryId:number|null, symbol:string|null, decimals:number|null}>} */
+        const squidAssets = new Map()
+        for (let i = 0; i < squidIds.length; i += 400) {
+          const batch = squidIds.slice(i, i + 400)
+          const data = await graphql({ source: ORCA, url, query: SQUID_ASSETS, variables: { ids: batch }, timeoutMs: 30_000 })
+          for (const asset of data?.assets?.nodes ?? []) {
+            const registryId = Number(asset.assetRegistryId)
+            squidAssets.set(String(asset.id), {
+              registryId: Number.isInteger(registryId) ? registryId : null,
+              symbol: asset.symbol ?? null,
+              decimals: asset.decimals ?? null,
+            })
+          }
+        }
+
+        const unmappedAssetIds = squidIds.filter((id) => !squidAssets.has(id) || squidAssets.get(id).registryId === null)
+        const registryIds = [...new Set([...squidAssets.values()].map((a) => a.registryId).filter((id) => id !== null))]
+        const assets = await fetchAssets(registryIds)
+
+        /**
+         * One resolved meaning per orca asset key, and a record of where it came from.
+         *
+         * The chain is the authority and wins wherever it has an answer. It does not always
+         * have one: an `External`-typed registry entry — an asset registered over XCM, DED and
+         * DAMN among them — decodes to `symbol: null, decimals: null` on chain, because its
+         * metadata lives on its own chain rather than in Hydration's registry. Dropping those
+         * legs would quietly shrink the totals; taking orca's word for them and saying so does
+         * not. Where BOTH have an answer and they differ, the chain is used and the
+         * disagreement is reported — a decimals disagreement is a factor of ten on every
+         * figure that asset touches and must never be settled silently.
+         */
+        const disagreements = []
+        const borrowedMetadata = []
+        /** @type {Map<string, {symbol:string|null, decimals:number|null, registryId:number|null}>} */
+        const resolved = new Map()
+        for (const squidId of squidIds) {
+          const squid = squidAssets.get(squidId) ?? null
+          const registryId = squid?.registryId ?? null
+          const chain = registryId === null ? null : assets.get(registryId) ?? null
+
+          if (chain && chain.decimals !== null && squid?.decimals != null && chain.decimals !== squid.decimals) {
+            disagreements.push(
+              `${squidId}: chain says ${chain.symbol}/${chain.decimals}, orca says ${squid.symbol}/${squid.decimals}`,
+            )
+          }
+
+          if (chain && chain.decimals !== null && chain.symbol) {
+            resolved.set(squidId, { symbol: chain.symbol, decimals: chain.decimals, registryId })
+          } else if (squid && squid.decimals != null && squid.symbol) {
+            borrowedMetadata.push(`${squid.symbol} (id ${registryId ?? squidId})`)
+            resolved.set(squidId, { symbol: squid.symbol, decimals: squid.decimals, registryId })
+          } else {
+            resolved.set(squidId, { symbol: null, decimals: null, registryId })
+          }
+        }
+
+        const unknownAssets = squidIds
+          .filter((id) => resolved.get(id).decimals === null)
+          .map((id) => resolved.get(id).registryId ?? id)
+
+        const symbolOf = (squidId) => resolved.get(String(squidId))?.symbol ?? null
 
         // Two registered assets can carry the same ticker — a bridged USDT and a native one,
         // an Erc20 wrapper and the token it wraps. Collapsing them onto one label turns a real
         // arbitrage between two representations into a nonsensical USDT→USDT route. So a
-        // symbol shared by more than one traded asset gets its id appended, and only then.
+        // symbol shared by more than one traded asset gets its registry id appended, and only
+        // then.
         const symbolUsers = new Map()
-        for (const id of assetIds) {
-          const symbol = symbolOf(id)
+        for (const squidId of squidIds) {
+          const symbol = symbolOf(squidId)
           if (symbol) symbolUsers.set(symbol, (symbolUsers.get(symbol) ?? 0) + 1)
         }
-        const labelOf = (id) => {
-          const symbol = symbolOf(id)
-          if (!symbol) return null
-          return symbolUsers.get(symbol) > 1 ? `${symbol}·${id}` : symbol
+        const labelOf = (squidId) => {
+          const meta = resolved.get(String(squidId))
+          if (!meta?.symbol) return null
+          if (symbolUsers.get(meta.symbol) <= 1) return meta.symbol
+          return `${meta.symbol}·${meta.registryId ?? squidId}`
         }
-        const amountOf = (leg) => {
-          const asset = assets.get(Number(leg.asset))
-          if (!asset || asset.decimals === null) return null
-          return Number(leg.amount) / 10 ** asset.decimals
+        const amountOf = (record) => {
+          const meta = resolved.get(String(record.assetId))
+          if (!meta || meta.decimals === null) return null
+          const amount = Number(record.amount)
+          return Number.isFinite(amount) ? amount / 10 ** meta.decimals : null
         }
 
-        // One trade per group: first leg in, last leg out, ordered the way the block executed.
-        const raw = []
-        for (const [key, group] of groups) {
-          const legs = group.legs.sort((a, b) => a.index - b.index)
-          const firstIn = legs[0].inputs[0]
-          const lastOut = legs[legs.length - 1].outputs[0]
-          if (!firstIn || !lastOut) continue
-          raw.push({
-            key,
-            legs,
-            originKind: group.originKind,
-            swapper: legs[0].swapper,
-            timestamp: legs[0].timestamp,
-            inAsset: Number(firstIn.asset),
-            inAmount: amountOf(firstIn),
-            outAsset: Number(lastOut.asset),
-            outAmount: amountOf(lastOut),
-            pools: [...new Set(legs.map((l) => l.filler))].join('+'),
+        /* ---- pricing ---- */
+
+        // Rates come only from single-asset-in, single-asset-out trades: those are the ones
+        // that state a price unambiguously. A route that consumed two assets and produced one
+        // states nothing about either rate on its own.
+        const priceable = []
+        for (const trade of raw) {
+          if (trade.inputs.length !== 1) continue
+          const inAmount = amountOf(trade.inputs[0])
+          const outAmount = amountOf(trade.output)
+          if (!inAmount || !outAmount) continue
+          priceable.push({
+            inSymbol: symbolOf(trade.inputs[0].assetId),
+            inAmount,
+            outSymbol: symbolOf(String(trade.output.assetId)),
+            outAmount,
           })
         }
+        const { rates } = deriveRates(priceable)
 
-        const { rates } = deriveRates(
-          raw
-            .filter((t) => t.inAmount && t.outAmount)
-            .map((t) => ({
-              inSymbol: symbolOf(t.inAsset),
-              inAmount: t.inAmount,
-              outSymbol: symbolOf(t.outAsset),
-              outAmount: t.outAmount,
-            })),
-        )
-
-        const unknownAssets = [...assetIds].filter((id) => !assets.has(id) || assets.get(id).decimals === null)
+        /* ---- the canonical Trade shape ---- */
 
         const trades = raw.map((t) => {
-          const symbol = symbolOf(t.inAsset)
-          const rate = symbol === null ? undefined : rates[symbol]
           const pallet = palletName(t.swapper)
+          // Volume is the INPUT side: what the trader actually sent, before any hop. Every
+          // input leg is valued, and a single unpriceable leg makes the whole trade unpriced —
+          // null, never 0, because "we could not value this" and "this was worth nothing" are
+          // different facts.
+          let usd = 0
+          for (const record of t.inputs) {
+            const amount = amountOf(record)
+            const symbol = symbolOf(record.assetId)
+            const rate = symbol === null ? undefined : rates[symbol]
+            if (amount === null || rate === undefined) {
+              usd = null
+              break
+            }
+            usd += amount * rate
+          }
+          const firstIn = t.inputs[0]
           return {
-            id: t.key,
+            id: t.id,
             account: pallet ?? String(t.swapper).toLowerCase(),
             timestamp: t.timestamp,
             date: dayOf(t.timestamp),
-            // The stacked dimension is HOW THE TRADE WAS INITIATED — a direct swap, a router
-            // route, a DCA schedule instalment, a batch. On a venue where a single Omnipool is
-            // most of the liquidity, that is the question with an interesting answer.
-            //
-            // Whatever the chain sends is used as-is rather than mapped onto a fixed list. The
-            // variant set is open-ended and a hardcoded one goes stale silently: a new execution
-            // type would land in whichever bucket the mapping defaulted to. Verified live in
-            // runtime 435: Omnipool, Router, DCA, Batch — plus `Direct`, which is ours, for a
-            // leg that arrives with no operation stack at all.
-            venue: t.originKind,
-            destination: t.pools,
-            tokenIn: labelOf(t.inAsset),
-            tokenOut: labelOf(t.outAsset),
-            amountIn: t.inAmount ?? 0,
-            usd: rate === undefined || t.inAmount === null ? null : t.inAmount * rate,
-            hops: t.legs.length,
+            // The stacked dimension is HOW THE TRADE WAS INITIATED — a direct Omnipool swap, a
+            // router route, a DCA schedule instalment, a batch. On a venue where a single
+            // Omnipool is most of the liquidity, that is the question with an interesting
+            // answer.
+            venue: t.venue,
+            tokenIn: labelOf(firstIn.assetId),
+            tokenOut: labelOf(String(t.output.assetId)),
+            amountIn: amountOf(firstIn) ?? 0,
+            usd,
+            hops: t.hops,
             isPallet: Boolean(pallet),
           }
         })
 
+        /* ---- notes, generated from this payload ---- */
+
         const palletTrades = trades.filter((t) => t.isPallet)
+        const headAgeMinutes = Math.round((Date.now() - headMs) / 60_000)
+        const inflation = trades.length ? legCount / trades.length : 0
+        const window = `${firstDay} to ${lastDay} UTC`
+        const pagedUsd = trades.reduce((sum, t) => sum + (t.usd || 0), 0)
+
+        // What Hydration publishes about itself, over exactly these blocks. Two defensible
+        // numbers that differ by a multiple is precisely the thing a reader has to be told,
+        // and it costs one 300 ms query. It is a cross-check, not the page: if it fails, the
+        // page still renders and says the check did not run.
+        let platform = null
+        let platformError = null
+        try {
+          const data = await graphql({
+            source: ORCA,
+            url,
+            query: PLATFORM_VOLUME,
+            variables: { from, to: to - 1 },
+            timeoutMs: 30_000,
+          })
+          const node = data?.platformTotalVolumesByPeriod?.nodes?.[0]
+          if (node) {
+            platform = {
+              total: Number(node.totalVolNorm),
+              omnipool: Number(node.omnipoolVolNorm),
+              stableswap: Number(node.stableswapVolNorm),
+              xyk: Number(node.xykpoolVolNorm),
+            }
+          }
+        } catch (error) {
+          platformError = error.message
+        }
+        const money0 = (n) => '$' + Math.round(n).toLocaleString('en-US')
+
+        const notes = [
+          `Hydration emits one event per swap LEG. These are ${trades.length.toLocaleString('en-US')} routed trades made of ` +
+            `${legCount.toLocaleString('en-US')} legs — a factor of ${inflation.toFixed(2)}. The grouping is orca's, keyed on the ` +
+            "chain's own Broadcast incremental id; counting the legs instead would multiply every dollar on this page by that factor.",
+          `Window: whole UTC days, ${window}, which is blocks ${from.toLocaleString('en-US')}–${(to - 1).toLocaleString('en-US')}. ` +
+            'The day boundary was read from the chain rather than assumed from a block time — block time here is a trailing ' +
+            'average near 5.6–6.2 s and is not a constant.',
+          `${lastDay} is still in progress: its bar covers only up to block ${head.height.toLocaleString('en-US')} at ` +
+            `${head.timestamp}, so it is a partial day and will look short next to the others.`,
+          `This source begins at block ${floor.paraBlockHeight.toLocaleString('en-US')} (${floorDay}). Before that date orca has ` +
+            'no routed trades — which is not the same as no trading. It indexes individual swap legs back to 2024-04-28 but does ' +
+            'not group them into trades before this floor, and the previous source behind this page (the generic Subsquid ' +
+            'archive) saw its first `Broadcast.Swapped3` only at block 7,567,547, on 2025-05-19. A window that appears to start ' +
+            'in mid-2025 is an artefact of the source, not of the venue.',
+          `The window is capped at 14 days by this service, not by the data. A day is ~8,500 trades and ~4 MB from an indexer we ` +
+            'do not own; thirty days would be a minute of fetching behind a spinner. The cap is a cost decision and it is the ' +
+            'reason this chart is short, not a shortage of history.',
+          'Accounts beginning with the ASCII "modl" are pallet accounts, not people. They are labelled as such and left in the ' +
+            'totals, because the money did move; the summary states how much of the volume they are.',
+          'Volume is the value of what went IN — what the trader sent, before any hop. A trade with an unpriceable input leg is ' +
+            'null, not zero, and is excluded from the dollar total while still being counted.',
+          'The "settled" figure is 100% by construction and is not a success rate. A swap that failed emits no event, so a ' +
+            'failed trade never becomes a row here at all — this page cannot see them and does not claim to.',
+          'Prices are derived from the trades themselves against dollar-pegged legs, and only from trades with one asset in and ' +
+            'one out. An asset that never traded against a priced one in this window has no rate.',
+          'Asset id 1 is H2O, the Omnipool hub asset. A lot of writing about Hydration, including its own older material, still ' +
+            'calls it LRNA; the chain registry is the authority and it says H2O. Trades routed through the hub appear under that ' +
+            'symbol.',
+          `Two upstreams, cross-checked: orca (${host}) supplies the trades and the asset key, which is a registry id for native ` +
+            'assets and an EVM contract address for Erc20 ones; the chain registry at rpc.hydradx.cloud is the authority on ' +
+            'every symbol and decimal used to value them. Joining orca\'s key numerically instead would drop HOLLAR, aDOT and ' +
+            'the whole GIGA family without a word.',
+        ]
+
+        if (platform && Number.isFinite(platform.total) && pagedUsd > 0) {
+          notes.push(
+            `Hydration's own indexer reports ${money0(platform.total)} of pool volume over exactly these blocks ` +
+              `(${money0(platform.omnipool)} Omnipool + ${money0(platform.stableswap)} stableswap + ${money0(platform.xyk)} XYK), ` +
+              `against ${money0(pagedUsd)} here — ${(platform.total / pagedUsd).toFixed(2)}× as much. Neither is wrong. That ` +
+              'figure is the notional that crossed each POOL, so one route through a stableswap and the Omnipool is counted in ' +
+              'both; this page counts what the trader sent, once. A "Hydration volume" number means nothing without saying which.',
+          )
+        } else if (platformError) {
+          notes.push(`The cross-check against Hydration's own published pool volume did not run: ${platformError}`)
+        }
+        if (borrowedMetadata.length) {
+          notes.push(
+            `Hydration's own registry has no symbol or decimals for ${borrowedMetadata.length} asset(s) traded in this window ` +
+              `(${some(borrowedMetadata)}) — they are registered as \`External\`, meaning their metadata lives ` +
+              'on the chain they came from. Those legs are valued on orca\'s metadata instead of the chain\'s, which is one ' +
+              'source rather than two agreeing.',
+          )
+        }
+
+        if (clamped) {
+          notes.push(
+            `${days} days were requested, which reaches back before ${floorDay}. The window was cut at this source's first ` +
+              'routed trade rather than drawing days that only look empty.',
+          )
+        }
+        if (!boundaryAssisted) {
+          notes.push(
+            'The fast path for finding the window\'s first block did not pass its own self-check, so the boundary was found by ' +
+              'a full scan instead. The window is right; it was slower to compute.',
+          )
+        }
+        if (withoutBalances) {
+          notes.push(
+            `${withoutBalances.toLocaleString('en-US')} routed trade(s) in this window carry no input or output balance rows in ` +
+              'orca and were dropped: there is nothing to value or to name a route with. They are not in any figure here.',
+          )
+        }
+        if (expected !== null && expected !== raw.length + withoutBalances) {
+          notes.push(
+            `orca counted ${expected.toLocaleString('en-US')} routed trades in blocks ${from.toLocaleString('en-US')}–` +
+              `${(to - 1).toLocaleString('en-US')} but paging returned ${(raw.length + withoutBalances).toLocaleString('en-US')}. ` +
+              'That difference is a paging fault, not a rounding one; the totals here are of what was actually read.',
+          )
+        }
+        if (multiAsset) {
+          notes.push(
+            `${multiAsset.toLocaleString('en-US')} ${plural(multiAsset, 'trade')} consumed or produced more than one asset. ` +
+              `${multiAsset === 1 ? 'It is' : 'They are'} valued over every input leg, but the route label names only the ` +
+              'first asset in and the last out.',
+          )
+        }
+        if (multiSwapper) {
+          notes.push(
+            `${multiSwapper.toLocaleString('en-US')} ${plural(multiSwapper, 'trade')} list more than one swapper. The first is ` +
+              'used as the account, so those rows attribute the whole trade to one of several participants.',
+          )
+        }
+        if (unmappedAssetIds.length) {
+          notes.push(
+            `orca returned ${unmappedAssetIds.length} asset key(s) it cannot map to a registry id ` +
+              `(${some(unmappedAssetIds)}). Legs in those assets are unpriced rather than guessed at.`,
+          )
+        }
+        if (disagreements.length) {
+          notes.push(
+            `orca and the chain registry disagree about ${disagreements.length} asset(s): ${some(disagreements, 4)}. ` +
+              'The chain is used. A decimals disagreement is a factor of ten on everything that asset touches, so it is stated ' +
+              'rather than resolved quietly.',
+          )
+        }
+        if (failures.length) {
+          notes.push(`${failures.length} orca host(s) did not answer and were skipped: ${failures.join('; ')}.`)
+        }
+        if (headAgeMinutes > 15) {
+          notes.push(
+            `orca's head block is ${headAgeMinutes} minutes behind the wall clock. The most recent day on this chart is ` +
+              'missing whatever happened in that gap.',
+          )
+        }
+
         const result = aggregate({
           trades,
           rates,
@@ -381,32 +834,43 @@ export default {
             venue: 'Hydration',
             venueUrl: 'https://app.hydration.net',
             source: 'hydration',
-            sourceLabel: 'Hydration archive + RPC',
-            sourceUrl: 'explorer.hydradx.cloud · rpc.hydradx.cloud',
+            sourceLabel: 'Hydration liquidity-pools squid (orca) + chain registry',
+            sourceUrl: `${host} · rpc.hydradx.cloud`,
             unit: 'trade',
             unitPlural: 'trades',
             venueLabel: 'how the trade was initiated',
-            window: `the last ${days} day${days === 1 ? '' : 's'}`,
+            window,
             windowDays: days,
+            windowFrom: firstDay,
+            windowTo: lastDay,
+            windowClamped: clamped,
+            partialDay: lastDay,
+            coverageFrom: floorDay,
+            coverageFromBlock: floor.paraBlockHeight,
             blockRange: [from, to - 1],
             headBlock: head.height,
             headTime: head.timestamp,
+            headAgeMinutes,
+            orcaHost: host,
+            pagesFetched: pages,
+            expectedTrades: expected,
+            tradesWithoutBalances: withoutBalances,
             legCount,
+            legInflation: inflation,
+            platformPoolVolume: platform,
             tradeCount: trades.length,
             palletTrades: palletTrades.length,
             palletUsd: palletTrades.reduce((s, t) => s + (t.usd || 0), 0),
             unknownAssets,
+            unmappedAssetIds,
+            assetDisagreements: disagreements,
+            borrowedMetadata,
             fetchedAt: new Date().toISOString(),
-            notes: [
-              'Hydration emits one event per swap LEG. Legs sharing the first element of the operation stack are one trade — without that grouping a four-hop route would count as four trades and four times the volume.',
-              'Volume is the value of the first leg IN: what the trader actually sent, before any hop.',
-              'Accounts beginning with the ASCII "modl" are pallet accounts, not people. They are labelled as such and left in the totals, because the money did move; the summary states how much of the volume they are.',
-              'Prices are derived from the trades themselves against dollar-pegged legs. An asset that never traded against a priced one in this window has no rate and is excluded from the dollar total but counted in the trade count.',
-            ],
+            notes,
           },
         })
 
-        return trimForWire(result)
+        return trimForWire(spanWindow(result, firstDay, lastDay))
       },
     },
   },

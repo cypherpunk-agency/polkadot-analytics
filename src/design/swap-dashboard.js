@@ -11,14 +11,26 @@
 
 import { append, clear, el, notice, statRow, statTile } from './dom.js'
 import { lineChart, seriesColor, stackedBars } from './charts.js'
+import { livenessNotes } from './liveness.js'
 import { compact, fmtDay, money, money2, percent, shortAddr } from '../core/format.js'
 
 export function renderSwapDashboard(host, data) {
   clear(host)
   const { meta } = data
 
+  // How current the venue's index is, in the source's own words — built once here rather than
+  // inside `dataNotes`, because the branch that matters most for it is the one that never
+  // reaches `dataNotes`. "No trades in this window" and "the indexer stopped a fortnight ago"
+  // render as the same empty page, and only this line tells them apart. A source that does not
+  // assert liveness yields null and nothing is drawn.
+  const line = livenessNotes(meta?.liveness)
+
   if (data.empty) {
-    append(host, notice('warning', 'No trades in this window', `The source returned nothing for ${meta.window}.`))
+    append(
+      host,
+      notice('warning', 'No trades in this window', `The source returned nothing for ${meta.window}.`),
+      line ? el('section.meta', null, el('h2', { text: 'Data notes' }), line) : null,
+    )
     return
   }
 
@@ -31,7 +43,7 @@ export function renderSwapDashboard(host, data) {
     accountsCard(data),
     concentrationCard(data),
     dailyTable(data),
-    dataNotes(data),
+    dataNotes(data, line),
   )
 }
 
@@ -302,7 +314,7 @@ function dailyTable({ days, meta }) {
  * it is the part that makes the rest usable, and it is generated from the same payload the
  * charts are drawn from, so it cannot describe a different dataset than the one on screen.
  */
-function dataNotes({ meta, totals, rates }) {
+function dataNotes({ meta, totals, rates }, livenessLine = null) {
   const list = el('ul')
   for (const note of meta.notes ?? []) append(list, el('li', { text: note }))
 
@@ -354,6 +366,9 @@ function dataNotes({ meta, totals, rates }) {
     el('p', {
       text: `Read from ${meta.sourceLabel} (${meta.sourceUrl}) covering ${meta.window}. Snapshot taken ${new Date(meta.fetchedAt).toUTCString()}.`,
     }),
+    // Ahead of the caveats about the numbers, because it is the caveat about whether the
+    // numbers are of today. Absent for a venue whose source asserts nothing.
+    livenessLine,
     list,
     derived.length
       ? el('p', { text: `Rates derived from the trades themselves in this window: ${derived.join(' · ')}. Dollar-pegged assets are held at $1.` })

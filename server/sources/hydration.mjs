@@ -39,6 +39,29 @@ import { twox128 } from '../../src/core/codec/xxhash.js'
 import { blake2b } from '../../src/core/codec/blake2b.js'
 import { toHex, fromHex, utf8, concat, u32le } from '../../src/core/codec/bytes.js'
 import { decodeCompact } from '../../src/core/codec/scale.js'
+import { liveness } from '../../src/core/liveness.js'
+
+/** The upstream's human name, as `/api` and every liveness line spell it. Declared once, for
+ *  the reason bulletin.mjs declares its own: the contract says `label` is "the upstream's human
+ *  name, as it appears at /api", and two string literals is how that quietly stops being true. */
+const LABEL = 'Hydration (Omnipool)'
+
+/**
+ * Liveness thresholds for THIS upstream rather than the generic defaults in
+ * src/core/liveness.js.
+ *
+ * Fifteen minutes is not a new number — it is the threshold this module's own head-age note has
+ * used since it was written, and reusing it is deliberate: the pill and the note are two
+ * renderings of one fact, and giving them separate constants is how they end up disagreeing on
+ * screen. Hydration produces a block every ~6 s, so fifteen minutes is already ~150 blocks of
+ * trades that this page cannot see.
+ *
+ * A day is the frozen line, and this is the source that earned the state: the generic `hydradx`
+ * SQD squid answered every query in 381 ms with 1.57 MB of well-formed rows while 103 days
+ * behind. orca is a different deployment, not a different class of thing.
+ */
+const STALE_AFTER_MS = 15 * 60_000
+const FROZEN_AFTER_MS = 24 * 60 * 60_000
 
 /** Trap 7 in docs/concept/research/hydration.md: the URL orca's own README documents is dead,
  *  and the live one was found by watching the app's network traffic. It can move again, so a
@@ -369,6 +392,52 @@ const addDaysIso = (iso, n) => {
   return d.toISOString().slice(0, 10)
 }
 
+/* -------------------------------------------------------------------------- liveness ---- */
+
+/**
+ * The liveness assertion for one swaps load. See src/core/liveness.js for why a source asserts
+ * this at all: transport, upstream and decode errors catch an upstream that fails, and cannot
+ * catch one that succeeds and is wrong about the date.
+ *
+ * The head here is ORCA'S, not the chain's, and the distinction is the whole reason this is
+ * worth asserting. orca answers in a few hundred milliseconds whether it is at the tip or a
+ * fortnight behind it, and every trade on this page came from orca — so its head is what the
+ * numbers are current to. Hydration's own head is not read on this path (the RPC leg is only
+ * consulted for the asset registry, which has no clock), and this assertion does not claim to
+ * speak for it: a chain producing blocks that orca has not indexed is exactly the gap the
+ * `stale` sentence describes.
+ *
+ * @param {object} spec
+ * @param {number} spec.observedAt   ms epoch — when WE asked. The same instant the head age
+ *                                   in the notes is measured against, so the two cannot drift.
+ * @param {{height: number, timestamp: string}} spec.head   orca's newest indexed block
+ * @param {number} spec.headMs       `Date.parse` of that block's timestamp
+ * @param {string} spec.firstDay     first UTC day the payload draws
+ * @param {string} spec.lastDay      last UTC day the payload draws
+ */
+function livenessOf({ observedAt, head, headMs, firstDay, lastDay }) {
+  const readable = Number.isFinite(headMs)
+  return liveness({
+    source: 'hydration',
+    label: `${LABEL} — orca indexer`,
+    observedAt,
+    // NOT collapsed into `live` when the timestamp will not parse. orca answered; we could not
+    // read a clock out of what it said, and `unknown` is the honest word for that.
+    headAt: readable ? headMs : null,
+    head: `block #${head.height.toLocaleString('en-US')}`,
+    // The window the CHARTS draw, which is a separate fact from the head: the last bar stops
+    // at orca's head, so a reader needs both the day range and how old that day's edge is.
+    covers: { from: firstDay, to: lastDay },
+    staleAfterMs: STALE_AFTER_MS,
+    frozenAfterMs: FROZEN_AFTER_MS,
+    note: !readable
+      ? `orca reported its head block as ${head.timestamp}, which is not a timestamp this site can parse, so how current these trades are cannot be established from the indexer itself.`
+      : observedAt - headMs >= STALE_AFTER_MS
+        ? 'The most recent day on this chart is missing whatever happened in that gap; it is a short bar because the index stops there, not because trading did.'
+        : null,
+  })
+}
+
 /**
  * `aggregate()` draws every day between the first and last trade, which is right when the
  * dataset defines the window. Here the WINDOW defines the window: a reader who asked for
@@ -398,7 +467,7 @@ export function spanWindow(result, firstDay, lastDay) {
 
 export default {
   id: 'hydration',
-  label: 'Hydration (Omnipool)',
+  label: LABEL,
   homepage: 'https://hydration.net',
   transport: 'graphql+jsonrpc',
   doc: 'docs/platform/hydration.md',
@@ -679,7 +748,10 @@ export default {
         /* ---- notes, generated from this payload ---- */
 
         const palletTrades = trades.filter((t) => t.isPallet)
-        const headAgeMinutes = Math.round((Date.now() - headMs) / 60_000)
+        // One instant, used by both the liveness assertion and the head-age figure in `meta`,
+        // so a slow render cannot make the pill and the number disagree by a minute.
+        const observedAt = Date.now()
+        const headAgeMinutes = Math.round((observedAt - headMs) / 60_000)
         const inflation = trades.length ? legCount / trades.length : 0
         const window = `${firstDay} to ${lastDay} UTC`
         const pagedUsd = trades.reduce((sum, t) => sum + (t.usd || 0), 0)
@@ -820,17 +892,18 @@ export default {
         if (failures.length) {
           notes.push(`${failures.length} orca host(s) did not answer and were skipped: ${failures.join('; ')}.`)
         }
-        if (headAgeMinutes > 15) {
-          notes.push(
-            `orca's head block is ${headAgeMinutes} minutes behind the wall clock. The most recent day on this chart is ` +
-              'missing whatever happened in that gap.',
-          )
-        }
+        // The head-age warning that used to be pushed here is now `meta.liveness`, which says
+        // the same thing in the shape every other source says it in, and gets a pill and a
+        // banner instead of being the fourteenth bullet in a list. Two renderings of one fact
+        // is how they end up disagreeing; see `livenessOf` above.
 
         const result = aggregate({
           trades,
           rates,
           meta: {
+            // The assertion the page renders as a pill, a banner and a data-notes line. Same
+            // key, same shape, same place as asset-hub, bulletin and dotlake put theirs.
+            liveness: livenessOf({ observedAt, head, headMs, firstDay, lastDay }),
             venue: 'Hydration',
             venueUrl: 'https://app.hydration.net',
             source: 'hydration',

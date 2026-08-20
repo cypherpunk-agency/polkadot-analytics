@@ -19,13 +19,25 @@ import { read } from '../../core/client.js'
 import { pageByKey } from '../../sources/pages.js'
 import { append, clear, el, notice, statRow, statTile } from '../../design/dom.js'
 import { seriesColor, stackedBars } from '../../design/charts.js'
+import { livenessBanner, livenessNotes } from '../../design/liveness.js'
 import { compact, formatBytes, formatCount, percent } from '../../core/format.js'
 
 function render(host, data) {
   clear(host)
 
+  // The assertion `server/sources/bulletin.mjs` builds for this load. It matters more here than
+  // on any other page: this chain is a single node that does go down, and it can also produce
+  // blocks perfectly while its transaction index — which is every chart below — has not gained
+  // an entry in days. Both of those render as a normal-looking page without this line.
+  const report = data.meta?.liveness ?? null
+
   if (data.empty) {
-    append(host, notice('warning', 'The index is empty', 'The chain answered, and has nothing stored in the retained window.'))
+    append(
+      host,
+      livenessBanner(report),
+      notice('warning', 'The index is empty', 'The chain answered, and has nothing stored in the retained window.'),
+      el('section.meta', null, el('h2', { text: 'Data notes' }), livenessNotes(report)),
+    )
     return
   }
 
@@ -34,6 +46,9 @@ function render(host, data) {
 
   append(
     host,
+    // Above the charts, and only when something is wrong: `livenessBanner` returns null while
+    // the chain is live, for the same reason /xcm/ and /bridged/ call it that way.
+    livenessBanner(report),
     statRow([
       statTile('Objects', formatCount(totals.count), `across ${formatCount(chain.blockKeyCount)} blocks that stored something`, { hero: true }),
       statTile('Total stored', formatBytes(totals.totalBytes), `mean ${formatBytes(totals.meanBytes)}`),
@@ -51,7 +66,7 @@ function render(host, data) {
     breakdownCard('Codec', codecs, 'How the bytes are framed. Raw blocks and dag-pb manifests are the two that matter here.', totals.count),
     breakdownCard('Hash algorithm', hashes, 'A fingerprint of the tool that uploaded it: sha2-256 is IPFS-native tooling, blake2b is the SDK’s own store().', totals.count),
     sizeCard(buckets, totals.count),
-    notesSection(chain, sourceNotes),
+    notesSection(chain, sourceNotes, report),
   )
 }
 
@@ -230,7 +245,7 @@ function sizeCard(buckets, total) {
 
 /* ------------------------------------------------------------------------------ notes ---- */
 
-function notesSection(chain, sourceNotes) {
+function notesSection(chain, sourceNotes, report) {
   const drift = ((chain.blockMs - chain.nominalBlockMs) / chain.nominalBlockMs) * 100
   return el(
     'section.meta',
@@ -248,6 +263,10 @@ function notesSection(chain, sourceNotes) {
           `${chain.retention.reason}. The ${formatCount(chain.retentionBlocks)}-block figure above, and every day figure derived from it, is the value this repo inherited rather than one it measured.`,
         )
       : null,
+    // First in the notes, above the caveats about the numbers, because it is the caveat about
+    // whether there are numbers at all. The wording is the payload's own — the source knows
+    // this chain's thresholds and whether its index has moved; the page only prints it.
+    livenessNotes(report),
     el('ul', null, ...(sourceNotes ?? []).map((note) => el('li', { text: note }))),
     el('p', {
       text: 'Storage keys here are computed from the pallet and item names, never hardcoded — the transaction-index prefix and the RetentionPeriod key alike. A hardcoded prefix stays right until a runtime upgrade moves it, and then reads as "this map is empty" rather than as an error.',

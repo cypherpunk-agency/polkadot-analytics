@@ -22,10 +22,14 @@ stablecoin holdings, coretime, contracts and OpenGov, all pre-aggregated.
 alternative is the important half — authentication is *optional*, and every endpoint we use was
 verified answering an anonymous request.
 
-**What we read.** `xcm-summary`, `xcm-daily-stats`, `xcm-top-routes`, `daily-summary`,
-`daily-tps`, `daily-usdc`, `daily-usdt`, `defi-tvl`, `coretime-utilization`,
-`coretime-sale-metrics`, `contracts-deployed-heatmap`, `contract-calls-heatmap`,
-`monthly-opengov-participation`, `monthly-treasury-balances`, `monthly-percent-staked`.
+**What we read.** Only four of the fifteen registered operations are actually called by a page:
+`xcm-summary`, `xcm-daily-stats`, `xcm-top-routes` and `xcm-value`, all of them by `/xcm/`. The
+other eleven — `daily-summary`, `daily-tps`, `daily-usdc`, `daily-usdt`, `defi-tvl`,
+`coretime-utilization`, `coretime-sale-metrics`, `contracts-deployed-heatmap`,
+`contract-calls-heatmap`, `monthly-opengov-participation`, `monthly-treasury-balances`,
+`monthly-percent-staked` — are registered and reachable at `/api/dotlake/…` but no dashboard
+reads them. Three of those are described below, because "registered" and "understood" are not
+the same thing and the difference is where a wrong number comes from.
 
 **Cost.** Cheap — sub-second, pre-aggregated. Cached 2–60 minutes by operation.
 
@@ -42,6 +46,92 @@ verified answering an anonymous request.
 
 **Naming.** Dotlake uses historical parachain identifiers: `statemint` is Asset Hub, `hydradx` is
 Hydration. The page relabels them for display; the data is not altered.
+
+> ⚠️ **And it does not use the same identifiers on every endpoint.** `daily-usdc` and `daily-usdt`
+> say `hydradx` and `polkadot_asset_hub`; `defi-tvl`, from the same warehouse, says `hydration`
+> and `assethub` (verified live 2026-08-20). Joining two Dotlake endpoints on `chain` therefore
+> drops the two largest rows in the ecosystem and reports a clean, complete-looking result over
+> what is left.
+
+### `daily-usdc`, `daily-usdt`, `defi-tvl` — registered since v1, never called
+
+Probed 2026-08-20 (**verified live**, `curl` against `api.data.parity.io`, anonymous). All three
+answer `200` with a bare JSON **array** — no envelope, no `total`, no `next`. Both parameters are
+required: omitting them is a `422`, not a default window.
+
+| Operation | Params | Row shape | Chains | History starts | Newest row on 2026-08-20 |
+| --- | --- | --- | --- | --- | --- |
+| `daily-usdc` | `start_date`, `end_date` | `date`, `relay_chain`, `chain`, `sum_of_usdc` | 13 | 2023-08-31 | 2026-08-18 |
+| `daily-usdt` | `start_date`, `end_date` | `date`, `relay_chain`, `chain`, `sum_of_usdt` | 21 | 2023-08-31 | 2026-08-18 |
+| `defi-tvl` | `start_date`, `end_date` | `date`, `chain`, `tvl_usd` | 5 | 2023-01-01 | 2026-08-19 |
+
+Real rows, exactly as returned for `start_date=2026-08-18&end_date=2026-08-19`:
+
+```json
+{"date": "2026-08-18", "relay_chain": "polkadot", "chain": "acala", "sum_of_usdc": 92690.751068}
+{"date": "2026-08-18", "relay_chain": "polkadot", "chain": "acala", "sum_of_usdt": 9010.377036}
+{"date": "2026-08-18", "chain": "acala", "tvl_usd": 1625222.1517311928}
+```
+
+Over 2026-08-13…20 that is 78 rows / 13 chains, 126 rows / 21 chains and 31 rows / 5 chains
+respectively — dense grids, one row per chain per day, no gaps inside the window. `relay_chain` is
+on the two stablecoin endpoints and is **not** on `defi-tvl`. It is also an undeclared *filter*
+rather than decoration: `relay_chain=kusama` returns `[]` while an invented parameter is ignored
+and changes nothing, so there is no Kusama stablecoin data here at all.
+
+> ⚠️ **`daily-usdc` and `daily-usdt` silently truncate at 1,000 rows, from the RECENT end.** There
+> is no cap parameter, no `limit`/`offset`/`page_size` (all three are ignored), and nothing in the
+> response says it was cut. Verified live 2026-08-20: `start_date=2020-01-01&end_date=2026-08-20`
+> returns exactly 1,000 rows covering **2023-08-31 to 2024-03-25** — a `200`, well-formed, and
+> two and a half years out of date. `2026-01-01…2026-08-20` returns exactly 1,000 rows ending
+> 2026-03-15. Worse, the last day in a truncated response is itself **partial**: the 90-day probe
+> ended on 2026-08-01 with 6 of the 14 chains present, so the final point of any chart drawn from
+> it is a low number for a reason nothing in the payload states. 13 chains × 77 days ≈ 1,000, so
+> the cap bites at roughly **11 weeks of `daily-usdc` and 7 weeks of `daily-usdt`**. Any caller
+> must chunk by date window and stitch, and must check that what came back reaches the date it
+> asked for. `defi-tvl` has no such cap — 2,925 rows for 2023-01-01…2026-08-20 in one response.
+
+> ⚠️ **`defi-tvl` has the `0.0`-means-unknown disease.** 54 of 446 rows in the 90 days to
+> 2026-08-20 are exactly `0.0`, and they are not zeros: Bifrost is `0.0` on all 53 days before
+> 2026-07-14 and $857,710 on the day after, which is Dotlake starting to collect a chain rather
+> than a protocol appearing overnight. Asset Hub has a single `0.0` on 2026-06-25 sitting between
+> $346,647 and $339,492 — a one-day collection dropout written as a value. Sum `tvl_usd` across
+> chains per day and you get a series with a fabricated step and a fabricated trough in it. This
+> is the same failure as `total_value_usd` on the XCM endpoints, in a different column.
+
+> ⚠️ **The newest `defi-tvl` date is a partial day.** On 2026-08-20 the last date, 2026-08-19,
+> carried **1 of 5 chains** (Asset Hub only): $328k, against $28.4M the day before. A daily total
+> that includes it drops 99% on the last bar for no reason on any chain. Drop the trailing
+> incomplete date, or draw it as incomplete — the row count per date is the only signal there is.
+
+**The stablecoin endpoints do NOT share that disease, in the windows probed.** Across 90 days:
+zero rows with `0.0`, zero nulls, zero negatives, and no magnitude outliers — the largest
+day-over-day move in any chain's series was 2.1×, against the 10ⁿ jumps that mark a decimals
+fault. Values are plausible on their face (Asset Hub USDC peaked at $36.2M, USDt at $30.8M). That
+is evidence of good hygiene in *this* column, not a guarantee: the XCM value fault is a *per-row*
+`asset_decimals` error, and these endpoints expose no per-row decimals to check, so the same
+class of fault would be undetectable here. Treat them as clean and re-check on every use.
+
+> ⚠️ **A chain that leaves does not go to zero — its rows stop existing.** Moonbeam's last
+> `daily-usdc` row is 2026-08-04 ($107,462 on 2026-07-31, its last figure); from 2026-08-05 there
+> is no Moonbeam row at all, which is consistent with [Moonbeam leaving
+> Polkadot](moonbeam.md). A chart that iterates the chains present in the newest day never learns
+> that a chain used to be there; one that iterates chains present anywhere in the window draws a
+> line that ends mid-air. Both are right and they are different pictures, so the choice has to be
+> stated.
+
+**What is still unknown.** Nothing in the response says what `sum_of_usdc` sums — total issuance
+on that chain, or the sum of account balances, or holdings excluding some system account — and no
+Dotlake document seen so far settles it. Nor does anything say which protocols `defi-tvl` counts
+on each of its five chains. Both figures are usable as *series* (the shape over time is
+consistent) and not yet as *quantities* to reconcile against a chain read.
+
+**Worth noticing.** `date, chain, <asset>` is nearly the shape `docs/concept/plan.md` §8.1 wants
+for per-chain-per-token flow — one row
+per chain per day per token, already aggregated. What it is *not* is flow: these are stocks, so a
+flow series would be a first difference, and a first difference of a series containing a
+collection artefact turns that artefact into a spike. That is a design conversation, not a
+transformation. Nothing has been built on these three; this note exists so nobody re-derives it.
 
 ---
 
@@ -120,6 +210,13 @@ minutes.
 > history. Pointing this at it produces a plausible, fully-rendering, entirely wrong view.
 
 > ⚠️ **There is one node.** Its absence is a first-class state, not an error to retry through.
+> Observed unreachable **continuously from 12:26Z to 12:38Z on 2026-08-20** — twelve minutes,
+> longer than the "several minutes" seen on 2026-08-19. The failure mode is worth knowing because
+> it is not a routing problem: the `CONNECT` tunnel to `bulletin-paseo.tservices.es:8443`
+> establishes and returns `200`, and then the TLS handshake is reset by the origin. DNS, egress
+> and the port are all fine; the node itself is not answering. `/bulletin/` renders the
+> transport-error notice for this, not a liveness pill — the source throws rather than returning
+> a payload carrying `unreachable()`, so the assertion has nothing to travel on.
 
 > ⚠️ **Timestamps are interpolated.** Only two blocks are timed exactly; everything between is
 > placed by the measured block rate, so an object stored near midnight can land in the adjacent

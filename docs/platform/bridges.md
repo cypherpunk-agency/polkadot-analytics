@@ -271,14 +271,26 @@ being paid in DOT when you wanted BTC.
 The uncomfortable part is *verified live*, and it is not what "live but stagnant" prepares you
 for:
 
+All of it read from `https://api.interlay.io/parachain`, which is the **only** Interlay endpoint
+reachable from this service's network: `rpc.interlay.io`, `interlay-rpc.dwellir.com` and
+`interlay.api.onfinality.io/public` all fail at CONNECT and resolve to no address here, and
+whether that is egress policy or a dead host was not established.
+
 | Reading | Value |
 |---|---|
-| `Timestamp::Now` on Interlay | **2026-07-27T12:13:01Z** — 24 days stale |
+| `Timestamp::Now` on Interlay | **2026-07-27T12:13:01.797Z** — 24.01 days stale |
 | Head block | 10,885,373, equal to the finalized head |
 | `ParachainSystem::LastRelayChainBlockNumber` | 32,291,282, against a relay head of 32,636,169 — 344,887 blocks behind |
 | Para 2032's head on the relay | unchanged across a 3m20s window in which 32 of 90 registered paras advanced |
 | `Tokens::TotalIssuance(Token(IBTC))` | 211,841,671 = **2.11841671 iBTC** |
-| Runtime | `interlay-parachain` 1025008 |
+| `Tokens::TotalIssuance(Token(KBTC))` | **no such key** — see below |
+| `Tokens::TotalIssuance`, whole map | 27 CurrencyIds |
+| `VaultRegistry::Vaults` | 133 registrations, 81 distinct operator accounts, **every one wrapping `Token(IBTC)`** |
+| `AssetRegistry::Metadata` | 15 entries, every key a bare `u32` — no `Token(...)` entry at all |
+| Runtime | `interlay-parachain` 1025008, node `interBTC Parachain 1.25.4-9ae20ea6617` |
+
+Read twice on 2026-08-20, hours apart, by two different agents: identical head, identical
+timestamp, identical issuance to the last satoshi. The chain did not move in between either.
 
 **Interlay's parachain has not produced a block in 24 days, and every endpoint answers anyway.**
 The RPC serves state, the GraphQL squid at `https://api.interlay.io/graphql/graphql` answers with
@@ -292,12 +304,112 @@ vault clients 2025-07-03, UI 2026-07-27 — **could not be verified here**; the 
 reachable from this environment. The UI date and the date the chain stopped being the same day is
 suggestive and nothing more.
 
-> iBTC's **8 decimals are a compile-time Rust constant**, not a storage item:
-> `IBTC("interBTC", 8) = 1` in `interbtc/primitives/src/lib.rs` (*source-verified*). There is no registry to read them from — the one asset on this site whose decimals
-> cannot be derived from the chain. The check that catches a wrong divisor here is a plausibility
-> canary: total iBTC is single-digit BTC, and a figure of 21 billion means the constant moved.
+#### Reading the issuance yourself
 
-Kintsugi kBTC is the same design on Kusama, with the same constant (`KBTC("kBTC", 8) = 11`).
+`Tokens` is `orml_tokens`, and `TotalIssuance` is
+`StorageMap<_, Twox64Concat, CurrencyId, Balance, ValueQuery>`. The key is therefore
+`twox128("Tokens") ++ twox128("TotalIssuance") ++ Twox64Concat(CurrencyId)`, and the CurrencyId
+is two bytes: `CurrencyId::Token` is enum variant 0 and `TokenSymbol` runs
+`DOT = 0, IBTC = 1, INTR = 2, KSM = 10, KBTC = 11, KINT = 12` (*source-verified*,
+`interbtc/primitives/src/lib.rs`) — the gap is deliberate, Interlay's tokens below ten and
+Kintsugi's above. So **iBTC is `0x0001`** and **kBTC is `0x000b`**, and the finished key for iBTC
+is:
+
+```
+0x99971b5749ac43e0235e41b0d378691857c875e4cff74148e4628f264b974c80d67c5ba80ba065480001
+```
+
+*Verified live* 2026-08-20: that key appears verbatim in the node's own `state_getKeysPaged`
+sweep of the prefix, and returns `0x8772a00c000000000000000000000000` — a little-endian `u128` of
+211,841,671.
+
+Note there is no `twox64` in this repo's codec and there should not be: the hasher is a 64-bit
+digest and what Substrate stores is its **little-endian encoding**, so the eight bytes come from
+`xxhash64` (which returns a `BigInt`) through a `DataView.setBigUint64(…, true)`.
+
+#### kBTC is ABSENT on Interlay, which is not zero
+
+`0x000b` is **not in the map**. The sweep returns 27 CurrencyIds and none of them is it — kBTC is
+Kintsugi's wrapper, on Kusama, and Interlay never mints it. This matters because the distinction
+is invisible in a total: reporting 0 would claim the wrapper exists on this chain and holds
+nothing, which is a statement about a different chain. Kintsugi kBTC is the same design with the
+same decimals constant (`KBTC("kBTC", 8) = 11`); measuring it means reading Kintsugi, which this
+repository has not done.
+
+#### The decimals trap, and the three checks that stand in for a registry
+
+> iBTC's **8 decimals are a compile-time Rust constant**, not a storage item:
+> `IBTC("interBTC", 8) = 1` in `interbtc/primitives/src/lib.rs` (*source-verified*). This is the
+> one asset on this site whose divisor cannot come from a chain registry, and a wrong divisor is
+> a silent factor of 10ⁿ on the headline figure.
+
+That the registry cannot supply it is now *verified live* rather than asserted:
+`AssetRegistry::Metadata` holds **15 entries and every key is a bare little-endian `u32`** — the
+`ForeignAsset(u32)` ids 1–15 — with no entry whose key is a `Token(...)` CurrencyId at all. There
+is nothing on chain to read.
+
+One correction to an earlier reading of this: **the node does serve the number, just not from
+state.** `system_properties` returns
+`tokenSymbol: ["INTR","IBTC","DOT","KINT","KBTC","KSM"]` beside
+`tokenDecimals: [10,8,10,12,8,12]`, position-aligned, and it says IBTC is 8 (*verified live*).
+The alignment is corroborated by the other five: DOT reads 10 on this chain, KINT and KSM 12, and
+those divisors make `Token(DOT)`'s 91,265,211,340,641 into 9,126.52 DOT and `Token(INTR)`'s
+issuance into 999,967,471 INTR against a one-billion cap. But this is the **chain spec's
+`properties` block, served by the node** — not consensus state, not part of the runtime, and
+signed by nobody. It is corroboration, never the authority.
+
+So `server/sources/interlay.mjs` runs three independent checks, and each catches something
+different:
+
+1. **The key is computed and checked against the node's own enumeration.** An empty
+   `Tokens::TotalIssuance` sweep is treated as an *error*, not as an empty map — a prefix moved
+   by a runtime upgrade reads as "nothing here" rather than as a failure, and would publish
+   "0 BTC bridged" in perfect health.
+2. **`system_properties` must agree when it speaks.** A disagreement throws; a silence is
+   reported as "not corroborated" and never as agreement.
+3. **A plausibility canary at 1,000 iBTC**, above which the module refuses to publish. That is
+   ~470× today's issuance and more than ten times all the BTC bridged into Polkadot by every
+   route combined, so real growth does not reach it — while a divisor short by 10³ puts today's
+   supply at 2,118 and by 10⁴ at 21,184, both of which render perfectly.
+
+The canary's blind spot is worth stating because it is real: a divisor that is too **small**
+makes the figure enormous and is caught, while a divisor that is too **large** makes it tiny —
+and a tiny number is indistinguishable from a bridge that wound down. Only check 2 catches that
+direction.
+
+#### What backs it
+
+133 vault registrations across 81 distinct operator accounts, **all 133 wrapping `Token(IBTC)`**
+(*verified live* 2026-08-20). `VaultRegistry::Vaults` is a `StorageMap<_, Blake2_128Concat,
+VaultId, Vault>` where `VaultId` is `{ account_id: AccountId32, currencies: { collateral, wrapped
+} }`, and because the hasher concats, the whole `VaultId` reads back out of the key: 32 bytes of
+account, then the two CurrencyIds. All 133 keys re-derive their own 16-byte Blake2 digest from
+that plaintext, 133 of 133, which is what makes reading the counts out of keys alone safe — no
+vault struct is decoded, so there is no collateral *amount* here and no claim about how
+over-collateralised anything actually is. **A registration is not a vault with BTC in it.**
+
+The collateral CurrencyIds, as raw hex, are `0x0000` (66 registrations — `Token(DOT)`,
+source-verified), `0x0103000000` (21), `0x0102000000` (18), `0x0203000000` (14), `0x0202000000`
+(10), `0x0205000000` (3) and `0x010c000000` (1). Only the `Token` variant is source-verified
+here; the `ForeignAsset`/`LendToken`/`LpToken` variants are inferred from live key shapes, so
+this site reports them as hex rather than putting a name on a guess.
+
+#### What this site reads
+
+One caveat on the headline framing: **iBTC is not the only BTC-denominated asset on Interlay.**
+`Tokens::TotalIssuance` also carries `ForeignAsset(9)` — `Wrapped BTC (WBTC.wh)`, Wormhole's, 8
+decimals per `AssetRegistry::Metadata` — at 64 raw units, i.e. **0.00000064 WBTC** (*verified
+live* 2026-08-20). It is dust, and `ForeignAsset(5)` (`tBTC v2`, 18 decimals) has no issuance
+entry at all. But "iBTC issuance is the BTC Interlay bridged" is a claim about *Interlay's
+vaults*, not a claim about all the BTC sitting on that chain, and unlike iBTC these foreign
+assets do have readable decimals in the registry.
+
+`/api/interlay/btc-bridged` (`server/sources/interlay.mjs`), 15-minute TTL. It does **not** read
+Interlay's sovereign DOT — the `sibl` account on Asset Hub and the `para` account on the relay —
+because `/api/asset-hub/sovereign-dot` already sweeps every parachain's from four independent
+enumerations, and a second reader would let the two answers drift. And it carries **no dollar
+figure**: no BTC/USD price is reachable without an API key, this repo has none, so `usd` is
+`null` with the reason attached rather than a number.
 
 ### Spacewalk — Pendulum to Stellar
 
@@ -472,7 +584,7 @@ Two corrections that this table forces, both of which were live in this reposito
 | Hydration | `https://rpc.hydradx.cloud` — `EVMAccounts::NttMinters`, `Signet::SignetConfig`, `AssetRegistry::Assets`, `Tokens::TotalIssuance`. See [hydration.md](hydration.md) |
 | Wormhole | `https://api.wormholescan.io/api/v1/operations`, `/x-chain-activity/tops`, `/swagger.json`; chain ids from the `@wormhole-foundation/sdk-base` npm package |
 | Chainflip | `https://archive.mainnet.chainflip.io` — `cf_supported_assets`, `cf_available_pools`, `cf_environment`, `cf_get_vault_addresses`; chain and asset names from the `@chainflip/utils` npm package |
-| Interlay | `https://api.interlay.io/parachain` (RPC) and `https://api.interlay.io/graphql/graphql` (squid) |
+| Interlay | `https://api.interlay.io/parachain` — `Tokens::TotalIssuance`, `VaultRegistry::Vaults`, `AssetRegistry::Metadata`, `Timestamp::Now`, `system_properties`. The only Interlay host reachable from here: `rpc.interlay.io`, `interlay-rpc.dwellir.com` and `interlay.api.onfinality.io/public` all fail at CONNECT. Also `https://api.interlay.io/graphql/graphql` (squid), which this site does not read |
 | Moonbeam | `https://moonbeam.api.onfinality.io/public` — `state_getMetadata`, `Timestamp::Now`. The official `rpc.api.moonbeam.network` was not reachable from this environment |
 | Hyperbridge | `https://nexus.indexer.polytope.technology/` — see [hyperbridge.md](hyperbridge.md) |
 

@@ -15,6 +15,7 @@ import dotlake from './dotlake.mjs'
 import hydration from './hydration.mjs'
 import hydrationEvm from './hydration-evm.mjs'
 import hyperbridge from './hyperbridge.mjs'
+import interlay from './interlay.mjs'
 
 export const SOURCES = Object.fromEntries(
   [
@@ -26,6 +27,7 @@ export const SOURCES = Object.fromEntries(
     arbsBifrost,
     assetHub,
     bulletin,
+    interlay,
   ].map((source) => [source.id, source]),
 )
 

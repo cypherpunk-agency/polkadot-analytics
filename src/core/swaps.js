@@ -90,12 +90,26 @@ function routes(trades) {
  * An account is the address on the trade. That is NOT the same as a person: some of these route
  * a partner's flow, and on Hydration several are pallet accounts rather than anyone at all.
  * The pages say so; the arithmetic cannot know the difference.
+ *
+ * ── why `accountId` is a second field and not just `account` ──────────────────────────────────
+ * `account` is the GROUPING KEY, and on Hydration it is deliberately not an address: a pallet
+ * account is grouped under `pallet:py/trsry`, which is a label. A link built from that label
+ * cannot be resolved back to an address — `PalletId::into_sub_account_truncating` writes
+ * arbitrary bytes after the eight-byte id, so reconstructing one would invent a different
+ * account for every sub-account. So a normaliser that has the 32-byte public key sends it along
+ * as `accountId`, and every link and every cross-page join uses that.
+ *
+ * The distinct ids per group are COUNTED rather than assumed to be one. If a display key ever
+ * covers two real addresses, `accountId` comes back null and the ranking stops offering a link
+ * rather than sending the reader to whichever of them happened to trade first. (Observed on
+ * 2026-08-20: 181 accounts in 24 h, none collapsed — but "none today" is not "none".)
  */
 function accounts(trades) {
   const byAccount = new Map()
   for (const t of trades) {
     const a = byAccount.get(t.account) || {
       account: t.account,
+      ids: new Set(),
       usd: 0,
       count: 0,
       failed: 0,
@@ -104,6 +118,7 @@ function accounts(trades) {
       byVenue: {},
       byRoute: {},
     }
+    if (t.accountId) a.ids.add(t.accountId)
     a.usd += t.usd || 0
     a.count += 1
     if (t.failed) a.failed += 1
@@ -123,7 +138,14 @@ function accounts(trades) {
       .join(' / ')
 
   return [...byAccount.values()]
-    .map((a) => ({ ...a, venues: rank(a.byVenue, 'usd'), routes: rank(a.byRoute, 'n') }))
+    .map(({ ids, ...a }) => ({
+      ...a,
+      // One id, or none. Never "the first of several" — see the note above.
+      accountId: ids.size === 1 ? [...ids][0] : null,
+      accountIds: ids.size,
+      venues: rank(a.byVenue, 'usd'),
+      routes: rank(a.byRoute, 'n'),
+    }))
     .sort((a, b) => b.usd - a.usd)
 }
 

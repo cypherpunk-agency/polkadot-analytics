@@ -9,6 +9,8 @@
 //     and `days=07` produce different keys, the cache silently halves its own hit rate and
 //     doubles the load on an upstream we do not own.
 
+import { decodeSs58 } from '../../src/core/codec/ss58.js'
+
 export class ParamError extends Error {
   constructor(message) {
     super(message)
@@ -16,7 +18,7 @@ export class ParamError extends Error {
   }
 }
 
-/** @typedef {{ type:'int'|'string'|'bool'|'date'|'list', [k:string]: any }} Spec */
+/** @typedef {{ type:'int'|'string'|'bool'|'date'|'list'|'account', [k:string]: any }} Spec */
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -80,6 +82,38 @@ function coerce(name, value, spec) {
         throw new ParamError(`\`${name}\` is longer than ${spec.maxLength} characters.`)
       }
       return value
+    }
+    /**
+     * A Substrate AccountId32, however the caller happens to spell it, normalised to lowercase
+     * `0x…` hex — the public key, which is the only form two chains agree on.
+     *
+     * This belongs HERE rather than in the operation, and the reason is the note at the top of
+     * this file: the normalised value is the cache key. `0x3BB8…`, `0x3bb8…`,
+     * `7JwrmyK5iyj3sZPKWNvWJqNWLSot8nwxrpp4mviqpfhM3TCx` (Hydration, prefix 63) and
+     * `12MJVUCgWedG2ru6SqW1X4cjcsoMgFHAyZuo1sCseoEdJxvk` (Polkadot, prefix 0) are ONE account.
+     * Left un-normalised they are four cache entries and four identical fetches of somebody
+     * else's database, and the operation that reads them has no way to know they were the same
+     * question.
+     *
+     * A failed SS58 checksum is REJECTED rather than shrugged at. One mistyped character decodes
+     * to a different, perfectly well-formed account, and the page that results is not an error —
+     * it is a confident, empty page about an address that does not exist.
+     */
+    case 'account': {
+      const text = String(value).trim()
+      if (/^0x[0-9a-fA-F]{64}$/.test(text)) return text.toLowerCase()
+      if (/^[1-9A-HJ-NP-Za-km-z]{40,60}$/.test(text)) {
+        const decoded = decodeSs58(text)
+        if (decoded) return decoded.hex
+        throw new ParamError(
+          `\`${name}\` looks like an SS58 address but its checksum does not verify. One wrong ` +
+            'character is a different account, so it is refused rather than looked up.',
+        )
+      }
+      throw new ParamError(
+        `\`${name}\` must be a 32-byte account: either \`0x\` + 64 hex characters, or an SS58 ` +
+          'address (any network prefix — they are all the same public key).',
+      )
     }
     case 'list': {
       const items = value.split(',').filter(Boolean)

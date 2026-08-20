@@ -15,7 +15,7 @@
 
 import { append, clear, el, notice, statRow, statTile } from '../../design/dom.js'
 import { choiceControl } from '../../design/page.js'
-import { compact, fmtDay, formatCount, formatDuration, formatUtc, money2, shortAddr } from '../../core/format.js'
+import { compact, fmtDay, formatCount, formatDuration, formatUtc, money2, shortAddr, tokenAmount } from '../../core/format.js'
 
 /**
  * A count of things. `compact()` is built for chart axes and renders 3 as "3.00", which on a
@@ -79,15 +79,6 @@ function txLink(hash, url, label) {
 }
 
 /* -------------------------------------------------------------------------- formatting ---- */
-
-/** A token amount, in the token's own units. Adaptive rather than compacted: on this page the
- *  digits are the point — "193.3k cNGN" hides the rate the reader came to check. */
-function tokenAmount(value) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
-  const abs = Math.abs(value)
-  const digits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 8
-  return value.toLocaleString('en-US', { maximumFractionDigits: digits })
-}
 
 /** An exchange rate, with enough significant figures to be worth reading at any magnitude. */
 function rateText(rate, tokenIn, tokenOut) {

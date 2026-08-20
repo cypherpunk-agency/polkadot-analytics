@@ -39,6 +39,8 @@ import { twox128 } from '../../src/core/codec/xxhash.js'
 import { blake2b } from '../../src/core/codec/blake2b.js'
 import { toHex, fromHex, utf8, concat, u32le } from '../../src/core/codec/bytes.js'
 import { decodeCompact } from '../../src/core/codec/scale.js'
+import { encodeSs58 } from '../../src/core/codec/ss58.js'
+import { structuralLabel } from '../../src/core/topology.js'
 import { liveness } from '../../src/core/liveness.js'
 
 /** The upstream's human name, as `/api` and every liveness line spell it. Declared once, for
@@ -88,6 +90,38 @@ const NOMINAL_BLOCKS_PER_DAY = 14_400
 /** A ceiling on how much of somebody else's database we will pull into a 256 MB container in
  *  one request. Reaching it is a bug or a runaway window, so it throws rather than truncating. */
 const MAX_TRADES = 250_000
+
+/**
+ * The same ceiling for ONE account, and it is not the same number because the shape of the risk
+ * is different. Measured against orca on 2026-08-20 over a seven-day block range: the busiest
+ * addresses on this venue are pallet accounts — `pallet:py/trsry` 10,250 trades, `pallet:feeproc/`
+ * 9,165 — so a fourteen-day window on the busiest account is ~20,000 rows and ~20 pages. Forty
+ * thousand leaves headroom above that and still refuses a window nobody would wait through.
+ * It REFUSES rather than truncating, for the reason the window cap does: a silently short
+ * account is a net-flow figure that is simply wrong and looks fine.
+ */
+const MAX_ACCOUNT_TRADES = 40_000
+
+/** Bigger pages than the window pager's 1,000, because the cost of an orca page is almost all
+ *  fixed: measured 2026-08-20 on the busiest account, 1,000 rows took 1.71 s and 3,000 took
+ *  1.88 s. Ten pages of a thousand is 17 s; four of three thousand is 7.5 s, for the same rows. */
+const ACCOUNT_PAGE = 3000
+
+/** How many of an account's trades cross the wire. Every figure on the page is computed over
+ *  ALL of them server-side; this caps only the transcript, which nobody scrolls past. */
+const ACCOUNT_TRADE_ROWS = 300
+
+/**
+ * Hydration's display prefix, as `server/sources/arbs-hydration.mjs` already uses.
+ *
+ * ⚠️ It is a CONVENTION, not something this chain will tell you. Hydration's runtime constant
+ * `System::SS58Prefix` reads **0** (decoded out of `state_getMetadata` on 2026-08-20 — see
+ * docs/platform/hydration.md), while every wallet, explorer and the Hydration app itself render
+ * these accounts under 63, which is what makes them start with a `7`. Both encodings are the
+ * same 32 bytes and both are "valid"; only one is the string a reader will recognise. Nothing
+ * here JOINS on the address — the public key does that — so the prefix is display only.
+ */
+const SS58_HYDRATION = 63
 
 /* ------------------------------------------------------------------- asset registry ---- */
 
@@ -306,6 +340,90 @@ query PlatformVolume($from: Int!, $to: Int!) {
   }
 }`
 
+/* ------------------------------------------------------------------ one account ---- */
+//
+// ── orca filters by swapper, server-side, and it is fast ─────────────────────────────────────
+// `RoutedTradeFilter.participantSwappers` is a `StringListFilter` (introspected 2026-08-20), so
+// `contains: [$account]` is an indexed array-containment test rather than a download of the
+// window followed by a filter in this process. Measured the same day against
+// orca-prod-pool-01: 1,078 trades for one account over the WHOLE index in 1.0 s, 116 over a
+// seven-day block range in 0.6 s. That is what makes an account view affordable at all — the
+// alternative is pulling ~60,000 trades to draw a hundred.
+//
+// `contains` matches the account ANYWHERE in the array, while `valueTrades` attributes a trade
+// to `participantSwappers[0]`. Those differ only for multi-swapper trades, which were 0 of
+// 9,537 in a 24 h sample — but "rare" is not "never", so the operation counts the rows where
+// the requested account is not the first swapper and the page states it.
+
+/** Everything about an account that is one number: how much it did in the window, how much it
+ *  ever did, when it started and stopped, and what orca thinks the account IS.
+ *
+ *  `firstEver`/`lastEver` are not decoration. They are the only honest way for a window-bounded
+ *  page to say how much of an account's life it is NOT showing. */
+const ACCOUNT_FRAME = `
+query AccountFrame($account: String!, $from: Int!, $to: Int!) {
+  ever: routedTrades(filter: { participantSwappers: { contains: [$account] } }) { totalCount }
+  inWindow: routedTrades(
+    filter: {
+      participantSwappers: { contains: [$account] }
+      paraBlockHeight: { greaterThanOrEqualTo: $from, lessThan: $to }
+    }
+  ) { totalCount }
+  firstEver: routedTrades(
+    filter: { participantSwappers: { contains: [$account] } }
+    orderBy: [PARA_BLOCK_HEIGHT_ASC, ID_ASC]
+    first: 1
+  ) { nodes { paraBlockHeight block { timestamp } } }
+  lastEver: routedTrades(
+    filter: { participantSwappers: { contains: [$account] } }
+    orderBy: [PARA_BLOCK_HEIGHT_DESC, ID_DESC]
+    first: 1
+  ) { nodes { paraBlockHeight block { timestamp } } }
+  acct: accounts(filter: { id: { equalTo: $account } }) { nodes { id accountType } }
+}`
+
+/** The account's own trades, newest first — the order the reader wants and the order the page
+ *  draws. Same node shape as `TRADES`, so `valueTrades` values both identically. */
+const ACCOUNT_TRADES = `
+query AccountTrades($account: String!, $from: Int!, $to: Int!, $first: Int!, $after: Cursor) {
+  routedTrades(
+    filter: {
+      participantSwappers: { contains: [$account] }
+      paraBlockHeight: { greaterThanOrEqualTo: $from, lessThan: $to }
+    }
+    orderBy: [PARA_BLOCK_HEIGHT_DESC, ID_DESC]
+    first: $first
+    after: $after
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      paraBlockHeight
+      participantSwappers
+      block { timestamp }
+      swaps(first: 1, orderBy: SWAP_INDEX_ASC) { totalCount nodes { operationId } }
+      routeTradeInputs { nodes { assetId amount } }
+      routeTradeOutputs { nodes { assetId amount } }
+    }
+  }
+}`
+
+/** A slice of the venue's order book, for price discovery only — the swapper, the venue and the
+ *  leg count are not asked for, because nothing here reads them. */
+const RATE_SAMPLE = `
+query RateSample($from: Int!, $to: Int!, $first: Int!) {
+  routedTrades(
+    filter: { paraBlockHeight: { greaterThanOrEqualTo: $from, lessThan: $to } }
+    orderBy: [PARA_BLOCK_HEIGHT_ASC, ID_ASC]
+    first: $first
+  ) {
+    nodes {
+      routeTradeInputs { nodes { assetId amount } }
+      routeTradeOutputs { nodes { assetId amount } }
+    }
+  }
+}`
+
 /** First host that answers. A dead host is a reported fact, not a silent failover.
  *  `run(host, fn)` wraps the attempt — the job passes the politeness gate, which needs the
  *  hostname it is gating; the request path passes nothing and calls straight through. */
@@ -508,12 +626,21 @@ export function resolveAssetMeaning(squidIds, squidAssets, assets) {
  * valued, and a single unpriceable leg makes the whole trade unpriced: `null`, never `0`,
  * because "we could not value this" and "this was worth nothing" are different facts.
  *
+ * `priceFrom` exists for the `account` operation and changes nothing for the two callers that
+ * do not pass it. One account's trades are not an order book: an address that only ever swapped
+ * DOT for GDOT never touched a dollar-pegged leg, so deriving rates from its own trades alone
+ * prices NOTHING and the whole page reads as "this account moved no value". So the account view
+ * hands in a sample of the venue's book over the same blocks, purely as price observations —
+ * they are never counted, never listed, and never appear in a total.
+ *
  * @param {Array<object>} raw   normalised orca rows, as the pager below builds them
  * @param {ReturnType<typeof resolveAssetMeaning>} meaning
+ * @param {{priceFrom?: Array<{inputs: object[], output: object}>}} [options]
+ *        extra rows used for RATE DERIVATION ONLY
  */
-export function valueTrades(raw, { symbolOf, labelOf, amountOf }) {
+export function valueTrades(raw, { symbolOf, labelOf, amountOf }, { priceFrom = null } = {}) {
   const priceable = []
-  for (const trade of raw) {
+  for (const trade of priceFrom ? priceFrom.concat(raw) : raw) {
     if (trade.inputs.length !== 1) continue
     const inAmount = amountOf(trade.inputs[0])
     const outAmount = amountOf(trade.output)
@@ -544,7 +671,16 @@ export function valueTrades(raw, { symbolOf, labelOf, amountOf }) {
     return {
       id: t.id,
       account: pallet ?? String(t.swapper).toLowerCase(),
+      // The 32-byte public key, ALWAYS — and separate from `account` above, which is a display
+      // key that collapses a pallet account onto its PalletId. `pallet:py/trsry` cannot be
+      // turned back into an address: `PalletId::into_sub_account_truncating` puts arbitrary
+      // bytes after the eight-byte id, and `palletName` stops at the first of them, so
+      // reconstructing the account from the label would silently invent a different account for
+      // every sub-account. Every join and every link is on this field; nothing joins on the
+      // display string. See CLAUDE.md — the same account is a different string on every chain.
+      accountId: t.swapper ? String(t.swapper).toLowerCase() : null,
       timestamp: t.timestamp,
+      height: t.height ?? null,
       date: dayOf(t.timestamp),
       // The stacked dimension is HOW THE TRADE WAS INITIATED — a direct Omnipool swap, a router
       // route, a DCA schedule instalment, a batch. On a venue where a single Omnipool is most of
@@ -553,6 +689,10 @@ export function valueTrades(raw, { symbolOf, labelOf, amountOf }) {
       tokenIn: labelOf(firstIn.assetId),
       tokenOut: labelOf(String(t.output.assetId)),
       amountIn: amountOf(firstIn) ?? 0,
+      // `null`, not `0`: an asset with no decimals on file produced an amount we cannot state,
+      // which is not the same as a leg that returned nothing. The account view nets these per
+      // asset and a zero here would net out as a real, wrong position change.
+      amountOut: amountOf(t.output),
       usd,
       hops: t.hops,
       isPallet: Boolean(pallet),
@@ -622,6 +762,149 @@ function livenessOf({ observedAt, head, headMs, firstDay, lastDay }) {
         ? 'The most recent day on this chart is missing whatever happened in that gap; it is a short bar because the index stops there, not because trading did.'
         : null,
   })
+}
+
+/**
+ * The window, in whole UTC days, resolved to real block heights.
+ *
+ * ONE implementation, used by both `swaps` and `account`, and that is the point rather than a
+ * tidiness preference: the account view is drawn from a link on the swaps page and claims to
+ * cover the same window. Two copies of this arithmetic would agree until the day one of them
+ * was corrected, and then the account page would quietly be showing a different fortnight than
+ * the ranking that sent the reader to it — with both pages stating a window, and the two
+ * sentences disagreeing.
+ *
+ * Both edges come from the chain. Never from multiplying an assumed block time: this chain's
+ * has moved by a factor of 2.9 across the range orca holds (CLAUDE.md, twice).
+ *
+ * @returns {{firstDay:string, lastDay:string, floorDay:string, from:number, to:number,
+ *            clamped:boolean, boundaryAssisted:boolean}}
+ */
+export async function resolveWindow({ url, head, headMs, floor, floorMs, days }) {
+  const lastDay = dayIso(headMs)
+  const askedFirstDay = addDaysIso(lastDay, -(days - 1))
+  const floorDay = dayIso(floorMs)
+
+  let firstDay = askedFirstDay
+  let from = floor.paraBlockHeight
+  let boundaryAssisted = true
+  const clamped = askedFirstDay < floorDay
+
+  if (clamped) {
+    firstDay = floorDay
+  } else {
+    // Guess low on purpose: at ~5.6 s/block a day is ~15,400 blocks, so 18,000 per day
+    // plus a day of slack always lands before the boundary. The query checks it anyway.
+    const hint = head.height - days * Math.ceil(NOMINAL_BLOCKS_PER_DAY * 1.25) - NOMINAL_BLOCKS_PER_DAY
+    const { block, assisted } = await firstBlockAtOrAfter(url, `${askedFirstDay}T00:00:00Z`, hint)
+    if (!block) {
+      throw new UpstreamError(
+        `orca has no block at or after ${askedFirstDay}T00:00:00Z, but reports a head at ${head.timestamp}.`,
+        { kind: 'upstream', source: ORCA },
+      )
+    }
+    from = Math.max(block.height, floor.paraBlockHeight)
+    boundaryAssisted = assisted
+  }
+
+  return { firstDay, lastDay, floorDay, from, to: head.height + 1, clamped, boundaryAssisted }
+}
+
+/* ------------------------------------------- price discovery for a window, sampled ---- */
+//
+// The `swaps` operation prices its trades against every other trade in the same window, because
+// it has already paid to fetch all of them. The `account` operation has not, and must not: the
+// whole reason an account view is affordable is that orca filters by swapper server-side, and
+// pulling ~60,000 trades to price the 117 that belong to one address would throw that away and
+// make every distinct address a full window fetch of somebody else's database.
+//
+// So price discovery is a SAMPLE of the same blocks, and three things about it are deliberate:
+//
+//   · it SPANS the window rather than sitting at one end. A rate median taken from the last
+//     four hours of a fortnight is a today-price applied to a fortnight of trades, and it would
+//     look exactly as plausible as a correct one.
+//   · it is MEMOISED PER WINDOW, not per account. Every account viewed inside the same 15
+//     minutes shares one sample, so the tenth reader costs nothing — and, more importantly,
+//     two accounts viewed minutes apart are valued by the same rate table rather than by two
+//     independently-sampled ones that quietly disagree.
+//   · it is stated on the page. These rates are NOT the ones /hydration/ derived from the whole
+//     window, and a reader comparing a dollar figure between the two pages must be told why
+//     they can differ rather than left to discover it.
+
+/** Five chunks, evenly spaced across the window's blocks. Measured against orca on 2026-08-20:
+ *  a `routedTrades` page costs ~1.0–1.3 s almost independently of its size (200 rows 1.07 s,
+ *  800 rows 1.27 s), so the cost here is the number of QUERIES, not the number of rows. Five
+ *  chunks of a thousand is one round of parallel requests and up to 5,000 observations. */
+const RATE_SAMPLE_CHUNKS = 5
+const RATE_SAMPLE_PER_CHUNK = 1000
+/** The same 15 minutes as the `swaps` cache: the two are re-derived on the same rhythm. */
+const RATE_SAMPLE_TTL_MS = 900_000
+/** Windows are `days` × the head block, so the key space is tiny in practice. Bounded anyway —
+ *  this is reachable from a public URL and an unbounded memo on one is a memory-exhaustion vector. */
+const RATE_SAMPLE_MEMO = 12
+
+/** @type {Map<string, {at:number, promise:Promise<{rows:Array<object>, chunks:number}>}>} */
+const rateSampleMemo = new Map()
+
+async function fetchRateSample(url, from, to) {
+  const span = Math.max(1, to - from)
+  const chunks = Math.max(1, Math.min(RATE_SAMPLE_CHUNKS, Math.ceil(span / RATE_SAMPLE_PER_CHUNK)))
+  const width = Math.ceil(span / chunks)
+
+  const ranges = []
+  for (let i = 0; i < chunks; i += 1) {
+    const start = from + i * width
+    if (start >= to) break
+    ranges.push([start, Math.min(to, start + width)])
+  }
+
+  const pages = await Promise.all(
+    ranges.map(([a, b]) =>
+      graphql({
+        source: ORCA,
+        url,
+        query: RATE_SAMPLE,
+        variables: { from: a, to: b, first: RATE_SAMPLE_PER_CHUNK },
+        timeoutMs: 60_000,
+      }),
+    ),
+  )
+
+  const rows = []
+  for (const data of pages) {
+    for (const node of data?.routedTrades?.nodes ?? []) {
+      const inputs = node.routeTradeInputs?.nodes ?? []
+      const outputs = node.routeTradeOutputs?.nodes ?? []
+      // Only one-asset-in, one-asset-out states a rate unambiguously; `deriveRates` drops the
+      // rest anyway, and not sending them is a smaller payload off a database we do not own.
+      if (inputs.length !== 1 || !outputs.length) continue
+      const last = outputs[outputs.length - 1]
+      rows.push({
+        inputs: [{ assetId: String(inputs[0].assetId), amount: inputs[0].amount }],
+        output: { assetId: String(last.assetId), amount: last.amount },
+      })
+    }
+  }
+  return { rows, chunks: ranges.length }
+}
+
+/** Single-flight and TTL, for the same reason server/lib/cache.mjs has both: a cold cache is
+ *  exactly when several readers arrive at once, and without single-flight this memo would make
+ *  that worse rather than better. A rejected sample is not retained. */
+function rateSample(url, from, to) {
+  const key = `${from}-${to}`
+  const hit = rateSampleMemo.get(key)
+  if (hit && Date.now() - hit.at < RATE_SAMPLE_TTL_MS) return hit.promise
+
+  const promise = fetchRateSample(url, from, to).catch((error) => {
+    rateSampleMemo.delete(key)
+    throw error
+  })
+  rateSampleMemo.set(key, { at: Date.now(), promise })
+  while (rateSampleMemo.size > RATE_SAMPLE_MEMO) {
+    rateSampleMemo.delete(rateSampleMemo.keys().next().value)
+  }
+  return promise
 }
 
 /**
@@ -1249,32 +1532,14 @@ export default {
 
         /* ---- the window, in whole UTC days, resolved to real block heights ---- */
 
-        const lastDay = dayIso(headMs)
-        const askedFirstDay = addDaysIso(lastDay, -(days - 1))
-        const floorDay = dayIso(floorMs)
-
-        let firstDay = askedFirstDay
-        let from = floor.paraBlockHeight
-        let boundaryAssisted = true
-        const clamped = askedFirstDay < floorDay
-
-        if (clamped) {
-          firstDay = floorDay
-        } else {
-          // Guess low on purpose: at ~5.6 s/block a day is ~15,400 blocks, so 18,000 per day
-          // plus a day of slack always lands before the boundary. The query checks it anyway.
-          const hint = head.height - days * Math.ceil(NOMINAL_BLOCKS_PER_DAY * 1.25) - NOMINAL_BLOCKS_PER_DAY
-          const { block, assisted } = await firstBlockAtOrAfter(url, `${askedFirstDay}T00:00:00Z`, hint)
-          if (!block) {
-            throw new UpstreamError(
-              `orca has no block at or after ${askedFirstDay}T00:00:00Z, but reports a head at ${head.timestamp}.`,
-              { kind: 'upstream', source: ORCA },
-            )
-          }
-          from = Math.max(block.height, floor.paraBlockHeight)
-          boundaryAssisted = assisted
-        }
-        const to = head.height + 1
+        const { firstDay, lastDay, floorDay, from, to, clamped, boundaryAssisted } = await resolveWindow({
+          url,
+          head,
+          headMs,
+          floor,
+          floorMs,
+          days,
+        })
 
         /* ---- the trades ---- */
 
@@ -1559,6 +1824,481 @@ export default {
         })
 
         return trimForWire(spanWindow(result, firstDay, lastDay))
+      },
+    },
+
+    /**
+     * ONE ACCOUNT: what it sent, what it got back, and what that nets to per asset.
+     *
+     * ── what this is NOT, and the page says all of it ─────────────────────────────────────
+     *   · It is not "this account". It is this account ON HYDRATION, in swaps only, inside a
+     *     window of at most fourteen days. Transfers, XCM arrivals, liquidity provision,
+     *     borrow/supply on the money market and fees all move the same balances and none of
+     *     them is a `routedTrade` — so the net figures here are a NET OF SWAPS, not a balance
+     *     change, and reading them as a portfolio would be wrong in both directions.
+     *   · It is not an identity. The only labels attached are structural — `modl`, `para`,
+     *     `sibl`, and orca's own pool typing — which are arithmetic over the account's own
+     *     bytes and over the venue's registry. Nothing here names or profiles a person; see
+     *     docs/concept/plan.md §8.3 for why that line is where it is on an ungated, indexed site.
+     *
+     * The window is bounded and the page states the boundedness with a number rather than a
+     * hedge: `tradesEver` and the account's first and last trade in orca's whole index come
+     * back with every response, so "117 of 1,079 trades, of an account first seen on
+     * 2025-07-10" is a sentence the payload can always produce.
+     */
+    account: {
+      summary:
+        'One account on Hydration: its routed trades in a recent window, what flowed in and out by asset, ' +
+        'and how much of that account’s history the window actually covers.',
+      // The same fifteen minutes as `swaps`, and deliberately so: this page links to that one
+      // and quotes the same window, so the two going stale on different rhythms would show up
+      // as two pages disagreeing about a fortnight.
+      ttlMs: 900_000,
+      schema: {
+        // Hex or SS58, any network prefix, normalised to the public key by readParams — which
+        // is also what stops one account being four cache entries. See server/lib/params.mjs.
+        account: { type: 'account', required: true },
+        // Identical bounds to `swaps`, so a reader can carry `days` across the link.
+        days: { type: 'int', min: 1, max: 14, default: 7 },
+      },
+
+      async run({ account, days }) {
+        await verifyRegistry()
+
+        const { url, host, head, floor, failures } = await connect()
+        const headMs = Date.parse(head.timestamp)
+        const floorMs = Date.parse(floor.block.timestamp)
+        const { firstDay, lastDay, floorDay, from, to, clamped, boundaryAssisted } = await resolveWindow({
+          url,
+          head,
+          headMs,
+          floor,
+          floorMs,
+          days,
+        })
+
+        // Started here and awaited after the paging loop: it does not depend on anything below
+        // and it is five parallel requests, so overlapping it with the account's own pages takes
+        // it off the clock entirely. The `catch` is not error handling — it stops an early throw
+        // below from turning this into an unhandled rejection; the real one is at the `await`.
+        const samplePromise = rateSample(url, from, to)
+        samplePromise.catch(() => {})
+
+        /* ---- what this account is, and how much of it this window can see ---- */
+
+        const frame = await graphql({
+          source: ORCA,
+          url,
+          query: ACCOUNT_FRAME,
+          variables: { account, from, to },
+          timeoutMs: 60_000,
+        })
+
+        const tradesEver = frame?.ever?.totalCount ?? null
+        const expected = frame?.inWindow?.totalCount ?? null
+        const firstEver = frame?.firstEver?.nodes?.[0] ?? null
+        const lastEver = frame?.lastEver?.nodes?.[0] ?? null
+        const orcaType = frame?.acct?.nodes?.[0]?.accountType ?? null
+
+        if (expected !== null && expected > MAX_ACCOUNT_TRADES) {
+          throw new UpstreamError(
+            `${expected.toLocaleString('en-US')} routed trades for this account in blocks ` +
+              `${from.toLocaleString('en-US')}–${(to - 1).toLocaleString('en-US')} is past the ` +
+              `${MAX_ACCOUNT_TRADES.toLocaleString('en-US')} ceiling this service will hold at once. ` +
+              'Ask for a shorter window rather than being served a silently short account.',
+            { kind: 'upstream', source: ORCA },
+          )
+        }
+
+        /* ---- its trades, newest first, filtered by orca rather than by us ---- */
+
+        const raw = []
+        const squidAssetIds = new Set()
+        let legCount = 0
+        let multiAsset = 0
+        let notFirstSwapper = 0
+        let withoutBalances = 0
+        let pages = 0
+
+        for (let after = null; ; ) {
+          const data = await graphql({
+            source: ORCA,
+            url,
+            query: ACCOUNT_TRADES,
+            variables: { account, from, to, first: ACCOUNT_PAGE, after },
+            timeoutMs: 60_000,
+          })
+          pages += 1
+          const connection = data?.routedTrades
+          const nodes = connection?.nodes ?? []
+          for (const node of nodes) {
+            const inputs = node.routeTradeInputs?.nodes ?? []
+            const outputs = node.routeTradeOutputs?.nodes ?? []
+            if (!inputs.length || !outputs.length) {
+              withoutBalances += 1
+              continue
+            }
+            if (inputs.length > 1 || outputs.length > 1) multiAsset += 1
+            const swappers = node.participantSwappers ?? []
+            // `contains` matched the account anywhere in the array; `valueTrades` attributes the
+            // trade to the FIRST swapper. Counted rather than hidden — this row is in the totals
+            // and the account was a participant, but it is not the row's attributed trader.
+            if ((swappers[0] ?? '').toLowerCase() !== account) notFirstSwapper += 1
+
+            legCount += node.swaps?.totalCount ?? 0
+            for (const record of inputs.concat(outputs)) squidAssetIds.add(String(record.assetId))
+
+            raw.push({
+              id: node.id,
+              height: node.paraBlockHeight,
+              timestamp: Math.floor(Date.parse(node.block.timestamp) / 1000),
+              swapper: swappers[0] ?? account,
+              venue: initiation(node.swaps?.nodes?.[0]?.operationId),
+              hops: node.swaps?.totalCount ?? 0,
+              inputs: inputs.map((r) => ({ assetId: String(r.assetId), amount: r.amount })),
+              output: outputs[outputs.length - 1],
+              // Kept per row so the flow arithmetic below can use EVERY output leg rather than
+              // only the last one, which is all the canonical Trade shape carries.
+              outputs: outputs.map((r) => ({ assetId: String(r.assetId), amount: r.amount })),
+            })
+          }
+          if (!connection?.pageInfo?.hasNextPage || !nodes.length) break
+          after = connection.pageInfo.endCursor
+        }
+
+        /* ---- price discovery: the venue's book over the same blocks, sampled ---- */
+
+        const sample = await samplePromise
+        for (const row of sample.rows) {
+          squidAssetIds.add(row.inputs[0].assetId)
+          squidAssetIds.add(row.output.assetId)
+        }
+
+        /* ---- assets: orca supplies the key, the chain registry supplies the meaning ---- */
+
+        const squidIds = [...squidAssetIds]
+        const squidAssets = await fetchSquidAssets({ url, ids: squidIds })
+        const assets = await fetchAssets(registryIdsOf(squidAssets))
+        const meaning = resolveAssetMeaning(squidIds, squidAssets, assets)
+        const { disagreements, borrowedMetadata, unmappedAssetIds, unknownAssets, symbolOf, labelOf, amountOf } = meaning
+
+        // The sample is handed in for RATE DERIVATION ONLY. `trades` below is this account's
+        // trades and nothing else — no sampled row is ever counted, listed or totalled.
+        const { trades, rates } = valueTrades(raw, meaning, { priceFrom: sample.rows })
+
+        /* ---- what flowed in and out, by asset ---- */
+
+        const flows = new Map()
+        const flowOf = (record) => {
+          const label = labelOf(record.assetId)
+          const symbol = symbolOf(record.assetId)
+          const key = label ?? `asset ${record.assetId}`
+          const hit = flows.get(key) ?? {
+            asset: key,
+            symbol,
+            // `null` where the registry has no decimals: an amount we cannot state is not an
+            // amount of zero, and a page that prints 0 for it would be inventing a fact.
+            known: symbol !== null,
+            sent: 0,
+            received: 0,
+            sentUsd: 0,
+            receivedUsd: 0,
+            priced: symbol !== null && rates[symbol] !== undefined,
+            legsOut: 0,
+            legsIn: 0,
+            unstated: 0,
+          }
+          flows.set(key, hit)
+          return hit
+        }
+
+        for (const t of raw) {
+          for (const record of t.inputs) {
+            const flow = flowOf(record)
+            flow.legsOut += 1
+            const amount = amountOf(record)
+            if (amount === null) flow.unstated += 1
+            else {
+              flow.sent += amount
+              if (flow.priced) flow.sentUsd += amount * rates[flow.symbol]
+            }
+          }
+          for (const record of t.outputs) {
+            const flow = flowOf(record)
+            flow.legsIn += 1
+            const amount = amountOf(record)
+            if (amount === null) flow.unstated += 1
+            else {
+              flow.received += amount
+              if (flow.priced) flow.receivedUsd += amount * rates[flow.symbol]
+            }
+          }
+        }
+
+        const flowRows = [...flows.values()]
+          .map((flow) => ({
+            asset: flow.asset,
+            symbol: flow.symbol,
+            priced: flow.priced,
+            sent: flow.known ? sig6(flow.sent) : null,
+            received: flow.known ? sig6(flow.received) : null,
+            net: flow.known ? sig6(flow.received - flow.sent) : null,
+            sentUsd: flow.priced ? money(flow.sentUsd) : null,
+            receivedUsd: flow.priced ? money(flow.receivedUsd) : null,
+            netUsd: flow.priced ? money(flow.receivedUsd - flow.sentUsd) : null,
+            grossUsd: flow.priced ? money(flow.sentUsd + flow.receivedUsd) : null,
+            legsOut: flow.legsOut,
+            legsIn: flow.legsIn,
+            unstatedLegs: flow.unstated,
+          }))
+          // Priced first and by size, because that is the order a reader can act on. Unpriced
+          // rows are not dropped and not sorted to zero — they go to the end, still stated.
+          .sort((a, b) => (b.grossUsd ?? -1) - (a.grossUsd ?? -1) || b.legsOut + b.legsIn - (a.legsOut + a.legsIn))
+
+        /* ---- the totals, over every trade fetched, not over the rows shipped ---- */
+
+        const byVenue = new Map()
+        const byRoute = new Map()
+        const activeDays = new Set()
+        let usdIn = 0
+        let unpriced = 0
+        for (const trade of trades) {
+          activeDays.add(trade.date)
+          if (trade.usd === null) unpriced += 1
+          else usdIn += trade.usd
+
+          const venue = byVenue.get(trade.venue) ?? { venue: trade.venue, usd: 0, count: 0 }
+          venue.usd += trade.usd ?? 0
+          venue.count += 1
+          byVenue.set(trade.venue, venue)
+
+          const name = `${trade.tokenIn ?? '?'}→${trade.tokenOut ?? '?'}`
+          const route = byRoute.get(name) ?? { route: name, usd: 0, count: 0 }
+          route.usd += trade.usd ?? 0
+          route.count += 1
+          byRoute.set(name, route)
+        }
+
+        const sorted = [...trades].sort((a, b) => b.timestamp - a.timestamp)
+        const observedAt = Date.now()
+        const structural = structuralLabel(account)
+        const display = trades[0]?.account ?? palletName(account) ?? account
+        const window = `${firstDay} to ${lastDay} UTC`
+
+        /* ---- notes, generated from this payload ---- */
+
+        const notes = [
+          'This is what this account did ON HYDRATION, in swaps, inside this window. It is not ' +
+            'everything the account did: transfers, XCM arrivals and departures, liquidity ' +
+            'provision, borrowing and supplying on the money market, and fees all move the same ' +
+            'balances and none of them is a trade. The net figures below are a net OF SWAPS, not a ' +
+            'change in what this account holds.',
+          `Window: whole UTC days, ${window} — blocks ${from.toLocaleString('en-US')}–` +
+            `${(to - 1).toLocaleString('en-US')}. Both edges were read from the chain rather than ` +
+            'assumed from a block time.',
+          tradesEver === null
+            ? 'orca did not report how many trades this account has in total, so how much of its history this window covers cannot be stated.'
+            : `orca holds ${tradesEver.toLocaleString('en-US')} routed ${plural(tradesEver, 'trade')} for this account in its ` +
+              `whole index; ${(expected ?? trades.length).toLocaleString('en-US')} of them fall in this window. ` +
+              (firstEver && lastEver
+                ? `Its first is at ${firstEver.block.timestamp.slice(0, 10)} (block ` +
+                  `${Number(firstEver.paraBlockHeight).toLocaleString('en-US')}) and its most recent at ` +
+                  `${lastEver.block.timestamp.slice(0, 10)}. Everything outside this window is real and is not drawn here.`
+                : ''),
+          'A trade is one asset out and one asset in, so every row below is both. "Sent" is what ' +
+            'left this account and "received" is what came back; the net is the difference, per asset.',
+          `Dollar figures use rates derived from a SAMPLE of the venue's own trades over these same blocks — ` +
+            `${sample.rows.length.toLocaleString('en-US')} single-asset-in, single-asset-out trades taken from ` +
+            `${sample.chunks} ${plural(sample.chunks, 'slice')} spread across the window, plus this account's own ` +
+            'trades. /hydration/ derives its rates from every trade in the window instead, so a dollar figure here ' +
+            'and the same figure there can differ slightly. Neither is the venue\'s published number; both are ' +
+            'medians of what actually traded.',
+          'An asset with no rate in this window is left unvalued rather than counted as zero, and is listed as ' +
+            'such. "We could not value this" and "this was worth nothing" are different facts.',
+        ]
+
+        if (structural) {
+          notes.push(
+            `This address is structurally ${structural.label}. That is read from its own first bytes — the runtime ` +
+              'wrote them — and is the only kind of label this site attaches to an account. No behavioural or ' +
+              'attributed identity is inferred here.',
+          )
+        }
+        if (orcaType && orcaType !== 'User') {
+          notes.push(
+            `orca's own account registry types this address as \`${orcaType}\` — it is a POOL account, not a trader. ` +
+              'Its trades are the pool being traded against, seen from the pool\'s side.',
+          )
+        }
+        if (!trades.length) {
+          notes.push(
+            'This account made no routed trades in this window. That is a fact about the window, not about the ' +
+              'account: a longer one, or Hydration activity that is not a swap, would not appear here either way.',
+          )
+        }
+        if (notFirstSwapper) {
+          notes.push(
+            `${notFirstSwapper.toLocaleString('en-US')} ${plural(notFirstSwapper, 'trade')} list this account as a ` +
+              'participant but not as the first swapper. orca filters on participation, and the trade is attributed ' +
+              'to its first swapper elsewhere on this site — so those rows are counted here and counted under ' +
+              'another account on the rankings.',
+          )
+        }
+        if (multiAsset) {
+          notes.push(
+            `${multiAsset.toLocaleString('en-US')} ${plural(multiAsset, 'trade')} consumed or produced more than one ` +
+              'asset. The flow table counts every leg of those; the route label on the transcript names only the ' +
+              'first asset in and the last out.',
+          )
+        }
+        if (withoutBalances) {
+          notes.push(
+            `${withoutBalances.toLocaleString('en-US')} routed ${plural(withoutBalances, 'trade')} for this account ` +
+              'carry no balance rows in orca and were dropped: there is nothing to value or to name a route with.',
+          )
+        }
+        if (expected !== null && expected !== raw.length + withoutBalances) {
+          notes.push(
+            `orca counted ${expected.toLocaleString('en-US')} trades for this account in this window but paging ` +
+              `returned ${(raw.length + withoutBalances).toLocaleString('en-US')} over ${pages} ` +
+              `${plural(pages, 'page')}. That is a paging fault, not a rounding one; the figures here are of what ` +
+              'was actually read.',
+          )
+        }
+        if (trades.length > ACCOUNT_TRADE_ROWS) {
+          notes.push(
+            `Every figure on this page is computed over all ${trades.length.toLocaleString('en-US')} of this ` +
+              `account's trades in the window. The transcript lists the ${ACCOUNT_TRADE_ROWS} most recent of them, ` +
+              'because a table of thousands is a download rather than a reading.',
+          )
+        }
+        if (unpriced) {
+          notes.push(
+            `${unpriced.toLocaleString('en-US')} of the ${trades.length.toLocaleString('en-US')} trades could not be ` +
+              'valued at all — nothing on their input leg reached a dollar-pegged asset in this window. They are ' +
+              'counted and excluded from every dollar total, so the two disagree by exactly that much.',
+          )
+        }
+        if (clamped) {
+          notes.push(
+            `${days} days were requested, which reaches back before ${floorDay}, this source's first routed trade. ` +
+              'The window was cut there rather than drawing days that only look empty.',
+          )
+        }
+        if (!boundaryAssisted) {
+          notes.push(
+            "The fast path for finding the window's first block did not pass its own self-check, so the boundary " +
+              'was found by a full scan instead. The window is right; it was slower to compute.',
+          )
+        }
+        if (borrowedMetadata.length) {
+          notes.push(
+            `Hydration's own registry has no symbol or decimals for ${borrowedMetadata.length} asset(s) here ` +
+              `(${some(borrowedMetadata)}) — they are registered as \`External\`, so their metadata lives on the ` +
+              "chain they came from. Those legs use orca's metadata, which is one source rather than two agreeing.",
+          )
+        }
+        if (unmappedAssetIds.length) {
+          notes.push(
+            `orca returned ${unmappedAssetIds.length} asset key(s) it cannot map to a registry id ` +
+              `(${some(unmappedAssetIds)}). Legs in those assets are unvalued rather than guessed at.`,
+          )
+        }
+        if (disagreements.length) {
+          notes.push(
+            `orca and the chain registry disagree about ${disagreements.length} asset(s): ${some(disagreements, 4)}. ` +
+              'The chain is used. A decimals disagreement is a factor of ten on everything that asset touches.',
+          )
+        }
+        if (failures.length) {
+          notes.push(`${failures.length} orca host(s) did not answer and were skipped: ${failures.join('; ')}.`)
+        }
+
+        return {
+          account: {
+            hex: account,
+            address: encodeSs58(fromHex(account), SS58_HYDRATION),
+            ss58Prefix: SS58_HYDRATION,
+            // What the rankings call it — `pallet:py/trsry` for a pallet account, the hex
+            // otherwise. Carried so the two pages name the same account the same way.
+            display,
+            isPallet: Boolean(palletName(account)),
+            structural: structural
+              ? { kind: structural.kind, label: structural.label, paraId: structural.paraId ?? null, palletId: structural.palletId ?? null }
+              : null,
+            orcaType,
+          },
+          window: {
+            days,
+            from: firstDay,
+            to: lastDay,
+            text: window,
+            blockRange: [from, to - 1],
+            clamped,
+            coverageFrom: floorDay,
+          },
+          activity: {
+            tradesInWindow: trades.length,
+            tradesExpected: expected,
+            tradesEver,
+            firstEverAt: firstEver?.block?.timestamp ?? null,
+            firstEverBlock: firstEver ? Number(firstEver.paraBlockHeight) : null,
+            lastEverAt: lastEver?.block?.timestamp ?? null,
+            lastEverBlock: lastEver ? Number(lastEver.paraBlockHeight) : null,
+            windowShare: tradesEver ? sig6((trades.length / tradesEver) * 100) : null,
+            firstInWindow: sorted.length ? sorted[sorted.length - 1].date : null,
+            lastInWindow: sorted.length ? sorted[0].date : null,
+            activeDays: activeDays.size,
+            legs: legCount,
+            legInflation: trades.length ? sig6(legCount / trades.length) : null,
+            notFirstSwapper,
+            multiAsset,
+            tradesWithoutBalances: withoutBalances,
+            pagesFetched: pages,
+          },
+          totals: {
+            // The value of everything this account SENT, which is the same convention
+            // /hydration/ uses for volume — the input leg, before any hop.
+            usdIn: money(usdIn),
+            unpricedTrades: unpriced,
+            venues: [...byVenue.values()].sort((a, b) => b.usd - a.usd).map((v) => ({ ...v, usd: money(v.usd) })),
+            routes: [...byRoute.values()].sort((a, b) => b.usd - a.usd).slice(0, TOP_ROUTES).map((r) => ({ ...r, usd: money(r.usd) })),
+            routesTotal: byRoute.size,
+          },
+          flows: flowRows,
+          trades: sorted.slice(0, ACCOUNT_TRADE_ROWS).map((t) => ({
+            id: t.id,
+            timestamp: t.timestamp,
+            height: t.height,
+            venue: t.venue,
+            tokenIn: t.tokenIn,
+            tokenOut: t.tokenOut,
+            amountIn: sig6(t.amountIn),
+            amountOut: t.amountOut === null ? null : sig6(t.amountOut),
+            usd: money(t.usd),
+            hops: t.hops,
+          })),
+          tradesShown: Math.min(sorted.length, ACCOUNT_TRADE_ROWS),
+          rates: Object.fromEntries(Object.entries(rates).map(([symbol, rate]) => [symbol, sig6(rate)])),
+          meta: {
+            liveness: livenessOf({ observedAt, head, headMs, firstDay, lastDay }),
+            source: 'hydration',
+            sourceLabel: 'Hydration liquidity-pools squid (orca) + chain registry',
+            sourceUrl: `${host} · rpc.hydradx.cloud`,
+            venue: 'Hydration',
+            venueUrl: 'https://app.hydration.net',
+            orcaHost: host,
+            headBlock: head.height,
+            headTime: head.timestamp,
+            rateSample: { trades: sample.rows.length, chunks: sample.chunks },
+            unknownAssets,
+            unmappedAssetIds,
+            assetDisagreements: disagreements,
+            borrowedMetadata,
+            fetchedAt: new Date().toISOString(),
+            notes,
+          },
+        }
       },
     },
   },

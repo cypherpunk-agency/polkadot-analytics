@@ -132,6 +132,23 @@ export function compact(value) {
   return `${sign}${abs.toFixed(2)}`
 }
 
+/**
+ * A quantity of a token, in the token's own units. Adaptive rather than compacted, and that is
+ * the difference that matters: `compact()` renders 193,300 cNGN as "193.3k", which hides the
+ * rate the reader came to check, and 5.61 WBTC and 6 WBTC are not the same holding. Precision
+ * follows magnitude — two decimals above a thousand, eight below one — so a dust balance is
+ * still a number rather than a rounded-away zero.
+ *
+ * `null`/`undefined` render as an em dash and never as `0`: an amount we could not state and an
+ * amount of nothing are different facts.
+ */
+export function tokenAmount(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  const abs = Math.abs(value)
+  const digits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 8
+  return value.toLocaleString('en-US', { maximumFractionDigits: digits })
+}
+
 export const percent = (value, digits = 0) => `${(Number(value) || 0).toFixed(digits)}%`
 
 /** 2026-08-19 -> 19 Aug. Chart labels and tooltips; the full date stays in the table. */

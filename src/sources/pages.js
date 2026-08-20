@@ -138,6 +138,26 @@ export const PAGES = [
     live: true,
   },
   {
+    // A drill-down rather than a dashboard: it answers about ONE account, and it is reached by
+    // clicking a name on a ranked list rather than from the nav. `kind: 'tool'` keeps it out of
+    // the nav bar and the home index, both of which list things you can arrive at cold — this
+    // page with no `address` has nothing to show.
+    key: 'account',
+    kind: 'tool',
+    // `hidden` keeps it out of the nav bar (buildNav skips it) and `kind: 'tool'` keeps it out
+    // of the home index (DASHBOARDS filters on 'dashboard'). Both are wanted: the nav and the
+    // index list pages you can arrive at cold, and this one with no `address` has nothing to
+    // show. It is reached by clicking a name on a ranked list.
+    hidden: true,
+    href: '/account/',
+    nav: 'Account',
+    title: 'Follow an account',
+    blurb:
+      'One account on Hydration: what flowed in and out by asset, the trades behind it, and how much of that account’s history the window actually covers.',
+    source: 'Hydration orca indexer',
+    live: true,
+  },
+  {
     key: 'hyperfx',
     kind: 'dashboard',
     href: '/hyperfx/',

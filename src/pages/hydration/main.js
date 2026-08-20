@@ -26,5 +26,14 @@ renderPage({
     }),
   ],
   load: () => read('hydration', 'swaps', { days: DAYS }),
-  render: renderSwapDashboard,
+  // The ranked list answers "who trades here". `accountHref` turns each name into "and what did
+  // this one do", which is the only reason to show the list. A pallet account is deliberately
+  // NOT linked: its rows are the chain doing its own work, and /account/ is about a trader.
+  render: (host, data) =>
+    renderSwapDashboard(host, data, {
+      accountHref: (account) =>
+        account.account.startsWith('pallet:')
+          ? null
+          : `/account/?address=${encodeURIComponent(account.account)}&days=${encodeURIComponent(DAYS)}`,
+    }),
 })

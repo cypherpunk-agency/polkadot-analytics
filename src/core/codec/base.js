@@ -76,6 +76,41 @@ export function base58Encode(bytes) {
   return out
 }
 
+/**
+ * The inverse. Same long division, same reason: the leading `1`s are zero BYTES and a BigInt
+ * round-trip would silently drop them, producing a 34-byte payload where 35 were written.
+ *
+ * @returns {Uint8Array|null} — null for any character outside the alphabet, which is how a
+ *   typo'd address fails: as "this is not base58" rather than as some other account.
+ */
+export function base58Decode(text) {
+  const clean = String(text ?? '')
+  if (!clean) return new Uint8Array(0)
+
+  let zeros = 0
+  while (zeros < clean.length && clean[zeros] === '1') zeros += 1
+
+  const bytes = [0]
+  for (let i = zeros; i < clean.length; i += 1) {
+    const digit = B58.indexOf(clean[i])
+    if (digit < 0) return null
+    let carry = digit
+    for (let j = 0; j < bytes.length; j += 1) {
+      carry += bytes[j] * 58
+      bytes[j] = carry & 0xff
+      carry >>= 8
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff)
+      carry >>= 8
+    }
+  }
+
+  const out = new Uint8Array(zeros + bytes.length)
+  for (let i = 0; i < bytes.length; i += 1) out[zeros + i] = bytes[bytes.length - 1 - i]
+  return out
+}
+
 /** Unsigned LEB128 — the varint multiformats uses inside a CID. */
 export function varint(value) {
   const out = []

@@ -14,7 +14,17 @@ import { lineChart, seriesColor, stackedBars } from './charts.js'
 import { livenessNotes } from './liveness.js'
 import { compact, fmtDay, money, money2, percent, shortAddr } from '../core/format.js'
 
-export function renderSwapDashboard(host, data) {
+/**
+ * @param {HTMLElement} host
+ * @param {object} data   the aggregate from src/core/swaps.js
+ * @param {object} [options]
+ * @param {(account: object) => string|null} [options.accountHref]
+ *        Where a row in "Accounts ranked by volume" leads. Returning null leaves that row
+ *        unlinked, which is the right answer for an account the venue cannot address
+ *        unambiguously — see `accountId` in src/core/swaps.js. A venue that passes nothing gets
+ *        the ranking it had before: a list, not a way in.
+ */
+export function renderSwapDashboard(host, data, { accountHref = null } = {}) {
   clear(host)
   const { meta } = data
 
@@ -40,7 +50,7 @@ export function renderSwapDashboard(host, data) {
     dailyCard(data),
     cumulativeCard(data),
     routesCard(data),
-    accountsCard(data),
+    accountsCard(data, accountHref),
     concentrationCard(data),
     dailyTable(data),
     dataNotes(data, line),
@@ -176,10 +186,12 @@ function routesCard({ routes, routesTotal }) {
 
 /* ---------------------------------------------------------------------------- accounts ---- */
 
-function accountsCard(data) {
+function accountsCard(data, accountHref = null) {
   const { accounts, accountsTotal, totals, meta } = data
   const shown = accounts.length
   const total = accountsTotal ?? shown
+  let linkable = 0
+  let ambiguous = 0
 
   const stats = statRow([
     statTile('Active accounts', compact(totals.accounts), `addresses that placed ${meta.unitPlural}`),
@@ -192,13 +204,25 @@ function accountsCard(data) {
   const list = el('div.rows')
   accounts.forEach((account, i) => {
     const isPallet = account.account.startsWith('pallet:')
+    const label = isPallet ? account.account : shortAddr(account.account, 8, 6)
+    const title = `${account.venues}\n${account.routes}\nactive ${account.first} – ${account.last}`
+    // The ranking answers "who trades here". The link is what turns that into "and what did
+    // this one do" — which is the whole point of showing the list at all.
+    const href = accountHref ? accountHref(account) : null
+    if (href) linkable += 1
+    else if (accountHref && account.accountIds > 1) ambiguous += 1
+    const name = href
+      ? el('a.name', { href, text: label, title: `${title}\n\nfollow this account` })
+      : el('div.name', { text: label })
     append(
       list,
       el(
         'div.row.rank-row',
-        { tabindex: '0', title: `${account.venues}\n${account.routes}\nactive ${account.first} – ${account.last}` },
+        // Only when the row is not already focusable through its link — otherwise every row
+        // costs two tab stops and a keyboard reader walks the list twice.
+        { tabindex: href ? null : '0', title },
         el('div.rank', { text: String(i + 1) }),
-        el('div.name', { text: isPallet ? account.account : shortAddr(account.account, 8, 6) }),
+        name,
         el(
           'div.track',
           null,
@@ -220,6 +244,16 @@ function accountsCard(data) {
       ? el('p.note', { text: `Showing the top ${shown} of ${compact(total)} accounts. The rest are smaller than the last row here; the shares above are computed over all of them, not just these.` })
       : null
 
+  const follow = accountHref
+    ? el('p.note', {
+        text:
+          `Each address is a link to what it did — every ${meta.unit} in this same window, and what that nets to. ` +
+          (ambiguous
+            ? `${ambiguous} row(s) cover more than one address under one label and are deliberately not linked: sending a reader to whichever of them traded first would be a page about the wrong account.`
+            : `${linkable} of the ${shown} rows here lead somewhere.`),
+      })
+    : null
+
   return el(
     'section.card',
     null,
@@ -228,6 +262,7 @@ function accountsCard(data) {
     el('p.note', {
       text: 'Bars are linear from zero, so the tail is meant to look like a tail. An account is the address on the trade, which is not the same as a person: some route a partner’s flow, and some are not people at all.',
     }),
+    follow,
     el('div.scroll-y', null, list),
     coverage,
   )

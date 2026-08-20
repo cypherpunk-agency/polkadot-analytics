@@ -9,6 +9,7 @@
 
 import arbsBifrost from './arbs-bifrost.mjs'
 import arbsHydration from './arbs-hydration.mjs'
+import assetHub from './asset-hub.mjs'
 import bulletin from './bulletin.mjs'
 import dotlake from './dotlake.mjs'
 import hydration from './hydration.mjs'
@@ -23,6 +24,7 @@ export const SOURCES = Object.fromEntries(
     hydrationEvm,
     arbsHydration,
     arbsBifrost,
+    assetHub,
     bulletin,
   ].map((source) => [source.id, source]),
 )

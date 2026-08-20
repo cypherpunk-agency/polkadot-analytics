@@ -355,9 +355,15 @@ Polkadot.
 Read live off `polkadot-asset-hub-rpc.polkadot.io`, 2026-08-20:
 
 - **`ForeignAssets::Asset` holds 52 keys: 34 bridged, 18 sibling-parachain.** The discriminator is
-  exact, not heuristic — Asset Hub's filter includes `StartsWithExplicitGlobalConsensus`, so the
-  runtime *refuses to create* a `parents:2` key naming Polkadot's own consensus. **`parents == 2`
-  is bridged; `parents == 1, Parachain(N)` is not.**
+  exact, not heuristic — but **the guarantee comes from `CreateOrigin`, not from
+  `StartsWithExplicitGlobalConsensus`**, which is the matcher the XCM executor uses when
+  *transacting* rather than the filter that governs *creation*. Source-verified 2026-08-20: the
+  three permissionless creation origins are `FromSiblingParachain` (admits only `parents: 1` with a
+  leading `Parachain`), `FromNetwork` (only `parents: 2`, via `ensure_is_remote`) and
+  `KusamaAssetFromAssetHubKusama` (only `parents: 2, GlobalConsensus(Kusama)`). **`parents == 2` is
+  bridged; `parents == 1, Parachain(N)` is not.** ⚠️ `ForceOrigin` (governance) is not bound by any
+  of them, so check the invariant on read. Full derivation in
+  [platform/asset-hub.md](../platform/asset-hub.md).
 - 33 of the 34 are Ethereum (`GlobalConsensus(Ethereum{chain_id:1})`), one is KSM over the
   Polkadot↔Kusama bridge.
 - The `Blake2_128Concat` hasher appends the location **in plaintext**, so one `state_getKeysPaged`
@@ -383,6 +389,18 @@ per chain. **The segments then sum to supply by construction**, and the no-doubl
 is visible in the geometry instead of asserted in a footnote. Hydration's own issuance becomes a
 *reconciliation*: a gap is in-flight XCM, an excess is unbacked mint.
 
+⚠️ **But "by construction" is doing real work in that sentence, and it hides something.** Verified
+live 2026-08-20 by sweeping every holder of all 34 bridged assets: `Σ ForeignAssets::Account ==
+supply` holds for 28 and **fails for 6** — USDT short 15.000000, USDC 11.15, TRAC 0.5, KSM 0.0911,
+ETH 0.0152, one metadata-less ERC-20 by 4e18 raw. Always in the same direction, supply above the
+accounts. The sweeps are provably complete (`AssetDetails.accounts` equals the key count for all
+34), and bisection puts the whole USDT gap in a single block — #14,915,236, 2026-04-24 — where
+supply rose 15.000000 while no holder balance and no account count changed. Supply can be minted
+without any account being credited. So the residual `supply − Σ sovereign` must be shown SPLIT into
+holders and unaccounted; folding the second into the first attributes tokens nobody holds to
+"somebody on Asset Hub", which is the double-counting error wearing the geometry's badge. Detail
+and the probe in [platform/asset-hub.md](../platform/asset-hub.md).
+
 ⚠️ `sibl` is the account a parachain holds **on Asset Hub**; `para` is its account **on the relay**.
 Sweeping `para`-prefixed accounts on Asset Hub returns ~20 DOT of existential deposits — a
 factor-of-half-a-million error that renders perfectly. `src/core/topology.js` already derives both
@@ -397,7 +415,11 @@ cache that already exists. No store, no job, no disk. C6's *history* still needs
 
 Daily `Issued − Burned` per asset is exactly the daily change in supply, and folding it from genesis
 must equal the live `supply` to the last unit — **refuse to publish a window that does not
-reconcile.** Gross in/out is inflated by every routing hop, because an ordinary reserve transfer
+reconcile.** ⚠️ Before building that, settle whether the supply increases described in §7.4 — supply
+rising with no account credited — emit an `Issued` event at all. If they do not, the fold cannot
+reconcile and the rule above would refuse every window.
+
+Gross in/out is inflated by every routing hop, because an ordinary reserve transfer
 emits `Burned{user}` **and** `Issued{sibl}` — a matched pair, net zero. Splitting them requires
 attributing each mint to its causing XCM message, which is inference and must be argued on the page
 before it is drawn. Not in v1.

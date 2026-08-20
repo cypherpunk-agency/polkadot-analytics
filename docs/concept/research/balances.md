@@ -620,10 +620,14 @@ None of it needs a credential.
 
 Stated plainly rather than guessed at.
 
-- **Why para 2004 (Moonbeam) is absent from `Paras::ParaLifecycles`.** It is genuinely not in the
-  89-id set. Whether it deregistered, migrated, or is registered under a different id was not
-  established. A lifetime chart needs the union of historically-registered ids and this storage
-  item does not provide it — `Registrar::Paras` was not enumerated.
+- **Why para 2004 (Moonbeam) is absent from `Paras::ParaLifecycles`.** *Partly settled 2026-08-20 —
+  see [platform/asset-hub.md](../../platform/asset-hub.md).* `Registrar::Paras` has since been
+  enumerated: 123 ids, a strict superset of the 89, and **2004 is in neither**, nor in
+  `Paras::Heads` (90), `Paras::CurrentCodeHash` (90) or `Slots::Leases` (10). It is deregistered
+  from this relay chain, not merely lifecycle-less — while still holding 265 + 50 DOT on the relay,
+  10.21 DOT on Asset Hub, and eight bridged assets in its `sibl` account. Still open: *why*, and
+  whether it re-registered under another id. A lifetime chart still needs the union of
+  historically-registered ids and no current-state storage item provides it.
 - **Dotlake's treasury figure vs the chain.** Dotlake reports USDT 7,581,321.46 for the Polkadot
   treasury on 2026-07-31; `modl py/trsry` holds 3,706,949.91 USDt today. Not resolved whether that
   is 19 days of outflow or a different aggregation.

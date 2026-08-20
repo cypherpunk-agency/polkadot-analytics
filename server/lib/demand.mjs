@@ -124,7 +124,16 @@ export async function serveFromStore({ store, queue, sourceId, operationId, para
     // fresh reader IS the demand it was waiting for. `enqueue` re-queues it in place (same id,
     // cursor kept) rather than minting a second identity, so this stays idempotent.
     const job = identity.live.state === 'partial' ? queue.enqueue(sourceId, operationId, params) : identity.live
-    if (job.state === 'queued' || job.state === 'failed') startWorker?.()
+    // Unconditionally, because the gate that matters is `hasRunnable()` inside startWorker and
+    // that is the SAME predicate `claim()` uses. Naming the states here instead was wrong in
+    // exactly one case, and it is the case that matters: a job left `running` by a worker that
+    // died (SIGKILL, OOM) has a lapsed lease, which makes it runnable and claimable — but it
+    // is not `queued` or `failed`, so nothing spawned a worker to claim it. Readers polling
+    // that identity got `running` forever and the drainer never came back until the next
+    // deploy. Handing the decision to hasRunnable() adds no spawn it would not already
+    // justify: a genuinely-live job holds a future lease and a backing-off job is not yet due,
+    // and neither is runnable.
+    startWorker?.()
     return {
       status: 200,
       complete: false,

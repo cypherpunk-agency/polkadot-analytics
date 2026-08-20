@@ -481,3 +481,36 @@ test('an unknown parameter is rejected even when Object.prototype has that name'
   assert.equal(queue.list().length, 0, 'and none of them created a job')
 })
 
+test('a reader revives the drain worker for a job orphaned by a dead one', async (t) => {
+  const { app, store, queue, spawns } = rig(t, { jobs: { pages: pagedJob() } })
+
+  await get(app, '/api/syn/pages?days=3')
+  const job = queue.list()[0]
+  queue.claim(job.id)
+  // The worker is SIGKILLed: the row stays `running`, its lease lapses, nobody owns it.
+  store.db.prepare('UPDATE jobs SET lease_expires_at = 1, lease_owner = ? WHERE id = ?').run('dead', job.id)
+  assert.equal(queue.get(job.id).state, 'running')
+  assert.equal(queue.hasRunnable(), true, 'a lapsed lease IS claimable')
+
+  const before = spawns.length
+  const res = await get(app, '/api/syn/pages?days=3')
+  assert.equal(res.json().job.id, job.id)
+  assert.equal(
+    spawns.length,
+    before + 1,
+    'a claimable orphan with no drainer must wake one — otherwise it sits `running` until the next deploy',
+  )
+})
+
+test('joining a job that is genuinely being worked spawns nothing', async (t) => {
+  const { app, queue, spawns } = rig(t, { jobs: { pages: pagedJob() } })
+
+  await get(app, '/api/syn/pages?days=3')
+  const job = queue.list()[0]
+  queue.claim(job.id) // live lease, in the future
+  assert.equal(queue.hasRunnable(), false)
+
+  const before = spawns.length
+  await get(app, '/api/syn/pages?days=3')
+  assert.equal(spawns.length, before, 'hasRunnable() is the gate, and it says no')
+})

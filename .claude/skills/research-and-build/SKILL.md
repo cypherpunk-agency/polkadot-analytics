@@ -120,7 +120,25 @@ another's half-written work. So:
 - **Stage explicitly.** `git add <paths>`, never `git add -A`, while another agent is running.
 - **Sequence what cannot be split.** A page cannot be built before the module whose payload it
   renders. Waiting one round beats merging two half-modules.
-- Tell agents to **commit but not push**; the orchestrator pushes.
+
+**⚠️ Instructing agents to stage narrowly is not sufficient, and this has already gone wrong.**
+Two agents finished within seconds of each other; one ran a sweeping `git add` in the window
+between the other's `git add` and its `git commit`, and swept up 640 lines of a module it knew
+nothing about. The content survived — `git` does not lose staged bytes — but the commit message
+did: a module landed inside a commit describing something else entirely, and the reasoning that
+would have explained it was gone from the history.
+
+The staging window is a race and no amount of instruction closes it. Two fixes actually work:
+
+- **Have writing agents NOT commit at all.** They report; the orchestrator stages and commits.
+  This is the default worth reaching for — it removes the race entirely, and it puts the commit
+  message in the hands of whoever can see how the pieces fit.
+- **Give agents `isolation: "worktree"`** when they must commit, so each has its own index.
+
+If a race does happen: **do not rewrite the other agent's commit to fix it.** Amending an
+in-flight commit to recover a message is a worse risk than a mislabelled one. Note it, make sure
+the reasoning survives somewhere durable — a module header, a `docs/platform/` note — and move on.
+History is the cheapest of the things that could have been lost.
 
 ### Briefing an agent well
 

@@ -238,7 +238,7 @@ Waves A and B need no decisions and no store. Wave C is the store. They overlap.
 | C3 | **CLI job runner** — same jobs, local store, no server. The tier-3 bridge. | C2 |
 | C4 | Coverage/progress plumbed through `/api` into every chart — partial data with a coverage bar, never a spinner | C2, B8 |
 | C5 | **Transfer graph + account expansion** ("follow the money") | C1–C4 |
-| C6 | Netflows v2 — live sovereign balances, relay `para` **+** Asset Hub `sibl` | C5 |
+| C6 | Netflows v2 — live sovereign balances, relay `para` **+** Asset Hub `sibl` | C5 — **but see §7.4: the "today" number needs none of Wave C** |
 | C7 | Hydration/XCM history as requested | C4 |
 | C8 | Top holders on Asset Hub | C2 |
 | C9 | Thin warm-keeping cron for a named handful of streams | C2 |
@@ -315,3 +315,129 @@ identical to a demand job so nothing special exists to rot.
 **6.5 Scope is uncosted.** Forty-plus candidates sized individually; the machinery every "S"
 depends on is costed nowhere. The first three items pay for all of it — that is fine, provided it
 is said out loud before picking them.
+
+---
+
+## 7. The cross-chain value track — decided 2026-08-20
+
+Added after a four-agent research pass on bridges, bridged value, per-chain holdings and why
+`/netflows/` is still frozen. **§§1–6 above are unchanged**; this section records decisions taken
+after them and the facts those decisions rest on.
+
+### 7.1 The decisions
+
+| Decision | Call | Consequence |
+|---|---|---|
+| **Sequencing** | **Build all three workstreams at once** rather than picking one | E1–E4 below run in parallel; they share one module and one page family |
+| **The Moonbeam boundary** | **Count Moonbeam-resident bridged assets, in a separate labelled band** — "on Moonbeam, not yet in XCM" | Needs a Moonbeam module doing `eth_call totalSupply()`. The xcUSDC-vs-`USDC.wh` distinction must be handled explicitly or it double-counts |
+| **Network policy** | Widened — upstream Polkadot RPCs reachable | Every claim below marked *unverified* is now settleable, and must be settled rather than inherited |
+
+The Moonbeam call is the one that moves the headline most. It was made explicitly, and the page
+must show the band separately rather than folding it into one total — Moonbeam-resident value is
+bridged onto a Polkadot parachain but has never entered XCM, and those are different facts.
+
+### 7.2 What "value" means here — three quantities, not one
+
+"TVL" is four different things and the acronym hides which. This track measures **value under
+custody**: what each chain's ledger controls, counted once. Not DeFi-locked capital (that is a
+recursive subset — Hydration's GIGA assets are money-market receipts for stableswap LP shares, so
+"Omnipool + stableswap + money market" triple-counts), and not total issuance (which says nothing
+about location). **The page does not use the word TVL.**
+
+### 7.3 The mechanism, verified live 2026-08-20
+
+**The core insight holds: you do not need a bridge's cooperation to see what it brought in.**
+Asset Hub's `ForeignFungiblesTransactor` is a `FungiblesAdapter` with `NoChecking`, so the XCM
+executor mints on inbound deposit and burns on outbound withdrawal. Therefore
+`ForeignAssets::Asset(location).supply` **is** the quantity of that token currently represented on
+Polkadot.
+
+Read live off `polkadot-asset-hub-rpc.polkadot.io`, 2026-08-20:
+
+- **`ForeignAssets::Asset` holds 52 keys: 34 bridged, 18 sibling-parachain.** The discriminator is
+  exact, not heuristic — Asset Hub's filter includes `StartsWithExplicitGlobalConsensus`, so the
+  runtime *refuses to create* a `parents:2` key naming Polkadot's own consensus. **`parents == 2`
+  is bridged; `parents == 1, Parachain(N)` is not.**
+- 33 of the 34 are Ethereum (`GlobalConsensus(Ethereum{chain_id:1})`), one is KSM over the
+  Polkadot↔Kusama bridge.
+- The `Blake2_128Concat` hasher appends the location **in plaintext**, so one `state_getKeysPaged`
+  sweep yields every bridged asset's identity. No reverse map, no guessing. 3 RPC calls total.
+- `AssetDetails` is 190 bytes; `supply` is a u128 LE at byte offset **128..144**.
+- `Paras::ParaLifecycles` on the relay returns **89** para ids. Use it, not `Paras::Parachains`,
+  which returns 3 under agile coretime.
+
+**Ethereum USDC (`0xa0b86991…`) is in `ForeignAssets` while Circle's USDC is asset 1337 in
+`Assets`.** Two USDCs on one chain, different ids, different provenance. Circle and Tether issue
+1337/1984 directly — no wrapper, no bridge custodian — so **they are not bridged** and must sit
+beside the bridged number with their own label, never inside the same bar. Never sum by symbol.
+
+### 7.4 Double counting, and why it becomes the best chart rather than a footnote
+
+A reserve transfer of WETH to Hydration burns from the user on Asset Hub and mints into
+**Hydration's `sibl` sovereign account**. Supply is unchanged; Hydration's local mirror is a copy of
+a balance already inside that supply. Adding them double-counts silently — the number stays
+plausible and roughly doubles.
+
+So rather than *excluding* the parachain view, read `ForeignAssets::Account(location, sibl(paraId))`
+per chain. **The segments then sum to supply by construction**, and the no-double-counting property
+is visible in the geometry instead of asserted in a footnote. Hydration's own issuance becomes a
+*reconciliation*: a gap is in-flight XCM, an excess is unbacked mint.
+
+⚠️ `sibl` is the account a parachain holds **on Asset Hub**; `para` is its account **on the relay**.
+Sweeping `para`-prefixed accounts on Asset Hub returns ~20 DOT of existential deposits — a
+factor-of-half-a-million error that renders perfectly. `src/core/topology.js` already derives both
+with an import-time self-check; use it.
+
+**And this is why the netflows "today" number needs none of Wave C.** Enumerate paras, derive both
+sovereign legs, one `state_queryStorageAt` per chain: ~5 requests, cached at 10 minutes by the TTL
+cache that already exists. No store, no job, no disk. C6's *history* still needs the store; its
+*current* value does not.
+
+### 7.5 Flows: net is exact, gross is inference
+
+Daily `Issued − Burned` per asset is exactly the daily change in supply, and folding it from genesis
+must equal the live `supply` to the last unit — **refuse to publish a window that does not
+reconcile.** Gross in/out is inflated by every routing hop, because an ordinary reserve transfer
+emits `Burned{user}` **and** `Issued{sibl}` — a matched pair, net zero. Splitting them requires
+attributing each mint to its causing XCM message, which is inference and must be argued on the page
+before it is drawn. Not in v1.
+
+### 7.6 Which bridges the number must cover
+
+Full inventory with evidence dates in `docs/platform/bridges.md`. In order of weight:
+**Snowbridge** (light client both ways — the overwhelming majority); **Wormhole**, both paths (NTT
+direct to Hydration, which has its own Wormhole chain ID 73, and MRL via Moonbeam, chain 16);
+**Polkadot↔Kusama** (how Ethereum assets reach Kusama); **Chainflip** (a standalone L1, not a
+parachain, whose DOT leg has moved to Asset Hub and whose relay vault its own SDK marks `legacy`);
+then **Interlay iBTC**.
+
+Two things this track will look wrong about unless stated: **Hyperbridge contributes ≈ nothing** to
+value bridged *into* Polkadot — its live state machines are all EVM and 32 of 40 sampled orders were
+same-chain on Base; it is Polkadot-hosted infrastructure selling verification elsewhere. And **CEX
+flows dwarf every bridge here** — "value bridged in" is not "value that arrived", and the page says so.
+
+### 7.7 Wave E — the work
+
+| # | Item | Depends on |
+|---|---|---|
+| **E1** | **`server/sources/asset-hub.mjs`** — `bridged-inventory`, `bridged-holders`, `sovereign-dot`. ~30 requests per TTL, two hosts, no key, no store | — |
+| E2 | **`/bridged/`** — the bridged-value page. Stacked bars per asset, segments = holding chain, summing to supply by construction; issuer-minted USDC/USDT in a separate labelled tile; Moonbeam band separate | E1 |
+| E3 | **Netflows v2, current value only** — second series on `/netflows/`, turning the 2023 archive into a comparison rather than the whole page | E1 (`sovereign-dot`) |
+| E4 | **`moonbeam.mjs` + `interlay.mjs`** — the separate band, and BTC-in. Interlay is one `state_getStorage`; Moonbeam is `eth_call totalSupply()` over `pallet_moonbeam_foreign_assets` | E1 |
+| E5 | `docs/platform/bridges.md`, the trap entries in `CLAUDE.md`, and the `check.mjs` local-path gap | — |
+| E6 | Call Dotlake's `defi-tvl` / `daily-usdc` / `daily-usdt` — **registered since v1 and never called by anything.** Cross-check column only, never the lead figure | — |
+
+**E6 is ten minutes and nobody has ever done it.** Its outcome is useful either way: a cross-check
+column, or a written-down "these do not answer the question" so the next person does not re-derive it.
+
+### 7.8 Open, and blocking nothing
+
+- **Para 2004 (Moonbeam) is not in `ParaLifecycles`'s 89 ids** — verified live, cause unknown.
+  Moonbeam is on the *existing* netflows chart, so a live v2 built off today's para set would
+  silently drop a chain the archive shows. Until it is understood, absent must render as
+  **"missing, and here is why"**, never as zero.
+- `ParaLifecycles` is current-state-only and does not contain the union of ever-registered ids,
+  which a lifetime series needs. The plan does not say where that comes from.
+- Whether Dotlake indexes the Snowbridge corridor with usable asset detail — unverified.
+- Whether Hydration's `Signet` pallet is used at all — unverified. It is **not** a bridge (CAIP-2
+  remote signing) and must not be reported as one, nor as unused.

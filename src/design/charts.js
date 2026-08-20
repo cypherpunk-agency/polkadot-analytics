@@ -1,18 +1,21 @@
-// The chart kit. Hand-rolled inline SVG, four forms, shared by every page.
+// The chart kit. Hand-rolled, shared by every page. Mostly inline SVG; the ranked forms are
+// DOM, because a list of rows wants to be a list of rows.
 //
 // No charting library. The production CSP forbids external scripts, and a 3 MB plotting bundle
 // to draw a stacked bar chart would dominate the page weight of a site whose whole point is a
 // few hundred numbers. More importantly, the forms here are chosen rather than configured:
-// four marks that fit the four questions this site asks, and no dual-axis chart, ever.
+// marks that fit the questions this site asks, and no dual-axis chart, ever. A new form needs
+// an argument in docs/architecture/design-system.md, not just a use for it.
 //
 // Rules these follow, from docs/architecture/design-system.md:
 //   · categorical colour is assigned in fixed slot order, never cycled; slot 9+ is grey
 //   · bars are linear from zero and rounded only on the data end
 //   · stacked segments carry a 1px surface-coloured stroke so adjacent hues stay separable
+//   · a segmented bar states its total independently and SHOWS the shortfall when it disagrees
 //   · every chart has a legend with values, and a table view exists on the page
 //   · one y-axis
 
-import { svg, el } from './dom.js'
+import { svg, el, append } from './dom.js'
 import { money, compact } from '../core/format.js'
 
 const SLOTS = 8
@@ -213,6 +216,155 @@ export function stackedBars(host, { days, series, format = money, colors = null 
     )
   })
   hover.addEventListener('pointerleave', () => cross.setAttribute('opacity', 0))
+}
+
+/* --------------------------------------------------------------- segmented rank rows ---- */
+
+/**
+ * One horizontal bar per item, split into segments that are supposed to **sum to that item's
+ * total** — and checked, not trusted.
+ *
+ * WHY A FIFTH FORM, since the kit is deliberately closed. The other four answer "how did this
+ * change" or "what flowed where". This one answers a question none of them can: *where does a
+ * known quantity currently sit?* Asset Hub's supply of a bridged token is an exact number, and
+ * every parachain's sovereign holding is a slice of that same number — so the slices must add
+ * back up to it. Drawn this way the arithmetic is the picture: if the segments do not fill the
+ * bar, something is unaccounted for and you can see it. A grouped bar or a pie would both hide
+ * exactly that.
+ *
+ * THE RECONCILIATION IS THE POINT, and it is why this takes `total` separately rather than
+ * summing the segments and calling that the total. Summing would make every row reconcile by
+ * construction and the check would be worthless. Instead:
+ *
+ *   · segments short of the total  → the shortfall is drawn, hatched, and labelled. That is
+ *     usually real (value held by the chain itself rather than by any of its counterparties),
+ *     so the caller should pass it as a named series and see this go away. When it does not go
+ *     away, that is the finding.
+ *   · segments over the total      → the row is marked `data-over`, because that cannot be
+ *     drawn honestly at all. Two sources disagree and the page must say so rather than clip a
+ *     bar and look fine.
+ *
+ * ⚠️ SCALING IS A UNIT DECISION AND GETTING IT WRONG RENDERS PERFECTLY. Linear from zero,
+ * always — but denominated one of two ways, and the wrong one is silent:
+ *
+ *   · `scale: 'shared'` (default) denominates every bar by the largest total, so bar lengths
+ *     are comparable BETWEEN rows. This is only honest when the rows share a unit. Drawn from
+ *     raw token amounts it is a lie: 4,210 WETH against 88,400,000 USDC puts WETH at 0.005% of
+ *     the track — a real holding worth more than ten million dollars renders as a 1px sliver
+ *     next to a stablecoin. Compare rows in USD, or do not compare them.
+ *   · `scale: 'row'` denominates each bar by its own total, so every bar fills its track and
+ *     only the COMPOSITION is encoded. This is the honest mode for mixed units, and for the
+ *     assets that could not be priced at all. Magnitude is not lost — it stays in the amount
+ *     column — it is just not in the bar.
+ *
+ * The returned tally carries `faint`: rows under 2% of the track under shared scaling. A page
+ * that gets a high `faint` count is being told its units are not comparable.
+ *
+ * Sub-pixel segments are floored to 1px rather than rounded away, so a small-but-real holding
+ * is never invisible — which means the very smallest segments are deliberately NOT to scale.
+ * The alternative is that a genuine balance draws as nothing and reads as zero, and on this
+ * site `null` is not `0` and neither is "small".
+ *
+ * COLOUR FOLLOWS THE SERIES, NOT THE RANK. `series` is a fixed, caller-supplied order and the
+ * slot index comes from it, so filtering the rows never repaints the survivors. Slot 9+ is grey
+ * for the reason it always is here: a repeated hue reads as a repeated thing.
+ *
+ * No hover tooltip: this is a list that can be a hundred rows long, and the shared tooltip pins
+ * to the top of its host, which would put the description a screen away from the row it
+ * describes. Each row carries a `title` and the page carries a table — same information, and it
+ * survives both the keyboard and a printout.
+ *
+ * @param {HTMLElement} host
+ * @param {object} data
+ * @param {Array<{label:string, sublabel?:string, total:number, segments:number[], note?:string}>} data.rows
+ * @param {Array<{label:string}>} data.series          fixed order; `segments[i]` belongs to `series[i]`
+ * @param {(n:number)=>string} [data.format]
+ * @param {string} [data.unit]                          what the numbers are, for the legend heading
+ * @param {string} [data.residualLabel]                 what an unfilled remainder means here
+ * @param {'shared'|'row'} [data.scale]                 see the scaling warning above
+ * @returns {{reconciled:number, short:number, over:number, faint:number}} counts, for the data notes
+ */
+export function segmentedRows(host, { rows, series, format = money, residualLabel = 'unaccounted', scale = 'shared' }) {
+  host.replaceChildren()
+  if (!rows?.length) return { reconciled: 0, short: 0, over: 0, faint: 0 }
+
+  const sharedMax = Math.max(...rows.map((row) => Math.max(row.total ?? 0, sum(row.segments))), 1)
+  const tally = { reconciled: 0, short: 0, over: 0, faint: 0 }
+
+  // A relative tolerance, not an absolute one. These are token amounts spanning eighteen orders
+  // of magnitude — an absolute epsilon that is sane for BTC calls every USDC row broken.
+  const reconciles = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b))
+
+  const list = el('div.rows')
+  for (const row of rows) {
+    const total = row.total ?? 0
+    const accounted = sum(row.segments)
+    const residual = total - accounted
+    const state = reconciles(accounted, total) ? 'reconciled' : residual > 0 ? 'short' : 'over'
+    tally[state]++
+
+    const parts = row.segments
+      .map((value, i) => ({ value, label: series[i]?.label ?? `series ${i + 1}`, color: seriesColor(i) }))
+      .filter((part) => part.value > 0)
+
+    // `row` scaling denominates each bar by its own total, so every bar fills its track and only
+    // the COMPOSITION is encoded. `shared` denominates every bar by the largest total, so bar
+    // lengths are comparable between rows — which is only true if the rows share a unit.
+    const denom = scale === 'row' ? Math.max(total, accounted, Number.MIN_VALUE) : sharedMax
+    if (scale === 'shared' && total / sharedMax < 0.02) tally.faint++
+
+    const track = el('div.track.segmented')
+    for (const part of parts) {
+      append(track, el('div.seg', { style: `width:${(part.value / denom) * 100}%;background:${part.color}` }))
+    }
+    // Drawn, never quietly omitted. An unfilled bar is the whole reason this form exists.
+    if (state === 'short') {
+      append(track, el('div.seg', { class: 'residual', style: `width:${(residual / denom) * 100}%` }))
+    }
+
+    const lines = [
+      `${row.label}${row.sublabel ? ` · ${row.sublabel}` : ''}`,
+      `total ${format(total)}`,
+      ...parts.sort((a, b) => b.value - a.value).map((part) => `${part.label}: ${format(part.value)}`),
+    ]
+    if (state === 'short') lines.push(`${residualLabel}: ${format(residual)}`)
+    if (state === 'over') lines.push(`⚠ segments exceed the total by ${format(-residual)} — sources disagree`)
+    if (row.note) lines.push(row.note)
+
+    append(
+      list,
+      el(
+        'div.row.seg-row',
+        { tabindex: '0', title: lines.join('\n'), data: { state } },
+        el('div.name', { text: row.label }),
+        el('div.sub', { text: row.sublabel ?? '' }),
+        track,
+        el('div.amt', { text: format(total) }),
+      ),
+    )
+  }
+
+  append(host, list)
+  return tally
+}
+
+const sum = (values) => (values ?? []).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
+
+/**
+ * The legend for `segmentedRows`, carrying the value and not just the name — the same relief
+ * every chart here owes the three light-mode hues that sit under 3:1 contrast.
+ */
+export function segmentedLegend(series, totals, format = money) {
+  const items = series.map((entry, i) =>
+    el(
+      'li',
+      null,
+      el('span.swatch', { style: `background:${seriesColor(i)}` }),
+      document.createTextNode(entry.label),
+      el('span.amt', { text: format(totals?.[i] ?? 0) }),
+    ),
+  )
+  return el('ul.legend', null, ...items)
 }
 
 /* ------------------------------------------------------------------------------- line ---- */

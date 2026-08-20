@@ -52,14 +52,62 @@ Sequential encoding is one hue light→dark (`--seq-*`). Never a rainbow.
 
 ## Chart forms
 
-Six, hand-rolled as inline SVG:
+Seven, hand-rolled. The SVG ones:
 
 - `stackedBars` — daily volume by series. The default chart of this site.
 - `lineChart` — one line over an ordered index: cumulative totals, concentration curves.
 - `multiLine` — several series on one shared scale, for the netflows archive.
 - `matrix` — an n-by-n directed relation: origin down the side, destination across the top.
 - `flowGraph` — node/edge topology on a fixed circular layout, with value-weighted edges.
+
+And the row forms, which are DOM rather than SVG because a list of rows wants to be a list of
+rows — they get hover, focus, text selection and printing for free:
+
 - bar rows in CSS — rankings, breakdowns, routes.
+- `segmentedRows` — one bar per item, split by who holds it. See below.
+
+### `segmentedRows`, and why the kit grew
+
+The other six answer "how did this change" or "what flowed where". This one answers a question
+none of them can: **where does a known quantity currently sit?**
+
+Asset Hub's supply of a bridged token is an exact number, and every parachain's sovereign
+holding is a slice of that same number — so the slices must add back up to it. Drawn this way,
+**the arithmetic is the picture**: if the segments do not fill the bar, something is unaccounted
+for and you can see it. A grouped bar or a pie hides precisely that.
+
+So it takes the total **separately** rather than summing the segments and calling that the
+total. Summing would make every row reconcile by construction and the check would be worth
+nothing. Instead:
+
+- **segments short of the total** → the shortfall is drawn as a hatch, never omitted. Usually
+  that is real (value the chain holds itself rather than on anyone's behalf), so the caller
+  passes it as a named series and watches it disappear. When it does not disappear, that is the
+  finding.
+- **segments over the total** → the row is outlined in `--critical`, because that cannot be
+  drawn honestly at all. Two sources disagree, and clipping the bar would look fine.
+
+The hatch is deliberately not a hue. It is an absence, and a colour from the categorical set
+would make it read as one more category.
+
+**⚠️ Scaling is a unit decision, and the wrong one renders perfectly.** Linear from zero always,
+but denominated one of two ways:
+
+| mode | denominator | honest when |
+|---|---|---|
+| `shared` (default) | the largest total across rows | every row is in the **same unit** — in practice, USD |
+| `row` | each row's own total | units differ, or the value could not be priced at all |
+
+Drawn from raw token amounts, `shared` is a lie: 4,210 WETH beside 88,400,000 USDC puts WETH at
+0.005% of the track, so eight figures of real value renders as a 1px sliver next to a
+stablecoin. **Compare rows in USD, or do not compare them.** The returned tally carries `faint`
+— rows under 2% of the track under shared scaling — so a page whose units are not comparable is
+told so rather than left to look plausible.
+
+Sub-pixel segments are floored to 1px instead of rounded away, so a small-but-real holding is
+never invisible. That means the smallest segments are deliberately **not** to scale, which is
+the lesser evil: the alternative is a genuine balance drawing as nothing and reading as zero,
+and here `null` is not `0` and neither is "small".
 
 `matrix` and `flowGraph` were added for cross-chain flow, and both refuse the chart that
 question usually gets. **A Sankey is wrong for XCM** because the graph is cyclic — Asset Hub

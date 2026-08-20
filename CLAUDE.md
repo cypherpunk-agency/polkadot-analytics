@@ -113,7 +113,9 @@ npm run check     # syntax, secret scan, source-registry and no-external-URL che
 - USDC and USDT are **18 decimals on BNB Chain and 6 everywhere else**. Keying decimals by
   symbol rather than by chain is a factor-of-a-trillion error that renders perfectly.
 - Dotlake's `total_value_usd` is `0.0` for anything it cannot price, which is indistinguishable
-  from a message that moved nothing. Treat it as a floor.
+  from a message that moved nothing — **and** it contains decimals-corrupted rows (summed to
+  $39.9 quadrillion in one day's data). It is neither a floor nor a ceiling: use row-level
+  records with a sanity cap, and state on the page how many rows were excluded and why.
 - The Bulletin devnet RPC is `bulletin-paseo.tservices.es:8443`. **Not**
   `paseo-bulletin-next-rpc.polkadot.io` — a different chain, which renders a plausible and
   entirely wrong view.

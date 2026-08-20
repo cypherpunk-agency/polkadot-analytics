@@ -605,7 +605,7 @@ C1 exists; the fill rate is zero because there is nowhere to put rows and nothin
 
 ### 9.3 The smallest step that unstrands it
 
-**One `jobs.swaps` handler on `hydration.mjs`**, unit = one closed UTC day. The immutability
+**One `jobs.swaps-daily` handler on `hydration.mjs`**, unit = one closed UTC day. The immutability
 predicate is trivial (a UTC day whose last block is below `head − k`), orca is already
 cursor-paginated with a stable `Broadcast::IncrementalId` for idempotent inserts, and day-chunking
 is exactly what §2.1 asked for.
@@ -634,7 +634,7 @@ most accurate description of what is actually blocked — more so than this file
 |---|---|---|---|
 | 1 | **E3 — netflows live** | Biggest visitor-visible delta open. Page code only: `sovereign-dot` already returns 127 chains, 254 holdings and a `missing[]` with a per-chain `why` | ~0.5 day |
 | 2 | **Liveness on the 5 sources and 7 pages missing it** | The site's premise is saying what is wrong with a number, and staleness is the commonest thing wrong. Two chains were caught today answering RPC while 10 and 24 days behind | 2–4 h |
-| 3 | **`jobs.swaps` on `hydration.mjs`** | §9.3 — unstrands ~2,430 lines and produces the disk number | ~1 day |
+| 3 | ~~**`jobs.swaps` on `hydration.mjs`**~~ **SHIPPED 2026-08-20 as `jobs.swaps-daily`** | §9.3 — unstranded ~2,430 lines and produced the disk number. See §12 | done |
 | 4 | **`interlay.mjs`** | One `state_getStorage`. Unblocked: the canary band is settled (reject thousands of BTC; actual issuance 2.118) | hours |
 | 5 | **The disk conversation** | §9.2. Blocks nothing else, blocks everything after | decision |
 | 6 | **E4 `moonbeam.mjs`** | Blocked on research-queue **B5** — whether a deregistered chain gets a band at all | decision first |
@@ -756,9 +756,76 @@ Each was believed, recorded, and repeated before being checked.
 
 §9.6 items 1, 2 and 4 shipped. What remains, in order:
 
-1. **`jobs.swaps` on `hydration.mjs`** — unstrands ~2,430 lines and produces the disk number.
-2. **The disk conversation**, once that number exists.
+1. ~~`jobs.swaps`~~ **Shipped as `jobs.swaps-daily`** — see §12. The name in this plan was wrong.
+2. ~~The disk conversation~~ **Settled in §12 on the measured number.**
 3. **O21 — the whole-network sweep.** 86 paras, `System::Account(sibl)` plus `Paras::Heads`
    deltas, ~1 hour, and `asset-hub.mjs` already has most of the machinery. Highest leverage open.
 4. **E4 `moonbeam.mjs`** for the stranded-value row.
 5. **Liveness on the four sources and remaining pages still without it.**
+
+---
+
+## 12. The disk, settled on a measured number — 2026-08-20
+
+§4 deferred this with an explicit condition: *"size it after C1 exists and we can measure real
+fill rates."* C1 through C4 had been written since Wave C and had **never executed**, because no
+source defined a `jobs` entry. `jobs.swaps-daily` is the first one, and it produced the number.
+
+### 12.1 What a day actually costs
+
+121 days and 1,112,356 routed trades ingested for real on 2026-08-20:
+
+| | |
+|---|---|
+| indexed day, on disk | **14.3 – 16.7 kB** |
+| a day with nothing to index | 544 B |
+| SQLite overhead over logical rows | 1.079× |
+| per routed trade | 1.35 B |
+| time per day | mean **9.0 s**, p90 15.3 s |
+| time, as a model | **2.27 s/day + 0.563 ms/trade**, ±1 % across four months |
+
+**Growth is linear in DAYS, not in trades** — a day with 19,046 trades costs 15.5 kB, one with
+7,315 costs 13.6 kB. The payload is a summary with bounded lists, so volume barely moves it. That
+is the property that decides the sizing, and it was not knowable without measuring.
+
+**Full Hydration backfill, 2025-01-01 → 2026-08-19** (596 days, 6,585,435 trades, counted exactly
+rather than sampled): **≈ 9 MB on disk, ≈ 84 minutes, ≈ 2.9 GB pulled from orca.** The store is
+**0.3 % of what it reads**, which is the whole point of it.
+
+### 12.2 The decision
+
+**Provision 1 GB. The question was badly posed and the measurement is why.**
+
+The ask was framed as "10 GB for a full sweep", then argued down to "much smaller but not zero".
+Both were guesses about the wrong quantity. At 14–17 kB/day/source, **1 GB holds roughly 160,000
+source-days** — every source this repo has, at daily granularity, for longer than the chains have
+existed. A year of Hydration is 5.5 MB.
+
+Provision a small persistent volume and stop treating storage as scarce, because at this rate it
+is not. The scarce resource is **upstream time** — 84 minutes and 2.9 GB pulled to produce 9 MB —
+and that is a politeness budget, not a disk budget. It is already governed by `HostGate` (one
+in-flight request per host across every job).
+
+**What would reverse this:** storing raw trades rather than summaries is 268 B each — 2.8 MiB/day,
+1.64 GiB for the same history, **~190×**. That is a different decision with a different answer,
+and it is refused for a second reason anyway: `serveFromStore` returns every segment in one
+response with no paging, so a month of raw trades is a ~150 MB single answer. The summary month
+measured 428 kB over the wire.
+
+### 12.3 What the measurement corrected
+
+- **`~8,527 trades/day`, measured from the live 14-day window and quoted in `hydration.mjs`,
+  understates history by ~31 %.** The true mean over 19 months is **11,050/day**, and 2025-08 ran
+  at 19,046. A cost estimate extrapolated from a recent window is an estimate of the recent window.
+- **Block time varies far more than the trailing averages suggested**: 13.96 s/block in
+  2025-01 → 4.88 s in 2026-07, so a single day holds between 6,188 and 17,702 blocks. CLAUDE.md's
+  block-time bullet has been corrected in place — the existing figures were right for recent
+  history and badly wrong once you walk backwards.
+
+### 12.4 Still open
+
+`docs/concept/research-queue.md` **O23** is the one that matters: *does orca ever revise a day it
+has already indexed?* A stored day is never re-fetched, so a revision would be invisible forever.
+It is defended by three checks that refuse rather than annotate, but confirming it needs elapsed
+time, not cleverness. **O24** is the visible gap: nothing renders the stored history yet, and the
+seam between stored months and the live 14-day window needs a decision before anything does.

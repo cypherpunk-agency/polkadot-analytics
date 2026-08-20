@@ -51,6 +51,24 @@ export const PAGES = [
     live: true,
   },
   {
+    // Standalone rather than in a group, and deliberately so. A group exists to say that
+    // several pages are one subject — it is the only thing that makes four Hydration labels
+    // legible as four views of one chain. A group of one says nothing and costs a click, so
+    // this sits flat next to XCM, which is the page it is actually kin to: both answer "what
+    // crosses between chains", one as flow and one as inventory. If a second Asset Hub page
+    // lands (sovereign DOT is the obvious one), that is the moment to make an "Asset Hub"
+    // group and move both under it.
+    key: 'bridged',
+    kind: 'dashboard',
+    href: '/bridged/',
+    nav: 'Bridged',
+    title: 'Bridged onto Asset Hub',
+    blurb:
+      'Everything that entered Polkadot from another consensus system, keyed by the XCM location its storage key spells out: which parachain holds each asset now, and where the holder balances do not add back up to the supply the pallet claims.',
+    source: 'Polkadot Asset Hub RPC',
+    live: true,
+  },
+  {
     key: 'hydration',
     kind: 'dashboard',
     group: 'hydration',

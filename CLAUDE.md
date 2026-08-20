@@ -99,7 +99,8 @@ npm run check     # syntax, secret scan, source-registry and no-external-URL che
   about Hydration, including its own older material, still says LRNA. The registry is the
   authority and it says H2O.
 - `operationStack` variants **verified live in runtime 435** are `Omnipool`, `Router`, `DCA` and
-  `Batch`. `Direct` is ours, for a leg with no stack. `ICE` appears in third-party writing about
+  `Batch` (2026-08-19), plus `Xcm`, observed on /hydration/ on 2026-08-20. `Direct` is ours, for a
+  leg with no stack. `ICE` appears in third-party writing about
   Hydration but has **no pallet, no storage and no metadata presence** — do not report it as a
   category. The code uses whatever the chain sends rather than mapping onto a fixed list.
 - **Bulletin's `RETENTION_BLOCKS = 201_600` is inherited, not verified here.** On the sibling

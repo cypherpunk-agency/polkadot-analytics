@@ -25,7 +25,7 @@
 //
 // The message COUNTS are exact and stay the lead.
 
-import { callUpstream } from '../lib/upstream.mjs'
+import { callUpstream, UpstreamError } from '../lib/upstream.mjs'
 import { liveness } from '../../src/core/liveness.js'
 
 const BASE = 'https://api.data.parity.io'
@@ -47,6 +47,183 @@ function rest(path, schema, { ttlMs = 300_000, summary = '' } = {}) {
       }
       const suffix = query.size ? `?${query}` : ''
       return callUpstream({ source: 'dotlake', url: `${BASE}${path}${suffix}`, timeoutMs: 45_000 })
+    },
+  }
+}
+
+/* ==========================================================================================
+ *  The daily grids, and the 1,000-row cut that does not announce itself
+ * ==========================================================================================
+ *
+ * `daily-usdc`, `daily-usdt` and `defi-tvl` each return a dense grid — one row per chain per
+ * day — as a bare JSON array. Four things about that array are silent. All four were verified
+ * live against `api.data.parity.io` on 2026-08-20, anonymously, over plain `curl`:
+ *
+ *   1. `daily-usdc` AND `daily-usdt` STOP AT 1,000 ROWS. Not a page — a cut. The response is a
+ *      `200` carrying no envelope, no `has_more`, no `Link`, no `206`, and no header of any
+ *      kind that says so; the rows that survive are the OLDEST 1,000 and everything newer is
+ *      simply absent. `start_date=2025-01-01&end_date=2026-08-19` returns exactly 1,000 rows
+ *      covering 2025-01-01…2025-03-18 — seventeen requested months gone, under a success code.
+ *      There is nothing to page with: `limit`, `offset` and every other unknown parameter are
+ *      ACCEPTED AND IGNORED, so `?limit=5` looks like it worked and changed nothing. At 13
+ *      chains (`daily-usdc`) and 21 (`daily-usdt`) the cut lands at roughly 76 and 46 days, so
+ *      an ordinary quarter-long window is already truncated. The only remedy is to ask for a
+ *      narrower window — or one chain — and stitch, which is why `chain` is registered below.
+ *      `defi-tvl` is NOT capped: 2,925 rows for 2023-01-01…2026-08-19 in one response.
+ *
+ *   2. THE LAST DAY OF A CUT RESPONSE IS ITSELF PARTIAL. The cut lands mid-day, so the final
+ *      date carries a fraction of its chains — 6 against the usual 14 in the probe above. The
+ *      last point of any chart drawn from it is a low number for a reason the payload does not
+ *      state. `defi-tvl` shows the same shape at the live end for an unrelated reason: on
+ *      2026-08-20 its newest date, 2026-08-19, carried 1 of 5 chains.
+ *
+ *   3. THERE IS NO DATE VALIDATION. `start_date=not-a-date` is a `200` with `[]`. So is a
+ *      window entirely in the future, and so is a reversed one. A typo renders as an empty
+ *      chart and never as an error. `readParams` catches the malformed date before we ask;
+ *      it cannot catch a well-formed date nobody has data for, which is what `coverage` is for.
+ *
+ *   4. `coveredTo` FALLING SHORT OF `end_date` IS NOT BY ITSELF TRUNCATION. Dotlake is a batch
+ *      warehouse and its newest stablecoin row was a full day behind the clock on 2026-08-20.
+ *      Ordinary lag and a 1,000-row cut look identical in the rows. What separates them is the
+ *      CONJUNCTION — landing exactly on the cap AND falling short of the requested end — so
+ *      `truncated` is only asserted when both hold, and `atCap` is reported on its own when
+ *      the count is suspicious but the window was satisfied.
+ *
+ * The payload therefore has to carry the evidence for its own completeness, because the
+ * response it is built from carries none of it. Rule 3 of CLAUDE.md is why this lives here and
+ * not in prose on a page: the caveat is computed from the same rows the chart would be drawn
+ * from, so it cannot drift away from them.
+ */
+
+const DAILY_ROW_CAP = 1000 // verified live 2026-08-20; a hard cut, not a page size
+const DAY_MS = 86_400_000
+const PARTIAL_TAIL_WINDOW = 7 // dates before the last one used as its "normal" reference
+
+const asDay = (iso) => Date.parse(`${iso}T00:00:00Z`)
+
+/** Inclusive count of UTC days, or `null` when either end is absent. */
+function daysBetween(from, to) {
+  if (!from || !to) return null
+  const span = Math.round((asDay(to) - asDay(from)) / DAY_MS) + 1
+  return Number.isFinite(span) ? span : null
+}
+
+/** Median of a numeric array. Used on chain-counts, where a mean is dragged by the partial day. */
+function median(values) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/**
+ * A daily grid with its own completeness attached.
+ *
+ * `valueField` is the column that carries the number — `sum_of_usdc`, `sum_of_usdt`, `tvl_usd`.
+ * It is named per operation rather than guessed, because guessing "the one numeric key" is how
+ * a renamed column becomes a chart of `undefined` that draws as an empty series.
+ */
+function dailyGrid(path, schema, { valueField, ttlMs = 900_000, summary = '' }) {
+  return {
+    summary,
+    ttlMs,
+    schema,
+    async run(params) {
+      const query = new URLSearchParams()
+      for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null) continue
+        query.set(key, String(value))
+      }
+      const suffix = query.size ? `?${query}` : ''
+      const rows = await callUpstream({
+        source: 'dotlake',
+        url: `${BASE}${path}${suffix}`,
+        timeoutMs: 45_000,
+      })
+
+      // A shape we do not recognise is reported, never coerced into an empty grid — an empty
+      // grid is a real and different answer here, and the two must not collapse.
+      if (!Array.isArray(rows)) {
+        throw new UpstreamError('dotlake returned a daily grid that is not an array.', {
+          kind: 'decode',
+          source: 'dotlake',
+        })
+      }
+
+      const chainsByDate = new Map()
+      const chains = new Set()
+      let zeroRows = 0
+      let nullRows = 0
+      for (const row of rows) {
+        const date = String(row?.date ?? '').slice(0, 10)
+        if (date) {
+          if (!chainsByDate.has(date)) chainsByDate.set(date, new Set())
+          if (row?.chain) chainsByDate.get(date).add(String(row.chain))
+        }
+        if (row?.chain) chains.add(String(row.chain))
+        const value = row?.[valueField]
+        // `null` is "we could not value this" and `0` is "it was worth nothing". Dotlake writes
+        // a collection gap as `0.0` on `defi-tvl`, so both are counted and neither is inferred
+        // to be the other. See the `0.0`-means-unknown note in docs/platform/data-sources.md.
+        if (value === null || value === undefined) nullRows += 1
+        else if (value === 0) zeroRows += 1
+      }
+
+      const dates = [...chainsByDate.keys()].sort()
+      const coveredFrom = dates[0] ?? null
+      const coveredTo = dates.at(-1) ?? null
+
+      const requested = { from: params.start_date ?? null, to: params.end_date ?? null }
+      const requestedDays = daysBetween(requested.from, requested.to)
+      const coveredDays = daysBetween(coveredFrom, coveredTo)
+
+      // EXACTLY the cap, not "at least" it. The cut is a hard stop at 1,000, so a response of
+      // exactly 1,000 rows may have been cut and one of 2,925 proves the cut does not apply to
+      // this endpoint at all. `>=` would have branded every full `defi-tvl` history as capped.
+      const atCap = rows.length === DAILY_ROW_CAP
+      // Short of the requested end. On its own this is ordinary warehouse lag; with `atCap` it
+      // is the cut. When no `end_date` was asked for there is nothing to fall short of, and the
+      // answer is `null` — unknown — rather than `false`.
+      const short = requested.to === null || coveredTo === null ? null : coveredTo < requested.to
+      const truncated = short === null ? (atCap ? null : false) : atCap && short
+
+      // The trailing date, measured against the days just before it. Early history genuinely
+      // carries fewer chains — Dotlake added them over time — so a comparison against the whole
+      // window's maximum would flag hundreds of honest days. The reference is local.
+      const tailCounts = dates.slice(-1 - PARTIAL_TAIL_WINDOW, -1).map((d) => chainsByDate.get(d).size)
+      const lastCount = coveredTo === null ? null : chainsByDate.get(coveredTo).size
+      const typical = median(tailCounts)
+      const trailingPartial =
+        lastCount !== null && typical !== null && lastCount < typical
+          ? { date: coveredTo, chains: lastCount, typical }
+          : null
+
+      return {
+        window: { ...params },
+        coverage: {
+          rows: rows.length,
+          rowCap: DAILY_ROW_CAP,
+          atCap,
+          // `true` = proven cut. `false` = proven whole. `null` = cannot be told apart from
+          // ordinary lag, which happens when the caller named no `end_date`.
+          truncated,
+          requestedFrom: requested.from,
+          requestedTo: requested.to,
+          requestedDays,
+          coveredFrom,
+          coveredTo,
+          coveredDays,
+          dates: dates.length,
+          chains: [...chains].sort(),
+          // How many days a single request can ever reach at this chain count — the ceiling the
+          // caller has to chunk under. Only meaningful when the cut actually applied, so it is
+          // `null` otherwise rather than a number inviting a false comparison.
+          daysPerCap: atCap && chains.size ? Math.floor(DAILY_ROW_CAP / chains.size) : null,
+          trailingPartial,
+        },
+        quality: { valueField, zeroRows, nullRows },
+        rows,
+      }
     },
   }
 }
@@ -530,20 +707,73 @@ export default {
 
     /* ------------------------------------------------------- Asset Hub / stablecoins ---- */
 
-    'daily-usdc': rest('/api/daily-usdc', { start_date: { type: 'date' }, end_date: { type: 'date' } }, {
-      ttlMs: 900_000,
-      summary: 'USDC held per chain, daily. Most of it lives on Asset Hub.',
-    }),
+    /* `start_date` and `end_date` are REQUIRED here and optional on `defi-tvl`, which is not a
+     * symmetry anyone would guess — it is what the upstream does, source-verified in its
+     * OpenAPI (`required: true` on both stablecoin endpoints, `required: false` on `defi-tvl`)
+     * and verified live on 2026-08-20: no parameters gives `422` with a FastAPI
+     * `{"detail":[{"type":"missing","loc":["query","start_date"],"msg":"Field required"}…]}`
+     * on `daily-usdc`/`daily-usdt`, and `200` with the full history from 2023-01-01 on
+     * `defi-tvl`. Registering them as optional — as this module did until 2026-08-20 — turned a
+     * caller's omission into an upstream `422` surfacing as a generic "dotlake returned HTTP
+     * 422" instead of the local, specific "`start_date` is required."
+     *
+     * `chain` IS declared upstream on both stablecoin endpoints and does filter (verified live:
+     * `chain=polkadot_asset_hub` returns that one chain's row). It is registered because it is
+     * the only lever a caller has against the 1,000-row cut — one chain instead of thirteen
+     * multiplies the reachable window by an order of magnitude.
+     *
+     * `relay_chain` is declared upstream too, and is deliberately NOT registered. Its only
+     * value that returns anything is `polkadot`; `relay_chain=kusama` answers `200 []` rather
+     * than an error, and this repo's shared `RELAY` spec admits `kusama`. Registering it would
+     * hand a caller a parameter whose one non-default setting draws a confidently empty chart.
+     * Unregistered, `?relay_chain=kusama` is rejected by `readParams` as an unknown parameter,
+     * which is the loud failure rule 3 asks for. There is no Kusama stablecoin data here at all.
+     */
 
-    'daily-usdt': rest('/api/daily-usdt', { start_date: { type: 'date' }, end_date: { type: 'date' } }, {
-      ttlMs: 900_000,
-      summary: 'USDt held per chain, daily.',
-    }),
+    'daily-usdc': dailyGrid(
+      '/api/daily-usdc',
+      {
+        start_date: { type: 'date', required: true },
+        end_date: { type: 'date', required: true },
+        chain: { type: 'string', maxLength: 40 },
+      },
+      {
+        valueField: 'sum_of_usdc',
+        ttlMs: 900_000,
+        summary:
+          'USDC held per chain, daily, with the coverage the response itself does not state. Most of it lives on Asset Hub. Cut at 1,000 rows upstream — check `coverage.truncated`.',
+      },
+    ),
 
-    'defi-tvl': rest('/api/defi-tvl', { start_date: { type: 'date' }, end_date: { type: 'date' } }, {
-      ttlMs: 900_000,
-      summary: 'Daily DeFi TVL by parachain.',
-    }),
+    'daily-usdt': dailyGrid(
+      '/api/daily-usdt',
+      {
+        start_date: { type: 'date', required: true },
+        end_date: { type: 'date', required: true },
+        chain: { type: 'string', maxLength: 40 },
+      },
+      {
+        valueField: 'sum_of_usdt',
+        ttlMs: 900_000,
+        summary:
+          'USDt held per chain, daily, with the coverage the response itself does not state. Cut at 1,000 rows upstream — check `coverage.truncated`.',
+      },
+    ),
+
+    // No `chain` here: `defi-tvl` does not declare one, and passing it is silently IGNORED —
+    // `?chain=assethub` returns all 2,925 rows across all five chains (verified live
+    // 2026-08-20). Registering it would advertise a filter that does nothing, which is worse
+    // than having none. Not capped, but the same guard runs so that a future cap is caught.
+    'defi-tvl': dailyGrid(
+      '/api/defi-tvl',
+      { start_date: { type: 'date' }, end_date: { type: 'date' } },
+      {
+        valueField: 'tvl_usd',
+        ttlMs: 900_000,
+        summary:
+          'Daily DeFi TVL by parachain (assethub, hydration, acala, astar, bifrost), with per-day coverage. `0.0` here often means "not collected" — see `quality.zeroRows`.',
+      },
+    ),
 
     /* ------------------------------------------------------------------- coretime ---- */
 

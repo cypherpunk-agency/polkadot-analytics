@@ -20,7 +20,29 @@ stablecoin holdings, coretime, contracts and OpenGov, all pre-aggregated.
 
 **Auth.** Its OpenAPI document declares `security: [{}, {BearerAuth: []}]`. The empty first
 alternative is the important half — authentication is *optional*, and every endpoint we use was
-verified answering an anonymous request.
+verified answering an anonymous request. Its own words (source-verified in `openapi.json`,
+`info.description`, API version 0.1.1, read 2026-08-20): *"The data endpoints are public — no API
+key required. Anonymous requests are rate-limited per IP; exceeding either limit returns HTTP
+429."*
+
+> ⚠️ **Anonymous is optional, but a *wrong* credential is fatal — send no header at all.**
+> Verified live 2026-08-20: no `Authorization` header → `200`; `Authorization: Bearer
+> not-a-real-key` → **`401`** `{"status":"error","message":"Invalid or inactive API key"}`. There
+> is no "fall back to anonymous" — a malformed or expired key fails the request outright.
+> `server/lib/upstream.mjs` sends only `accept: application/json` and attaches no credential of
+> any kind, which is exactly the behaviour that works, and is the same rule as
+> [decision 0003](../decisions/0003-no-secrets.md) rather than a coincidence.
+>
+> On rate limits: ~150 anonymous requests across this probe and the earlier one never drew a
+> `429`, and **no `x-ratelimit-*` or `retry-after` header is exposed** on any response, so the
+> published limit cannot be observed before it is hit (*verified live* that none was returned;
+> the limit's existence is *source-verified* from the text above, its value unknown). The caching
+> in [middleware.md](../architecture/middleware.md) is what keeps us well inside it.
+
+**Attribution is required.** The same `info.description` states plainly: *"Attribution required by
+any public use."* This site is a public use. Every page drawing a Dotlake figure must name Parity's
+Dotlake as the source — this is an obligation the provider states, not a courtesy, and it is the
+one condition attached to an otherwise free and anonymous API.
 
 **What we read.** Only four of the fifteen registered operations are actually called by a page:
 `xcm-summary`, `xcm-daily-stats`, `xcm-top-routes` and `xcm-value`, all of them by `/xcm/`. The
@@ -56,14 +78,27 @@ Hydration. The page relabels them for display; the data is not altered.
 ### `daily-usdc`, `daily-usdt`, `defi-tvl` — registered since v1, never called
 
 Probed 2026-08-20 (**verified live**, `curl` against `api.data.parity.io`, anonymous). All three
-answer `200` with a bare JSON **array** — no envelope, no `total`, no `next`. Both parameters are
-required: omitting them is a `422`, not a default window.
+answer `200` with a bare JSON **array** — no envelope, no `total`, no `next`.
 
-| Operation | Params | Row shape | Chains | History starts | Newest row on 2026-08-20 |
+> ⚠️ **The date parameters are required on two of these three and optional on the third.** Not a
+> symmetry anyone would guess, and this repo registered all three as optional until 2026-08-20.
+> **Source-verified** in the OpenAPI document (`required: true` on both stablecoin endpoints,
+> `required: false` on `defi-tvl`) and **verified live**: `GET /api/daily-usdc` with no
+> parameters is a `422` carrying a FastAPI body,
+> `{"detail":[{"type":"missing","loc":["query","start_date"],"msg":"Field required"},…]}` —
+> identical on `daily-usdt` — while `GET /api/defi-tvl` with no parameters is a `200` with the
+> complete history, 2,925 rows from 2023-01-01. Registered as optional, a caller's omission
+> travelled to Parity and came back as a generic "dotlake returned HTTP 422" instead of a local
+> "`start_date` is required."
+
+| Operation | Params (⁕ = required) | Row shape | Chains | Newest row on 2026-08-20 | Cut at 1,000 rows |
 | --- | --- | --- | --- | --- | --- |
-| `daily-usdc` | `start_date`, `end_date` | `date`, `relay_chain`, `chain`, `sum_of_usdc` | 13 | 2023-08-31 | 2026-08-18 |
-| `daily-usdt` | `start_date`, `end_date` | `date`, `relay_chain`, `chain`, `sum_of_usdt` | 21 | 2023-08-31 | 2026-08-18 |
-| `defi-tvl` | `start_date`, `end_date` | `date`, `chain`, `tvl_usd` | 5 | 2023-01-01 | 2026-08-19 |
+| `daily-usdc` | `start_date`⁕, `end_date`⁕, `chain`, `relay_chain` | `date`, `relay_chain`, `chain`, `sum_of_usdc` | 13 | 2026-08-18 | **yes** |
+| `daily-usdt` | `start_date`⁕, `end_date`⁕, `chain`, `relay_chain` | `date`, `relay_chain`, `chain`, `sum_of_usdt` | 21 | 2026-08-18 | **yes** |
+| `defi-tvl` | `start_date`, `end_date` | `date`, `chain`, `tvl_usd` | 5 | 2026-08-19 | no |
+
+Chain counts are per day on the newest complete day; across 2026-08-01…19 the distinct-chain
+counts are 14 and 22, because Moonbeam has rows early in that window and none after 2026-08-04.
 
 Real rows, exactly as returned for `start_date=2026-08-18&end_date=2026-08-19`:
 
@@ -74,30 +109,103 @@ Real rows, exactly as returned for `start_date=2026-08-18&end_date=2026-08-19`:
 ```
 
 Over 2026-08-13…20 that is 78 rows / 13 chains, 126 rows / 21 chains and 31 rows / 5 chains
-respectively — dense grids, one row per chain per day, no gaps inside the window. `relay_chain` is
-on the two stablecoin endpoints and is **not** on `defi-tvl`. It is also an undeclared *filter*
-rather than decoration: `relay_chain=kusama` returns `[]` while an invented parameter is ignored
-and changes nothing, so there is no Kusama stablecoin data here at all.
+respectively — one row per chain per day. **The grid is dense over a short window and not over a
+long one**: `daily-usdc` filtered to Asset Hub across 2025-01-01…2026-08-19 returns 576 rows over
+a 595-day span, so **19 days inside the covered range have no row at all** (2025-07-20, 2025-08-12,
+2025-08-15, … — verified live 2026-08-20). Iterating dates rather than rows is therefore required,
+and this repo's rule that empty days are drawn rather than dropped applies directly.
 
-> ⚠️ **`daily-usdc` and `daily-usdt` silently truncate at 1,000 rows, from the RECENT end.** There
-> is no cap parameter, no `limit`/`offset`/`page_size` (all three are ignored), and nothing in the
-> response says it was cut. Verified live 2026-08-20: `start_date=2020-01-01&end_date=2026-08-20`
-> returns exactly 1,000 rows covering **2023-08-31 to 2024-03-25** — a `200`, well-formed, and
-> two and a half years out of date. `2026-01-01…2026-08-20` returns exactly 1,000 rows ending
-> 2026-03-15. Worse, the last day in a truncated response is itself **partial**: the 90-day probe
-> ended on 2026-08-01 with 6 of the 14 chains present, so the final point of any chart drawn from
-> it is a low number for a reason nothing in the payload states. 13 chains × 77 days ≈ 1,000, so
-> the cap bites at roughly **11 weeks of `daily-usdc` and 7 weeks of `daily-usdt`**. Any caller
-> must chunk by date window and stitch, and must check that what came back reaches the date it
-> asked for. `defi-tvl` has no such cap — 2,925 rows for 2023-01-01…2026-08-20 in one response.
+**`chain` and `relay_chain` are declared, not undocumented** (source-verified in the OpenAPI:
+both appear as `required: false` query parameters on `daily-usdc` and `daily-usdt`, and neither
+appears on `defi-tvl`). Both genuinely filter — `chain=polkadot_asset_hub` returns that one
+chain's row. `relay_chain` has exactly one useful value: `relay_chain=kusama` answers `200 []`
+rather than an error, so **there is no Kusama stablecoin data here at all**. On `defi-tvl`, which
+declares neither, `?chain=assethub` is silently ignored and returns all 2,925 rows across all five
+chains — the general rule below.
 
-> ⚠️ **`defi-tvl` has the `0.0`-means-unknown disease.** 54 of 446 rows in the 90 days to
-> 2026-08-20 are exactly `0.0`, and they are not zeros: Bifrost is `0.0` on all 53 days before
-> 2026-07-14 and $857,710 on the day after, which is Dotlake starting to collect a chain rather
-> than a protocol appearing overnight. Asset Hub has a single `0.0` on 2026-06-25 sitting between
-> $346,647 and $339,492 — a one-day collection dropout written as a value. Sum `tvl_usd` across
-> chains per day and you get a series with a fabricated step and a fabricated trough in it. This
-> is the same failure as `total_value_usd` on the XCM endpoints, in a different column.
+> ⚠️ **There is no input validation of any kind, and no unknown-parameter error.** All verified
+> live 2026-08-20: `start_date=not-a-date` returns `200 []`; a window entirely in the future
+> returns `200 []`; a reversed window (`start_date` after `end_date`) returns `200 []`; and an
+> unknown parameter — `limit`, `offset`, `page_size`, anything — is **accepted and ignored**, so
+> `?limit=5` looks like it worked and changed nothing. Every one of these renders as an empty or
+> unchanged chart and never as an error. Our own `readParams` rejects the malformed date before
+> the call is made; it cannot help with a well-formed date nobody has data for.
+
+> ⚠️ **`daily-usdc` and `daily-usdt` are cut at exactly 1,000 rows: the OLDEST 1,000 survive and
+> everything newer is dropped.** It is a cut, not a page. The response is a `200` with no
+> envelope, no `has_more`, no `total`, no `next`, no `Link`, no `206`, and no header of any kind
+> that says so — the full header set on a truncated response is `cache-control`, `content-type`,
+> `date`, `server: uvicorn`, `x-cache`, `x-content-type-options`, `content-length`, and nothing
+> else. There is no `limit`/`offset`/`page_size` to page past it; all are ignored. Verified live
+> 2026-08-20: `start_date=2025-01-01&end_date=2026-08-19` returns exactly 1,000 rows covering
+> **2025-01-01 to 2025-03-18** — seventeen requested months gone under a success code. The cut is
+> a hard boundary: the same start with `end_date=2025-03-17` returns 994 rows and the full range;
+> 2025-03-18 returns 1,000 and the full range; every later `end_date` returns 1,000 rows still
+> ending 2025-03-18.
+>
+> At 13 and 21 chains per day the cut lands at about **76 days of `daily-usdc` and 46 of
+> `daily-usdt`** — an ordinary quarter-long window is already truncated, and a 50-day `daily-usdt`
+> request returns 46 days of it. Narrowing to one chain helps but does not remove the cap:
+> `chain=polkadot_asset_hub` over 2023-01-01…2026-08-19 still returns exactly 1,000 rows, ending
+> 2026-06-14. `defi-tvl` is **not** cut — 2,925 rows for 2023-01-01…2026-08-19 in one response.
+
+> ⚠️ **The last day of a cut response is itself partial.** The cut lands mid-day, so the final
+> date carries a fraction of its chains — **6 against the usual 14** on 2025-03-18 in the probe
+> above, and 20 against 21 on `daily-usdt`. The last point of any chart drawn from a truncated
+> response is a low number for a reason nothing in the payload states. Drop the trailing date or
+> draw it as incomplete; the row count per date is the only signal there is.
+
+> ⚠️ **Falling short of the requested `end_date` is NOT by itself evidence of the cut.** Dotlake
+> is a batch warehouse and its newest stablecoin row was a full day behind the clock on
+> 2026-08-20 — a request ending 2026-08-19 legitimately comes back ending 2026-08-18. Ordinary
+> lag and a 1,000-row cut are indistinguishable in the rows. What separates them is the
+> **conjunction**: landing on exactly 1,000 rows *and* falling short of the requested end.
+
+**What this repo does about it.** `server/sources/dotlake.mjs` no longer returns these three as a
+bare array. Each returns `{ window, coverage, quality, rows }`, and `coverage` carries the
+evidence for its own completeness — computed from the same rows a chart would be drawn from, per
+rule 3, so it cannot drift away from them:
+
+```json
+{ "rows": 1000, "rowCap": 1000, "atCap": true, "truncated": true,
+  "requestedFrom": "2025-01-01", "requestedTo": "2026-08-19", "requestedDays": 596,
+  "coveredFrom": "2025-01-01", "coveredTo": "2025-03-18", "coveredDays": 77, "dates": 77,
+  "daysPerCap": 71, "trailingPartial": { "date": "2025-03-18", "chains": 6, "typical": 14 } }
+```
+
+That is the real payload for the truncating window above (verified end-to-end 2026-08-20). The
+honest 19-day window on the same operation returns `atCap: false, truncated: false,
+trailingPartial: null` despite also stopping a day short of the request, which is the lag-versus-cut
+distinction working. `truncated` is `true` only when proven, `false` only when proven, and `null`
+when it cannot be told apart from lag — which happens when the caller named no `end_date`, the
+only case `defi-tvl` allows. `daysPerCap` is how many days a single request can ever reach at the
+observed chain count: the number to chunk under.
+
+> ⚠️ **`defi-tvl` has the `0.0`-means-unknown disease, and over full history it is most of the
+> table.** Across all 2,925 rows, **1,389 — 47.5% — are exactly `0.0`** (verified live
+> 2026-08-20), and they are not zeros. Per chain:
+>
+> | chain | rows | first…last | exact `0.0` | first non-zero |
+> | --- | --- | --- | --- | --- |
+> | bifrost | 1,326 | 2023-01-01…2026-08-18 | **1,290** | 2026-07-14 |
+> | acala | 595 | 2025-01-01…2026-08-18 | 98 | 2025-01-01 |
+> | astar | 595 | 2025-01-01…2026-08-18 | 0 | 2025-01-01 |
+> | hydration | 230 | 2026-01-01…2026-08-18 | 0 | 2026-01-01 |
+> | assethub | 179 | 2026-01-15…2026-08-19 | 1 | 2026-01-15 |
+>
+> Bifrost carries a row on every day since 2023-01-01 and a *number* only since 2026-07-14; the
+> $857,710 that appears that day is Dotlake starting to collect a chain, not a protocol appearing
+> overnight. Asset Hub's single `0.0` on 2026-06-25 sits between $346,647 and $339,492 — a
+> one-day collection dropout written as a value. This is the same failure as `total_value_usd` on
+> the XCM endpoints, in a different column. `quality.zeroRows` in our payload counts them.
+
+> ⚠️ **`defi-tvl`'s "history from 2023-01-01" is one chain's padding, not coverage.** Only Bifrost
+> has rows that far back and they are empty until 2026-07-14. The **five chains are only all
+> present from 2026-01-15**, when Asset Hub — the largest of them — starts. An ecosystem TVL total
+> summed per day across whatever rows exist is therefore a step function of *collection onset*
+> rather than of TVL: it is missing Asset Hub entirely before 2026-01-15 and Hydration before
+> 2026-01-01. Sum only over the window where every chain you are naming actually has rows, and say
+> which window that is.
 
 > ⚠️ **The newest `defi-tvl` date is a partial day.** On 2026-08-20 the last date, 2026-08-19,
 > carried **1 of 5 chains** (Asset Hub only): $328k, against $28.4M the day before. A daily total
@@ -120,11 +228,31 @@ class of fault would be undetectable here. Treat them as clean and re-check on e
 > line that ends mid-air. Both are right and they are different pictures, so the choice has to be
 > stated.
 
-**What is still unknown.** Nothing in the response says what `sum_of_usdc` sums — total issuance
-on that chain, or the sum of account balances, or holdings excluding some system account — and no
-Dotlake document seen so far settles it. Nor does anything say which protocols `defi-tvl` counts
-on each of its five chains. Both figures are usable as *series* (the shape over time is
-consistent) and not yet as *quantities* to reconcile against a chain read.
+> ⚠️ **`sum_of_usdc` is NOT total issuance, and it is smaller than it by a lot.** Settled by
+> reconciliation against the chain on 2026-08-20 rather than left open:
+>
+> | | Dotlake `polkadot_asset_hub`, 2026-08-18 | Asset Hub live, 2026-08-20 | Dotlake as % |
+> | --- | --- | --- | --- |
+> | USDC | 25,546,978.05 | **350,019,956.32** | **7.3%** |
+> | USDt | 30,678,272.16 | **77,998,622.06** | **39.3%** |
+>
+> The chain figures are `Assets::Asset(1337).supply` and `Assets::Asset(1984).supply` read at
+> finalized block **#19,683,097**, `0xbccc99d8…5433e8`, `Timestamp::Now` =
+> 2026-08-20T12:44:48Z — decimals taken from `Assets::Metadata`, not assumed (**verified live**;
+> the probe is `state_getStorage` against `polkadot-asset-hub-rpc.polkadot.io`). The two-day gap
+> between the figures does not explain a 13× difference, and neither does staleness: Dotlake's
+> Asset Hub USDC series sat between $18.9M and $36.2M across the whole of the preceding 90 days
+> while real supply was ~$350M. **Whatever "USDC held by chains" counts, it is not the asset's
+> issuance** — and the two ratios differ so much between USDC and USDt that it is not a fixed
+> fraction either. Anything that presents `sum_of_usdc` as "the USDC on Asset Hub" is wrong by an
+> order of magnitude, and it renders perfectly.
+
+**What is still unknown.** *Which* subset `sum_of_usdc`/`sum_of_usdt` counts — a class of holder,
+a set of protocols, a set of accounts excluding the largest custodians — is still unsettled;
+nothing in the response says, and no Dotlake document seen so far does either. What is now settled
+is what it is *not*: not issuance, and not a constant fraction of it. Nor does anything say which
+protocols `defi-tvl` counts on each of its five chains. Treat all three as *series* whose shape
+over time is consistent, and **not** as quantities that reconcile against a chain read.
 
 **Worth noticing.** `date, chain, <asset>` is nearly the shape `docs/concept/plan.md` §8.1 wants
 for per-chain-per-token flow — one row

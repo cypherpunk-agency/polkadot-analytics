@@ -414,6 +414,16 @@ function liveTable(held) {
     'details.data-table',
     null,
     el('summary', { text: `All ${held.length} chains holding sovereign DOT today` }),
+    // The lifecycle column needs this beside it or it misleads. `Paras::ParaLifecycles` on
+    // Polkadot today returns `Parathread` for 86 of its 89 entries — Asset Hub, Hydration, Acala
+    // and Bifrost among them — and `Parachain` for exactly three: Bridge Hub, People Chain and
+    // Coretime (verified live 2026-08-20). Under Agile Coretime a chain that holds bulk coretime
+    // is registered as a parathread and takes its core assignment from the broker, so the word
+    // is not a statement about whether the chain produces blocks. Printing it unqualified would
+    // label Hydration a parathread, which is true of the storage item and false of the chain.
+    el('p.note', {
+      text: '`Lifecycle` is `Paras::ParaLifecycles` verbatim. Read it as a registration state, not as a description of the chain: under Agile Coretime almost everything here is registered as a `Parathread` and takes its core from the broker — today only Bridge Hub, People Chain and Coretime read `Parachain`. A blank is a chain that is in no relay enumeration at all.',
+    }),
     el(
       'div.tablewrap',
       null,

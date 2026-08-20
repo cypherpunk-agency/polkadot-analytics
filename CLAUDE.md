@@ -73,6 +73,11 @@ docs/
     why it is quiet.
   - **`docs/decisions/`** — why a choice went the way it did, including the options rejected.
   - **`docs/concept/plan.md`** — what we decided to build, and what is still open.
+  - **`docs/concept/research-queue.md`** — questions this task *opened* and did not answer. Almost
+    every task here turns some up, and they decay fast: unrecorded, they are either re-derived
+    later at full cost or dropped along with whatever they would have unlocked. Record them
+    **and say so in your report** — a question the reader can see is a thread they can start now
+    rather than next week.
 
   Two rules about *how*: carry the evidence and its date (what you read, off which endpoint,
   when — the way `docs/platform/hyperbridge.md` does), and mark the difference between what you

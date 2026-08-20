@@ -10,10 +10,11 @@
 import bulletin from './bulletin.mjs'
 import dotlake from './dotlake.mjs'
 import hydration from './hydration.mjs'
+import hydrationEvm from './hydration-evm.mjs'
 import hyperbridge from './hyperbridge.mjs'
 
 export const SOURCES = Object.fromEntries(
-  [dotlake, hyperbridge, hydration, bulletin].map((source) => [source.id, source]),
+  [dotlake, hyperbridge, hydration, hydrationEvm, bulletin].map((source) => [source.id, source]),
 )
 
 export function resolve(sourceId, operationId) {

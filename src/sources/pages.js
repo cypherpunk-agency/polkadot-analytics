@@ -37,6 +37,17 @@ export const PAGES = [
     live: true,
   },
   {
+    key: 'hydration-market',
+    kind: 'dashboard',
+    href: '/hydration-market/',
+    nav: 'Money market',
+    title: 'Hydration money market',
+    blurb:
+      'Hydration’s lending market is an Aave v3 fork in EVM contracts, not a pallet. Every reserve with its rates, utilisation and caps; HOLLAR’s real supply and who is allowed to mint it; and the Omnipool balance sheet read the way that does not silently drop half of it.',
+    source: 'Hydration RPC (eth_* plane)',
+    live: true,
+  },
+  {
     key: 'hyperfx',
     kind: 'dashboard',
     href: '/hyperfx/',

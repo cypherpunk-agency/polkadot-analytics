@@ -146,11 +146,15 @@ export const PAGES = [
     kind: 'dashboard',
     href: '/netflows/',
     nav: 'Netflows',
-    title: 'Parachain netflows, 2021–2023',
+    title: 'Parachain sovereign holdings, then and now',
     blurb:
-      'The archived Polkalytics study of DOT and KSM held in parachain sovereign accounts, from the first parachain to April 2023.',
-    source: 'Archived dataset',
-    live: false,
+      'What every parachain holds in its sovereign accounts today, read live from both legs — the relay and Asset Hub — set beside the archived Polkalytics study that ends in April 2023. The three years between them are drawn as the silence they are, not joined by a line.',
+    // `live: true` as of 2026-08-20: the page reads `asset-hub/sovereign-dot` on every load. The
+    // ARCHIVE half is still a fixed 2023 dataset and says so on the page — but the tile must
+    // describe what the page does now, and "archive — fixed dataset" would be a plain lie about
+    // a page whose first section is today's number.
+    source: 'Polkadot relay + Asset Hub RPC, and an archived dataset',
+    live: true,
   },
   {
     key: 'knowledge',

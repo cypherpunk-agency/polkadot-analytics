@@ -86,6 +86,27 @@ docs/
   worth knowing writes it down as part of the task, not as an optional extra — and says in its
   final report what it recorded and where.
 
+- **Research first, write it down, then build.** For anything that touches a chain, a pallet, a
+  contract or an upstream: find out how it actually behaves, record it in `docs/platform/`, and
+  only then write code against it. The ordering is what makes the finding survive — research that
+  goes straight into an implementation is research nobody can check and the next task pays for
+  again. A task touching only this repo's own code (a component, a layout, a refactor) skips this;
+  the trigger is an external system, not size.
+
+- **When the evidence is inconclusive, write the probe.** Do not reason harder, and do not stop at
+  "unverified" — write the smallest script that would settle the question and run it. It is almost
+  always cheaper than the argument: three RPC calls settled what `ForeignAssets` actually holds
+  after several thousand words of careful inference had not. Then keep what it returned — paste the
+  real response into the `docs/platform/` note with the date and the endpoint it came from, the way
+  `docs/platform/hyperbridge.md` does. A probe that settled a question once is the reproduction for
+  whoever doubts it next.
+
+  **But a probe tells you WHAT, and only the source tells you WHY.** "34 keys begin with `02`" is
+  an observation that could be a coincidence of today's registry. "The runtime's filter refuses to
+  create any other kind" is a guarantee. Same fact, completely different confidence — and only the
+  second is safe to build a discriminator on. Probe when the question is what is *there*; read the
+  runtime when the question is what a value *means*, or when a rule has to still hold next month.
+
 - **Storage keys are computed, never hardcoded.** A hardcoded prefix is right until a runtime
   upgrade moves it, and then reads as "this map is empty" rather than as an error. See
   `server/sources/hydration.mjs` and `bulletin-chain.js`.

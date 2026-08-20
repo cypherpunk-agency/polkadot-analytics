@@ -441,3 +441,88 @@ column, or a written-down "these do not answer the question" so the next person 
 - Whether Dotlake indexes the Snowbridge corridor with usable asset detail — unverified.
 - Whether Hydration's `Signet` pallet is used at all — unverified. It is **not** a bridge (CAIP-2
   remote signing) and must not be reported as one, nor as unused.
+
+---
+
+## 8. Direction — recorded 2026-08-20
+
+**Not commitments.** Recorded so the next session does not rediscover it, and so the snapshot work
+in §7 is shaped now to survive it rather than be rewritten.
+
+The destination is two shifts, and they are different problems: **from snapshots to flows**, and
+**from chains to accounts**.
+
+### 8.1 Netflows and bridged value are the same machine
+
+`sovereign-dot` is the DOT special case of "what does chain X hold on Asset Hub". `bridged-holders`
+is the all-assets version at one instant. **Snapshot that same decomposition daily and it is
+per-chain, per-token netflows including bridged assets** — chain-to-chain value flow at token
+granularity, not message counts, which is the thing `/xcm/` cannot give because Dotlake's
+`total_value_usd` is unusable (§5).
+
+Cost after a date→block index exists: ~2 requests and 22 KiB per day, forever.
+
+**What that means for E1 today:** shape the payload as one row per `(chain, asset, date)` so the
+store can eat it later without a rewrite. That is the whole preparation, and it is free now and
+expensive later.
+
+### 8.2 Accounts are a different transport, not a bigger version of the same one
+
+State reads work for 89 sovereign accounts. They do not work for Asset Hub's ~3.9M: the measured
+full `System::Account` sweep is ~1,746 MiB / 58–85 min over WebSocket, or ~11,800 requests / ~2 GB
+over HTTP. **You cannot diff 3.9M balances daily.**
+
+So for accounts, stop reading state and **fold transfer events** — SQD's stream from block 0, which
+yields the graph edges directly instead of inferring them from balance deltas. That is C5, and it is
+also what makes "the earliest transactions on the relay chain" tractable: the archive is verified
+complete back to block 1 with a valid read proof, but block-by-block from genesis is the expensive
+path and the event stream is not.
+
+**This is what finally forces the deferred infra ask: a disk, and an outbound WebSocket.** Both have
+been "size it later" since v1. Account-level flow is the thing that sizes them.
+
+### 8.3 The address registry needs its evidence model before its first row
+
+What this repo does today is **structural** labelling — `modl`, `sibl`, `para`, derived from the
+bytes alone, no network call, no name attached to anyone (`src/core/topology.js`). What the
+direction needs is two further kinds, and **they must never share a field**:
+
+| Kind | Example | Can it be wrong? |
+|---|---|---|
+| **Structural** | `6d6f646c` → pallet account | No. It is arithmetic. |
+| **Behavioural** | "fan-in/fan-out and volume consistent with an exchange" | It is a claim about observed behaviour, and it names nobody. |
+| **Attributed** | "this is Binance" | Yes — and being wrong publishes a false claim about a real company. |
+
+Pattern-matching high-transaction accounts produces the **behavioural** kind, which is defensible
+on its own and does not require the third. Every attributed row carries provenance: what the
+evidence was, when it was taken, and how confident. The page shows which kind it is showing.
+
+Rule 3 says say what is wrong with the number. **A label is a claim with higher stakes than a
+number**, and the registry's schema is where that gets enforced or lost.
+
+**One line drawn now: tag entities, not individuals.** A high-volume exchange wallet is a public
+fact. A personal address flagged by behaviour is deanonymisation, and this site is ungated,
+anonymous and indexed by design — there is no "only for logged-in analysts" here to hide behind.
+
+### 8.4 Traps to prepare for
+
+- **Join on the public key, never the SS58 string.** The same account is a different string on every
+  chain — Polkadot prefix 0, Hydration 63 — while the underlying 32 bytes are identical.
+  `src/core/codec/ss58.js` already decodes it. Joining on the display string silently finds nothing,
+  which renders as "this account never touched Hydration".
+- **The relay is not where the history is, and it is not where the present is either.** Everything
+  happened on the relay until the Asset Hub Migration on 2025-11-04, and almost nothing has since
+  (243,526 DOT vs 1,698,775,805). Any account or flow series spanning that date is two different
+  chains stitched together and must say so.
+- **`modl` accounts dominate naive "top accounts" lists.** On a normal Hydration day two thirds of
+  "trades" are the fee processor and DCA machinery; the same will be true of transfer graphs.
+  `structuralLabel()` already classifies them with no network call — use it before ranking anything.
+
+### 8.5 What this changes about §7
+
+§7 concluded that the store buys history rather than breadth, and therefore that snapshot pages
+should come before Wave C. **That conclusion is now reversed: history is the point.** The store is
+back on the critical path — but the ordering insight survives, because §8.1 means the snapshot work
+is the same machine, and shaping its payload correctly today is what makes the store cheap to add.
+
+Build the snapshots. Shape them for the store. Then build the store.

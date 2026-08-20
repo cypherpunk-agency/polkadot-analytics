@@ -54,6 +54,149 @@
   }
 }
 
+/* ── the loading state ────────────────────────────────────────────────────────────────────
+ * A 40-second fetch behind a bare spinner is indistinguishable from a hang, and the rational
+ * response to a hang — reload — makes it worse. So the loading state says how long it has
+ * been, what it is doing, and what shape the answer will be. Everything here is tokens; no
+ * colour, size or duration is named that is not already in tokens.css. */
+
+.loading {
+  display: grid;
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+
+.load-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+}
+
+.load-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+.load-stage {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.load-detail,
+.load-elapsed {
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.load-note:empty {
+  display: none;
+}
+
+.progress {
+  height: 0.35rem;
+  border-radius: 2px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.progress > .bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+/* Determinate: the width is set through CSSOM by loading.js and means what it says.
+   Indeterminate: a band that travels, and is visibly NOT a percentage. A progress bar that
+   claims 0% for forty seconds is a worse lie than one that admits it does not know. */
+.progress > .bar[data-mode='determinate'] {
+  transition: width 0.2s linear;
+}
+
+.progress > .bar[data-mode='indeterminate'] {
+  width: 32%;
+  animation: travel 1.6s ease-in-out infinite;
+}
+
+@keyframes travel {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+/* ── skeletons ────────────────────────────────────────────────────────────────────────────
+ * Not decoration: they reserve the layout so the page does not jump when data lands, and they
+ * tell a reader that four tiles and a chart are coming rather than leaving a blank card that
+ * might stay blank for ever. Built from the real components, so the reserved space is the
+ * space the real thing will take. */
+
+.sk .sk-line,
+.sk .sk-plot,
+.sk .sk-fill {
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.sk .sk-line {
+  height: 0.7rem;
+  width: 100%;
+}
+
+.sk .sk-line + .sk-line {
+  margin-top: var(--s2);
+}
+
+.sk .sk-line.sk-big {
+  height: 1.4rem;
+}
+
+.sk .sk-line.sk-row {
+  height: 1.1rem;
+}
+
+.sk .sk-plot {
+  height: 12rem;
+  margin-top: var(--s4);
+}
+
+.sk .sk-fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* A reader who has asked for less motion still gets the elapsed clock and the stage line,
+   which is where the actual information is. The animation was never the message. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .progress > .bar[data-mode='indeterminate'],
+  .sk .sk-line,
+  .sk .sk-plot,
+  .sk .sk-fill {
+    animation: none;
+  }
+}
+
 /* ── stat tiles ───────────────────────────────────────────────────────────────────────────
  * A number that needs no chart. Grid rather than flex so tiles line up across rows even when
  * one label wraps to two lines. */
@@ -408,6 +551,84 @@ details.data-table[open] > summary {
   opacity: 0.14;
 }
 
+/* ── matrix ───────────────────────────────────────────────────────────────────────────────
+ * The origin × destination heatmap. A 1px surface-coloured stroke on top of the 2px geometric
+ * gap the cells already leave, for the same reason the stacked segments carry one: two
+ * adjacent cells in the same band otherwise read as one wide cell. */
+
+.matrix-cell {
+  stroke: var(--surface);
+  stroke-width: 1;
+}
+
+/* A pair NEVER OBSERVED. An outline, not the lightest fill — `null` is not `0`, and a cell
+   that says "we have no rows for this corridor" must not look like one that says "this
+   corridor moved nothing". */
+.matrix-empty {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.matrix-label {
+  fill: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.matrix-hi {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+/* ── flow graph ───────────────────────────────────────────────────────────────────────────
+ * Corridor topology. Edge width is linear in value from a stated floor; the sequential band
+ * carries the magnitude that a hairline cannot. */
+
+.flow-edge {
+  fill: none;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+.flow-edge[data-on='1'] {
+  opacity: 1;
+}
+
+/* The hit target. Wide and invisible: a 0.6-unit corridor is unhittable, and widening the
+   visible mark to make it pointable would overstate the corridor. */
+.flow-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-linecap: round;
+  cursor: pointer;
+}
+
+/* A 2px surface-coloured ring, so an edge passing beneath a node does not merge into it. */
+.flow-node {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.flow-node[data-on='1'] {
+  stroke: var(--ink);
+}
+
+.flow-label {
+  fill: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* The legend swatch for "never observed", matching the matrix's empty cell exactly. */
+.swatch-empty {
+  border: 1px dashed var(--rule-strong);
+  background: none;
+}
+
 /* ── tooltip ──────────────────────────────────────────────────────────────────────────── */
 
 .tip {
@@ -489,6 +710,38 @@ details.data-table[open] > summary {
 
 .pill[data-tone='warning'] {
   border-color: var(--warning);
+}
+
+.pill[data-tone='critical'] {
+  border-color: var(--critical);
+  color: var(--critical);
+}
+
+/* `unknown` liveness. Chromaless on purpose: the whole point of the third state is that "we
+   cannot tell how current this is" must not render as a green tick, and giving it a status
+   hue would make it look like a verdict. */
+.pill[data-tone='muted'] {
+  border-color: var(--rule-strong);
+  color: var(--ink-muted);
+}
+
+/* ── liveness lines ───────────────────────────────────────────────────────────────────────
+ * One per upstream in the data-notes section. The pill is a glance and the sentence is the
+ * fact; both are always present, because the pill's colour is under 3:1 on the light surface
+ * by design and must never be the only thing carrying the state. */
+
+ul.liveness {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--s3);
+}
+
+ul.liveness > li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s3);
+  align-items: baseline;
 }
 
 .meta {

@@ -26,6 +26,15 @@ there are pure functions over plain values with no DOM and no Node built-ins, so
 can use them unchanged. When the server aggregates Hydration swaps it calls the same
 `aggregate()` the browser would have called.
 
+`src/core/topology.js` is the other thing both sides need: para id to a name and a kind, and the
+sovereign-account derivation that turns a para id into the exact account holding that chain's
+money somewhere else. The derivation is verified — literal `para` / `sibl` bytes plus
+trailing zeros, not a hash, checked against a live read in
+[docs/platform/xcm.md](../platform/xcm.md). The name table is a *transcription*, says so, is
+keyed by relay rather than by para id alone (para 1000 is Asset Hub on both networks and para
+2000 is Acala on one and Karura on the other), and returns `null` rather than inventing a name
+for an id it has never seen.
+
 ## The source registry is the security boundary
 
 `server/sources/index.mjs` is the only place an upstream hostname exists. `/api/:source/:op`
@@ -105,6 +114,52 @@ different things to a reader and imply different actions:
 The server maps them to 502 (not 500 — this service is fine), and `ApiError.advice` in
 `src/core/client.js` turns each into a sentence a non-engineer can act on. `renderPage()` puts
 that on screen instead of "failed to load".
+
+## Liveness: every source says how current it is
+
+`transport` / `upstream` / `decode` catch an upstream that *fails*. They cannot catch the one
+that succeeds and is wrong, and that failure is not hypothetical — one of our candidate sources
+answers every query in 381 ms, with well-formed rows, and has not advanced a block since May.
+Fast, complete, correctly shaped, and a picture of three months ago. Nothing in the error model
+sees it, because nothing failed.
+
+So a source asserts a second thing next to its data: **when this upstream last had something
+new, and whether the payload just built reaches that far.** The contract is
+`src/core/liveness.js`, imported by both runtimes for the same reason everything else in
+`src/core/` is.
+
+A source builds one with `liveness({ … })` and puts it on the payload as `meta.liveness` — a
+single report, or an array when a page reads two upstreams:
+
+| field | what it is |
+|---|---|
+| `source`, `label` | the source id, and the upstream's human name as `/api` shows it |
+| `state` | `live`, `stale`, `frozen`, `unreachable` or `unknown` |
+| `observedAt` | ms epoch — when we asked. Always present. |
+| `headAt`, `head` | the newest datum the upstream admits to, as a timestamp and in its own words (`block 12,344,549`, `2026-08-18`) |
+| `lagMs` | `observedAt - headAt`, or `null` when the upstream does not say |
+| `staleAfterMs`, `frozenAfterMs` | this upstream's own thresholds — six-second blocks and a daily aggregate are not stale at the same age |
+| `covers` | `{from, to}`: the window the payload actually covers, which is a different fact from the head |
+| `note` | one sentence, when something needs saying |
+
+Five states, and the last two are the ones that matter:
+
+- **`frozen` is separate from `stale`** because they need different sentences. Stale means the
+  indexer is behind and will catch up. Frozen means stop building on this.
+- **`unreachable` is not automatically an error.** The Bulletin devnet is a single node and
+  being down for a few minutes is one of its ordinary states.
+- **`unknown` is a real third state and is never collapsed into `live`.** An upstream that
+  exposes no head is not confirmed current; rendering it as a green tick is the original bug
+  wearing a badge.
+
+`liveness()` throws on a malformed assertion rather than returning a plausible object — same
+discipline as `decodeAssetDetails`. A broken assertion renders as a confident pill, which is
+worse than no pill.
+
+The page side is `src/design/liveness.js`: `livenessNotes()` for the data-notes list,
+`livenessPill()` for a heading, and `livenessBanner()` above the charts. The banner renders
+**nothing at all** when every upstream is live — a green "all normal" box on every page is a box
+readers learn to skip within a week, and then they skip the red one too.
 
 ## The canonical swap model
 

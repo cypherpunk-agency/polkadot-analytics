@@ -12,16 +12,23 @@
 
 import { append, clear, el } from './dom.js'
 import { mountShell } from './shell.js'
+import { loadingPanel } from './loading.js'
 
 /**
  * @param {object} spec
  * @param {{key:string,title:string,source:string}} spec.page   entry from src/sources/pages.js
  * @param {string} spec.intro                                    the lede, in prose
- * @param {() => Promise<any>} spec.load
+ * @param {(ctx: {progress: (u: {stage?:string,done?:number,total?:number,note?:string}) => void}) => Promise<any>} spec.load
+ *        `load` is handed a reporter. Using it is optional — every existing page ignores the
+ *        argument and still gets the clock, the skeleton and the escalating copy. A load that
+ *        knows its own shape ("day 12 of 30", "asset registry") should say so, because a
+ *        determinate bar is the difference between "this is working" and "this might be stuck".
  * @param {(host: HTMLElement, data: any) => void} spec.render
  * @param {Array<HTMLElement>} [spec.controls]                   optional filter row above the charts
+ * @param {string[]} [spec.skeleton]  shape names from loading.js, in the order they will appear
+ * @param {string} [spec.loadingLabel]
  */
-export async function renderPage({ page, intro, load, render, controls = [] }) {
+export async function renderPage({ page, intro, load, render, controls = [], skeleton = ['stats', 'chart'], loadingLabel }) {
   mountShell({ active: page.key })
 
   const main = document.getElementById('main')
@@ -36,16 +43,14 @@ export async function renderPage({ page, intro, load, render, controls = [] }) {
   const body = el('div')
   append(main, head, ...controls, body)
 
-  const status = (className, ...children) => {
-    clear(body)
-    append(body, el(`p.status.${className}`, null, ...children))
-  }
-
   document.body.dataset.state = 'loading'
-  status('loading', el('span.spinner'), document.createTextNode('Loading…'))
+  const loading = loadingPanel(body, {
+    label: loadingLabel ?? `Reading ${page.source ?? 'the upstream'}`,
+    skeleton,
+  })
 
   try {
-    const data = await load()
+    const data = await load({ progress: loading.progress })
     document.body.dataset.state = 'ready'
     clear(body)
     render(body, data)
@@ -68,6 +73,10 @@ export async function renderPage({ page, intro, load, render, controls = [] }) {
         ),
       ),
     )
+  } finally {
+    // In a `finally`, not after the happy path: a page that fails leaves the elapsed clock
+    // ticking behind the error notice for as long as the tab is open otherwise.
+    loading.stop()
   }
 }
 

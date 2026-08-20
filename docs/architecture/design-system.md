@@ -12,7 +12,9 @@ lasts until the third page.
 | `src/design/dom.js` | element construction, and the CSP-safe style setter |
 | `src/design/shell.js` | header, nav, theme toggle, footer |
 | `src/design/page.js` | the four-state page harness |
-| `src/design/charts.js` | four chart forms |
+| `src/design/loading.js` | the loading state: elapsed clock, progress bar, skeletons |
+| `src/design/liveness.js` | how a source's liveness assertion appears on a page |
+| `src/design/charts.js` | six chart forms |
 | `src/design/swap-dashboard.js` | the whole dashboard for any venue that produces `Trade[]` |
 
 ## The palette is validated, not chosen
@@ -50,12 +52,40 @@ Sequential encoding is one hue light→dark (`--seq-*`). Never a rainbow.
 
 ## Chart forms
 
-Four, hand-rolled as inline SVG:
+Six, hand-rolled as inline SVG:
 
 - `stackedBars` — daily volume by series. The default chart of this site.
 - `lineChart` — one line over an ordered index: cumulative totals, concentration curves.
 - `multiLine` — several series on one shared scale, for the netflows archive.
+- `matrix` — an n-by-n directed relation: origin down the side, destination across the top.
+- `flowGraph` — node/edge topology on a fixed circular layout, with value-weighted edges.
 - bar rows in CSS — rankings, breakdowns, routes.
+
+`matrix` and `flowGraph` were added for cross-chain flow, and both refuse the chart that
+question usually gets. **A Sankey is wrong for XCM** because the graph is cyclic — Asset Hub
+sends to Hydration and Hydration sends back — and a Sankey cannot draw a cycle without either
+double-counting the pair or silently dropping one direction. A matrix shows both directions of
+every pair next to each other; the graph shows the topology when the topology is the point. A
+chord diagram is the third view and is still not built.
+
+Rules specific to those two, on top of the mark rules below:
+
+- **Sequential is one hue, five steps, and the band edges are printed in the legend.** The ramp
+  is `--seq-100` through `--seq-700` and no hue is invented for it. Bands are linear from zero
+  by default, which on a skewed matrix collapses most cells into the lightest band — that is
+  what the data says, and a caller with a defensible reason to band otherwise passes explicit
+  edges, which then appear in the legend rather than hiding in the code.
+- **A pair never observed is an outline, not the lightest fill.** `null` is not `0` holds in two
+  dimensions as well as one.
+- **Node size in `flowGraph` carries nothing.** Radius is fixed; a circle's area is the encoding
+  people most reliably misread, and the total is one hover or one table row away. Node colour
+  encodes a *kind* in fixed slot order, never a rank.
+- **The circular layout is deterministic, in the caller's order.** A force simulation would draw
+  a different picture on every load, and "the cluster moved" would be an artefact rather than a
+  fact.
+- **Edge width is linear from a stated floor.** Without the floor the smallest corridors round
+  to invisible and the graph quietly claims they do not exist; the colour band carries the
+  magnitude a hairline cannot.
 
 No charting library. The CSP forbids external scripts, and a multi-megabyte plotting bundle to
 draw a stacked bar chart would dominate the page weight of a site whose entire payload is 50 kB
@@ -85,6 +115,22 @@ when an upstream is down, and it reads as "there was no activity".
 
 Failure copy comes from the error's `kind`, so a reader is told whether this site is broken,
 the chain is down, or a format changed. Those imply different actions.
+
+**Loading is a state, not a gap between two others.** A 40-second fetch behind a bare spinner is
+indistinguishable from a hang, and the rational response to a hang — reload — makes it worse. So
+`src/design/loading.js` gives the loading state three things a spinner cannot:
+
+- **How long it has been.** An elapsed clock that ticks is the cheapest possible proof the page
+  is alive, and copy that escalates at 8s, 25s and 60s says out loud that a long read is normal
+  for this upstream rather than leaving a reader to guess.
+- **What it is doing.** `load()` is handed a `progress` reporter. Using it is optional; a load
+  that reports counts turns the bar determinate, and one that does not gets a bar that is
+  visibly indeterminate rather than one claiming 0% for forty seconds.
+- **What shape the answer will be.** Skeletons built from the real components, so the layout is
+  reserved and the page does not jump when the data lands.
+
+The clock stops in a `finally`, so a failed page does not tick behind its error notice. Motion
+is dropped entirely under `prefers-reduced-motion` — the animation was never the message.
 
 Filter controls navigate rather than refetch in place, so the choice lives in the URL and can be
 linked, bookmarked and reported in a bug. `choiceControl` rebuilds the whole query string, not

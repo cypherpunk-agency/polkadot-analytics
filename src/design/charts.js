@@ -341,3 +341,518 @@ export function multiLine(host, { days, series, format = compact, height = 340 }
   })
   hover.addEventListener('pointerleave', () => cross.setAttribute('opacity', 0))
 }
+
+/* ==========================================================================================
+ *  The two XCM forms: an origin × destination matrix, and a corridor graph.
+ *
+ *  Both were added for the same question — "which chains talk to each other, and how much" —
+ *  and both refuse the chart that question usually gets. A Sankey is wrong here because the
+ *  graph is CYCLIC: Asset Hub sends to Hydration and Hydration sends back to Asset Hub, and a
+ *  Sankey cannot draw that without either double-counting the pair or silently dropping one
+ *  direction. A matrix is the honest default for a directed n×n relation, and a node/edge
+ *  graph is the honest second view when the topology itself is the point.
+ *
+ *  Encoding rules these follow, from docs/architecture/design-system.md:
+ *   · sequential is ONE HUE light→dark (`--seq-100` … `--seq-700`). Never a rainbow, and no
+ *     hue is invented here — these five steps are the validated sequential ramp.
+ *   · the band edges are printed in the legend. Colour never carries a magnitude alone.
+ *   · `null` is not `0`. A pair never observed is drawn as an outline, a pair observed at zero
+ *     is drawn in the lightest band. Collapsing them would turn "we have no rows for this
+ *     corridor" into "this corridor moved nothing", which is a different claim entirely.
+ *   · a 2px spacer between marks, the same gap the stacked bars leave between columns, so two
+ *     adjacent cells of the same band do not read as one wide cell.
+ *   · a table view exists for both, because colour and stroke width are the two encodings
+ *     hardest to read a number off.
+ * ========================================================================================== */
+
+/** The sequential ramp, light to dark. Five steps: enough to rank, few enough to tell apart. */
+const SEQ = ['var(--seq-100)', 'var(--seq-250)', 'var(--seq-400)', 'var(--seq-550)', 'var(--seq-700)']
+
+/**
+ * Band edges, linear from zero over a nice maximum.
+ *
+ * Linear is the default for the same reason bars are linear from zero: a rank-based or log
+ * banding makes a corridor carrying 2% of the traffic look comparable to one carrying 60%.
+ * The cost is real and is stated rather than designed around — on a heavily skewed matrix
+ * almost every cell lands in the first band, which IS what the data says. A caller that has a
+ * defensible reason to band differently passes explicit `bands`, and because the legend prints
+ * the edges, the different banding is on the page rather than hidden in the code.
+ */
+function linearBands(max, count = SEQ.length) {
+  const top = niceMax(max)
+  return Array.from({ length: count }, (_, i) => (top / count) * (i + 1))
+}
+
+/** Index into the ramp for a value, given ascending band edges. */
+const bandOf = (value, bands) => {
+  const at = bands.findIndex((edge) => value <= edge)
+  return at === -1 ? bands.length - 1 : at
+}
+
+/** A `.legend` carrying the band edges — the relief for a colour-only magnitude encoding. */
+function bandLegend(bands, format) {
+  const list = el('ul.legend')
+  bands.forEach((edge, i) => {
+    const from = i === 0 ? 0 : bands[i - 1]
+    list.append(
+      el(
+        'li',
+        null,
+        el('span.swatch', { style: `background:${SEQ[i]}` }),
+        el('span', { text: `${format(from)} – ${format(edge)}` }),
+      ),
+    )
+  })
+  list.append(el('li', null, el('span.swatch.swatch-empty'), el('span', { text: 'never observed' })))
+  return list
+}
+
+/** `[{key,label}]` from either that, or bare strings. */
+const asNodes = (list) =>
+  (list ?? []).map((item) =>
+    typeof item === 'string' ? { key: item, label: item } : { key: item.key, label: item.label ?? String(item.key) },
+  )
+
+/** A composite map key. `\u001f` (unit separator) cannot occur in a chain identifier, and a
+ *  separator that CAN occur silently merges two different pairs into one cell. */
+const pairKey = (row, col) => `${row}\u001f${col}`
+
+const clip = (text, max) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
+
+/* --------------------------------------------------------------- origin × destination ---- */
+
+/**
+ * An n×n directed matrix — origin down the side, destination across the top.
+ *
+ * The right first chart for cross-chain flow, and the reason is structural rather than
+ * aesthetic: the relation is directed and cyclic, every pair has two independent values, and a
+ * matrix is the only form that shows both of them next to each other. Reading down a column
+ * gives everything arriving at a chain; reading across a row gives everything it sent.
+ *
+ * @param {HTMLElement} host
+ * @param {object} data
+ * @param {Array<{key:string,label?:string}|string>} data.rows      origins, in a fixed order
+ * @param {Array<{key:string,label?:string}|string>} data.cols      destinations, in a fixed order
+ * @param {Array<{row:string,col:string,value:number|null,count?:number}>} data.cells
+ *        Sparse: a pair with no entry was never observed and is drawn as an outline. A pair
+ *        that was observed at zero must be present with `value: 0`.
+ * @param {(n:number)=>string} [data.format]
+ * @param {number[]} [data.bands]   ascending upper edges; defaults to linear from zero
+ * @param {string} [data.unit]      what the value counts, for the tooltip ("messages", "USD")
+ */
+export function matrix(host, { rows, cols, cells, format = compact, bands = null, unit = 'value' }) {
+  host.replaceChildren()
+  const rowList = asNodes(rows)
+  const colList = asNodes(cols)
+  if (!rowList.length || !colList.length) return
+
+  const byPair = new Map()
+  const rowTotals = new Map()
+  const colTotals = new Map()
+  for (const cell of cells ?? []) {
+    byPair.set(pairKey(cell.row, cell.col), cell)
+    if (typeof cell.value === 'number') {
+      rowTotals.set(cell.row, (rowTotals.get(cell.row) ?? 0) + cell.value)
+      colTotals.set(cell.col, (colTotals.get(cell.col) ?? 0) + cell.value)
+    }
+  }
+
+  const values = (cells ?? []).map((cell) => cell.value).filter((value) => typeof value === 'number')
+  const edges = bands ?? linearBands(values.length ? Math.max(...values) : 1)
+
+  // Geometry. Width is fixed at 1000 units and the cell size follows from the column count, so
+  // a 6-chain matrix and a 26-chain matrix both fill the same frame; the height follows from
+  // the cell size, so cells stay square and a wide-but-short matrix cannot squash them.
+  const GUT = { left: 132, top: 96, right: 8, bottom: 8 }
+  const step = (1000 - GUT.left - GUT.right) / colList.length
+  const size = Math.max(1, step - 2) // the 2px spacer, same rule as the stacked columns
+  const view = { w: 1000, h: GUT.top + rowList.length * step + GUT.bottom }
+
+  const root = svg('svg', {
+    viewBox: `0 0 ${view.w} ${view.h}`,
+    role: 'img',
+    'aria-label': `Origin by destination matrix, ${rowList.length} origins by ${colList.length} destinations`,
+  })
+
+  // Column labels, rotated so a long chain name does not force a 26-column matrix to shrink
+  // its cells. `transform` is an SVG attribute, not CSS, so it is untouched by `style-src`.
+  colList.forEach((col, i) => {
+    const x = GUT.left + i * step + step / 2
+    const y = GUT.top - 6
+    root.append(
+      svg('text.matrix-label', {
+        x,
+        y,
+        transform: `rotate(-45 ${x.toFixed(1)} ${y.toFixed(1)})`,
+        'text-anchor': 'start',
+        text: clip(col.label, 16),
+      }),
+    )
+  })
+
+  rowList.forEach((row, r) => {
+    root.append(
+      svg('text.matrix-label', {
+        x: GUT.left - 8,
+        y: GUT.top + r * step + step / 2 + 3,
+        'text-anchor': 'end',
+        text: clip(row.label, 18),
+      }),
+    )
+    colList.forEach((col, c) => {
+      const cell = byPair.get(pairKey(row.key, col.key))
+      const x = GUT.left + c * step + 1
+      const y = GUT.top + r * step + 1
+      if (!cell || typeof cell.value !== 'number') {
+        // Never observed. An outline, not the lightest fill — `null` is not `0`.
+        root.append(svg('rect.matrix-empty', { x, y, width: size, height: size }))
+        return
+      }
+      root.append(
+        svg('rect.matrix-cell', { x, y, width: size, height: size, fill: SEQ[bandOf(cell.value, edges)] }),
+      )
+    })
+  })
+
+  const hover = svg('rect', {
+    x: GUT.left,
+    y: GUT.top,
+    width: colList.length * step,
+    height: rowList.length * step,
+    fill: 'transparent',
+    style: 'cursor:crosshair',
+  })
+  const marker = svg('rect.matrix-hi', { x: 0, y: 0, width: step, height: step, opacity: 0 })
+  root.append(hover, marker)
+  host.append(root, bandLegend(edges, format))
+
+  const tip = tooltip(host)
+  hover.addEventListener('pointermove', (event) => {
+    const bounds = root.getBoundingClientRect()
+    const localX = ((event.clientX - bounds.left) / bounds.width) * view.w
+    const localY = ((event.clientY - bounds.top) / bounds.height) * view.h
+    const c = Math.max(0, Math.min(colList.length - 1, Math.floor((localX - GUT.left) / step)))
+    const r = Math.max(0, Math.min(rowList.length - 1, Math.floor((localY - GUT.top) / step)))
+    const row = rowList[r]
+    const col = colList[c]
+    const cell = byPair.get(pairKey(row.key, col.key))
+
+    marker.setAttribute('x', GUT.left + c * step)
+    marker.setAttribute('y', GUT.top + r * step)
+    marker.setAttribute('opacity', 1)
+
+    const detail = [
+      { label: `From ${row.label}, total`, value: format(rowTotals.get(row.key) ?? 0) },
+      { label: `To ${col.label}, total`, value: format(colTotals.get(col.key) ?? 0) },
+    ]
+    if (cell?.count !== undefined) detail.unshift({ label: 'Count', value: compact(cell.count) })
+
+    tip.show(
+      tipContent(
+        `${row.label} → ${col.label}`,
+        typeof cell?.value === 'number' ? `${format(cell.value)} ${unit}` : 'never observed',
+        detail,
+      ),
+      (GUT.left + c * step) / view.w,
+    )
+  })
+  hover.addEventListener('pointerleave', () => marker.setAttribute('opacity', 0))
+}
+
+/**
+ * The matrix as a table: one row per observed pair, biggest first. The accessibility fallback,
+ * and the better view for anyone who wants the number rather than the shape.
+ */
+export function matrixTable(host, { cells, rows, cols, format = compact, unit = 'Value', open = false }) {
+  host.replaceChildren()
+  const labelOf = new Map([...asNodes(rows), ...asNodes(cols)].map((node) => [node.key, node.label]))
+  const observed = (cells ?? []).filter((cell) => typeof cell.value === 'number').sort((a, b) => b.value - a.value)
+
+  const body = el('tbody')
+  for (const cell of observed) {
+    body.append(
+      el(
+        'tr',
+        null,
+        el('td', { text: labelOf.get(cell.row) ?? cell.row }),
+        el('td', { text: labelOf.get(cell.col) ?? cell.col }),
+        el('td.num', { text: format(cell.value) }),
+        el('td.num', { text: cell.count === undefined ? '—' : compact(cell.count) }),
+      ),
+    )
+  }
+
+  host.append(
+    el(
+      'details.data-table',
+      open ? { open: true } : null,
+      el('summary', { text: `Table — ${observed.length} observed pairs` }),
+      el(
+        'div.tablewrap.scroll-y',
+        null,
+        el(
+          'table.data',
+          null,
+          el(
+            'thead',
+            null,
+            el(
+              'tr',
+              null,
+              el('th', { text: 'Origin' }),
+              el('th', { text: 'Destination' }),
+              el('th.num', { text: unit }),
+              el('th.num', { text: 'Count' }),
+            ),
+          ),
+          body,
+        ),
+      ),
+    ),
+  )
+}
+
+/* ------------------------------------------------------------------------- flow graph ---- */
+
+/**
+ * A hairline is still a corridor. Edge width is linear in value from a 0.6-unit floor, and the
+ * floor is stated rather than hidden: without it the smallest corridors round to invisible and
+ * the graph quietly claims they do not exist. The colour band carries the magnitude for
+ * anything the width is too thin to express, and the table carries the number.
+ */
+const EDGE_MIN_WIDTH = 0.6
+const EDGE_MAX_WIDTH = 12
+const NODE_RADIUS = 7
+
+/**
+ * A node/edge graph of who talks to whom, laid out on a circle.
+ *
+ * Two decisions worth knowing before reading it:
+ *
+ * **The layout is deterministic, not force-directed.** Nodes sit on a circle in the order the
+ * caller supplies, so the same data draws the same picture every time and two screenshots are
+ * comparable. A force simulation would produce a prettier graph and a different one on every
+ * load, and "the cluster moved" would be an artefact rather than a fact.
+ *
+ * **Node size carries nothing.** Radius is fixed. A circle's area is the one encoding people
+ * reliably misread, and the node's total is one hover or one table row away. What the marks
+ * encode is exactly two things: WHO is connected (an edge exists) and HOW MUCH (its width and
+ * band). Node colour encodes `group` — a kind, not a rank — in fixed slot order, so filtering
+ * the graph never repaints the survivors.
+ *
+ * @param {HTMLElement} host
+ * @param {object} data
+ * @param {Array<{id:string,label?:string,group?:string}>} data.nodes  fixed order = fixed layout
+ * @param {Array<{from:string,to:string,value:number,count?:number}>} data.edges
+ * @param {Array<{key:string,label:string}>} [data.groups]  slot order for node colour; without
+ *        it every node is the chromaless grey, because an unlabelled colour is decoration
+ * @param {(n:number)=>string} [data.format]
+ * @param {number[]} [data.bands]
+ * @param {string} [data.unit]
+ */
+export function flowGraph(host, { nodes, edges, groups = null, format = compact, bands = null, unit = 'value' }) {
+  host.replaceChildren()
+  const nodeList = (nodes ?? []).map((node) => ({ id: node.id, label: node.label ?? node.id, group: node.group ?? null }))
+  if (!nodeList.length) return
+
+  const view = { w: 1000, h: 560 }
+  const centre = { x: view.w / 2, y: view.h / 2 }
+  const radius = Math.min(view.w, view.h) / 2 - 110
+
+  const at = new Map()
+  nodeList.forEach((node, i) => {
+    // Start at the top and go clockwise, so "first in the list" is where a reader looks first.
+    const angle = (i / nodeList.length) * Math.PI * 2 - Math.PI / 2
+    at.set(node.id, { x: centre.x + Math.cos(angle) * radius, y: centre.y + Math.sin(angle) * radius, angle })
+  })
+
+  const drawable = (edges ?? []).filter((edge) => at.has(edge.from) && at.has(edge.to) && Number.isFinite(edge.value))
+  const maxValue = drawable.length ? Math.max(...drawable.map((edge) => edge.value)) : 1
+  const edgeBands = bands ?? linearBands(maxValue)
+
+  const groupSlot = new Map((groups ?? []).map((group, i) => [group.key, seriesColor(i)]))
+  const nodeColour = (node) => (node.group !== null && groupSlot.has(node.group) ? groupSlot.get(node.group) : 'var(--series-rest)')
+
+  const root = svg('svg', {
+    viewBox: `0 0 ${view.w} ${view.h}`,
+    role: 'img',
+    'aria-label': `Corridor graph, ${nodeList.length} chains and ${drawable.length} corridors`,
+  })
+
+  // Declared here and mounted after the plot, so the tooltip host is the LAST child of `host`
+  // — same order as every other form. The handlers below only read it when an event fires, by
+  // which time it exists.
+  /** @type {ReturnType<typeof tooltip>} */
+  let tip
+  const labelOf = new Map(nodeList.map((node) => [node.id, node.label]))
+
+  // Edges first, so a node mark is never hidden under a thick corridor. Sorted thinnest-first
+  // so a heavy corridor is not buried under a dozen hairlines.
+  const edgeLayer = svg('g')
+  const hitLayer = svg('g')
+  for (const edge of [...drawable].sort((a, b) => a.value - b.value)) {
+    const from = at.get(edge.from)
+    const to = at.get(edge.to)
+    const width = EDGE_MIN_WIDTH + (edge.value / maxValue) * (EDGE_MAX_WIDTH - EDGE_MIN_WIDTH)
+    const colour = SEQ[bandOf(edge.value, edgeBands)]
+
+    let path
+    if (edge.from === edge.to) {
+      // A self-corridor: a chain sending to itself. Rare and real (a local execution recorded
+      // on both sides), and drawn as a small loop outside the ring rather than dropped.
+      const out = {
+        x: centre.x + Math.cos(from.angle) * (radius + 26),
+        y: centre.y + Math.sin(from.angle) * (radius + 26),
+      }
+      path = `M${from.x.toFixed(1)},${from.y.toFixed(1)}A14,14 0 1 1 ${out.x.toFixed(1)},${out.y.toFixed(1)}`
+    } else {
+      // Bowed toward the centre. The bow is what keeps A→B and B→A as two visible arcs rather
+      // than one line drawn twice, which on a cyclic graph is most of the pairs.
+      const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
+      const control = { x: centre.x + (mid.x - centre.x) * 0.35, y: centre.y + (mid.y - centre.y) * 0.35 }
+      path = `M${from.x.toFixed(1)},${from.y.toFixed(1)}Q${control.x.toFixed(1)},${control.y.toFixed(1)} ${to.x.toFixed(1)},${to.y.toFixed(1)}`
+    }
+
+    const mark = svg('path.flow-edge', { d: path, stroke: colour, 'stroke-width': width.toFixed(2) })
+    edgeLayer.append(mark)
+
+    // A separate, wide, transparent path for pointing at. A 0.6-unit line is unhittable, and
+    // widening the visible mark to make it hittable would overstate the corridor.
+    const hit = svg('path.flow-edge-hit', { d: path, 'stroke-width': Math.max(10, width + 8) })
+    const show = (event) => {
+      mark.dataset.on = '1'
+      const bounds = root.getBoundingClientRect()
+      const fraction = bounds.width ? (event.clientX - bounds.left) / bounds.width : 0.5
+      tip.show(
+        tipContent(
+          `${labelOf.get(edge.from)} → ${labelOf.get(edge.to)}`,
+          `${format(edge.value)} ${unit}`,
+          edge.count === undefined ? [] : [{ label: 'Count', value: compact(edge.count) }],
+        ),
+        Math.max(0, Math.min(1, fraction)),
+      )
+    }
+    hit.addEventListener('pointerenter', show)
+    hit.addEventListener('pointermove', show)
+    hit.addEventListener('pointerleave', () => {
+      mark.dataset.on = '0'
+    })
+    hitLayer.append(hit)
+  }
+
+  const nodeLayer = svg('g')
+  for (const node of nodeList) {
+    const point = at.get(node.id)
+    const outbound = drawable.filter((edge) => edge.from === node.id).reduce((sum, edge) => sum + edge.value, 0)
+    const inbound = drawable.filter((edge) => edge.to === node.id).reduce((sum, edge) => sum + edge.value, 0)
+
+    const dot = svg('circle.flow-node', {
+      cx: point.x.toFixed(1),
+      cy: point.y.toFixed(1),
+      r: NODE_RADIUS,
+      fill: nodeColour(node),
+    })
+    // Label pushed outward along the same ray, flipping its anchor on the left half so text
+    // never runs back across the graph.
+    const outward = {
+      x: centre.x + Math.cos(point.angle) * (radius + 20),
+      y: centre.y + Math.sin(point.angle) * (radius + 20),
+    }
+    const label = svg('text.flow-label', {
+      x: outward.x.toFixed(1),
+      y: (outward.y + 3).toFixed(1),
+      'text-anchor': Math.cos(point.angle) < -0.2 ? 'end' : Math.cos(point.angle) > 0.2 ? 'start' : 'middle',
+      text: clip(node.label, 18),
+    })
+
+    const show = (event) => {
+      dot.dataset.on = '1'
+      const bounds = root.getBoundingClientRect()
+      const fraction = bounds.width ? (event.clientX - bounds.left) / bounds.width : 0.5
+      tip.show(
+        tipContent(node.label, null, [
+          { label: 'Sent', value: `${format(outbound)} ${unit}` },
+          { label: 'Received', value: `${format(inbound)} ${unit}` },
+        ]),
+        Math.max(0, Math.min(1, fraction)),
+      )
+    }
+    dot.addEventListener('pointerenter', show)
+    dot.addEventListener('pointerleave', () => {
+      dot.dataset.on = '0'
+    })
+    nodeLayer.append(dot, label)
+  }
+
+  root.append(edgeLayer, nodeLayer, hitLayer)
+  host.append(root)
+  tip = tooltip(host)
+
+  if (groups?.length) {
+    const legend = el('ul.legend')
+    for (const [i, group] of groups.entries()) {
+      const count = nodeList.filter((node) => node.group === group.key).length
+      legend.append(
+        el(
+          'li',
+          null,
+          el('span.swatch', { style: `background:${seriesColor(i)}` }),
+          el('span', { text: group.label }),
+          el('span.amt', { text: String(count) }),
+        ),
+      )
+    }
+    host.append(legend)
+  }
+  host.append(bandLegend(edgeBands, format))
+}
+
+/** The corridors as a table, heaviest first — the fallback view, and the one with the numbers. */
+export function flowTable(host, { nodes, edges, format = compact, unit = 'Value', open = false }) {
+  host.replaceChildren()
+  const labelOf = new Map((nodes ?? []).map((node) => [node.id, node.label ?? node.id]))
+  const sorted = (edges ?? []).filter((edge) => Number.isFinite(edge.value)).sort((a, b) => b.value - a.value)
+
+  const body = el('tbody')
+  for (const edge of sorted) {
+    body.append(
+      el(
+        'tr',
+        null,
+        el('td', { text: labelOf.get(edge.from) ?? edge.from }),
+        el('td', { text: labelOf.get(edge.to) ?? edge.to }),
+        el('td.num', { text: format(edge.value) }),
+        el('td.num', { text: edge.count === undefined ? '—' : compact(edge.count) }),
+      ),
+    )
+  }
+
+  host.append(
+    el(
+      'details.data-table',
+      open ? { open: true } : null,
+      el('summary', { text: `Table — ${sorted.length} corridors` }),
+      el(
+        'div.tablewrap.scroll-y',
+        null,
+        el(
+          'table.data',
+          null,
+          el(
+            'thead',
+            null,
+            el(
+              'tr',
+              null,
+              el('th', { text: 'From' }),
+              el('th', { text: 'To' }),
+              el('th.num', { text: unit }),
+              el('th.num', { text: 'Count' }),
+            ),
+          ),
+          body,
+        ),
+      ),
+    ),
+  )
+}

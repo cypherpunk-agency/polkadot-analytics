@@ -19,6 +19,16 @@
 //     the number alone is a mislabelling machine.
 //   · The XCM lane should reconcile this against what its upstream actually sends and fix
 //     what disagrees. `unknownChains()` is here to make that reconciliation one call.
+//   · A chain can LEAVE. An id that is not in the relay's `Registrar::Paras` any more is not
+//     a chain you can read today, and saying nothing about that is the loudest way this file
+//     could lie. Those rows carry `retired`, and `retiredChains()` is the call that surfaces
+//     it — the same shape as the two above.
+//
+// Every Polkadot and Kusama id below WAS audited against the relays' `Registrar::Paras`,
+// `Paras::ParaLifecycles` and `Paras::Heads` on 2026-08-20 (Polkadot #32,636,434, Kusama
+// #34,889,954). That audit is what produced the `retired` rows; it found four, one of which
+// had been gone for thirteen months. It has not been repeated since, and nothing runs it
+// automatically — so `retired` is a fact with a date on it, not a live status.
 //
 // ── the derivation is NOT a transcription ─────────────────────────────────────────────────
 // It is verified, in docs/platform/xcm.md, against a live read on 2026-08-19: Hydration's
@@ -46,6 +56,21 @@ import { encodeSs58 } from './codec/ss58.js'
  */
 
 /**
+ * A chain that has left its relay chain: `Registrar::Paras` no longer holds its id, and the
+ * relay stopped including its heads. The row stays in the registry because history still names
+ * it — deleting it would turn "Moonbeam" in a 2022 series into "para 2004".
+ *
+ * `at` is the FIRST relay block without the para, i.e. the offboarding-cleanup block, not the
+ * block the deregistration extrinsic landed in. Those are one session apart, and in between the
+ * chain is registered nowhere and still producing blocks. See `docs/platform/moonbeam.md`.
+ *
+ * @typedef {object} ChainRetirement
+ * @property {string} on        ISO date the relay finished offboarding it
+ * @property {number} at        first relay block number with the para gone
+ * @property {string} why       one sentence a data-notes section can print verbatim
+ */
+
+/**
  * @typedef {object} ChainEntry
  * @property {number|null} paraId    null for a relay chain
  * @property {string} network        'polkadot' | 'kusama'
@@ -55,7 +80,14 @@ import { encodeSs58 } from './codec/ss58.js'
  *                                   Dotlake still says `statemint` and `hydradx`; the netflows
  *                                   dataset says `HydraDX`. Resolving those here means one
  *                                   place to fix rather than a `CHAIN_LABEL` per page.
- * @property {'observed'|'repo'|'assumed'} evidence  where the id↔name pairing came from:
+ * @property {ChainRetirement|null} [retired]  present only on a chain that has LEFT its relay.
+ *                                   Absent means "not known to have left", which after an
+ *                                   un-repeated audit is weaker than "live" — see the note above.
+ * @property {'observed'|'repo'|'assumed'} evidence  where the id↔name pairing came from.
+ *                                   This is about the id↔name PAIRING and nothing else: a
+ *                                   retired chain's pairing is as well evidenced as it ever was,
+ *                                   which is why `evidence` and `retired` are separate fields and
+ *                                   neither can be read off the other.
  *
  *   observed  Dotlake sent this exact `para_id` next to this exact chain name, in rows read on
  *             2026-08-20 across four windows spanning 2024–2026. The strongest thing this file
@@ -97,11 +129,16 @@ const REGISTRY = [
   { paraId: 1004, network: 'polkadot', name: 'People Chain', kind: 'system', evidence: 'observed', aliases: ['people', 'people-chain'] },
   { paraId: 1005, network: 'polkadot', name: 'Coretime', kind: 'system', evidence: 'observed', aliases: ['coretime'] },
   { paraId: 2000, network: 'polkadot', name: 'Acala', kind: 'parachain', evidence: 'repo', aliases: ['acala'] },
-  { paraId: 2004, network: 'polkadot', name: 'Moonbeam', kind: 'parachain', evidence: 'observed', aliases: ['moonbeam'] },
+  // Deregistered by its own manager on 2026-08-10 — `Registrar.deregister(2004)` at relay
+  // #32,489,786, offboarded at #32,492,253. Its RPC still answers, frozen at 2026-08-10T11:36:12Z.
+  { paraId: 2004, network: 'polkadot', name: 'Moonbeam', kind: 'parachain', evidence: 'observed', aliases: ['moonbeam'],
+    retired: { on: '2026-08-10', at: 32492253, why: 'deregistered from Polkadot on 2026-08-10; its chain stopped at 2026-08-10T11:36:12Z and cannot advance' } },
   { paraId: 2006, network: 'polkadot', name: 'Astar', kind: 'parachain', evidence: 'observed', aliases: ['astar'] },
   { paraId: 2008, network: 'polkadot', name: 'Crust', kind: 'parachain', evidence: 'observed', aliases: ['crust'] },
-  { paraId: 2011, network: 'polkadot', name: 'Equilibrium', kind: 'parachain', evidence: 'assumed', aliases: ['equilibrium'] },
-  { paraId: 2012, network: 'polkadot', name: 'Parallel', kind: 'parachain', evidence: 'observed', aliases: ['parallel'] },
+  { paraId: 2011, network: 'polkadot', name: 'Equilibrium', kind: 'parachain', evidence: 'assumed', aliases: ['equilibrium'],
+    retired: { on: '2025-07-08', at: 26791067, why: 'deregistered from Polkadot on 2025-07-08' } },
+  { paraId: 2012, network: 'polkadot', name: 'Parallel', kind: 'parachain', evidence: 'observed', aliases: ['parallel'],
+    retired: { on: '2025-12-20', at: 29148136, why: 'deregistered from Polkadot on 2025-12-20' } },
   { paraId: 2026, network: 'polkadot', name: 'Nodle', kind: 'parachain', evidence: 'observed', aliases: ['nodle'] },
   { paraId: 2030, network: 'polkadot', name: 'Bifrost', kind: 'parachain', evidence: 'observed', aliases: ['bifrost', 'bifrost-polkadot'] },
   { paraId: 2031, network: 'polkadot', name: 'Centrifuge', kind: 'parachain', evidence: 'observed', aliases: ['centrifuge'] },
@@ -137,7 +174,11 @@ const REGISTRY = [
   { paraId: 2000, network: 'kusama', name: 'Karura', kind: 'parachain', evidence: 'assumed', aliases: ['karura'] },
   { paraId: 2001, network: 'kusama', name: 'Bifrost', kind: 'parachain', evidence: 'assumed', aliases: ['bifrost', 'bifrost-kusama'] },
   { paraId: 2007, network: 'kusama', name: 'Shiden', kind: 'parachain', evidence: 'assumed', aliases: ['shiden'] },
-  { paraId: 2023, network: 'kusama', name: 'Moonriver', kind: 'parachain', evidence: 'assumed', aliases: ['moonriver'] },
+  // Deregistered the same morning as Moonbeam, twenty minutes earlier. `retired` here is
+  // `observed` even though `evidence` is `assumed`: the id↔name pairing was never checked, the
+  // absence from Kusama's `Registrar::Paras` was — two different claims about the same row.
+  { paraId: 2023, network: 'kusama', name: 'Moonriver', kind: 'parachain', evidence: 'assumed', aliases: ['moonriver'],
+    retired: { on: '2026-08-10', at: 34748076, why: 'deregistered from Kusama on 2026-08-10, alongside Moonbeam' } },
   { paraId: 2085, network: 'kusama', name: 'Heiko', kind: 'parachain', evidence: 'assumed', aliases: ['heiko', 'parallel-heiko'] },
   { paraId: 2087, network: 'kusama', name: 'Picasso', kind: 'parachain', evidence: 'assumed', aliases: ['picasso'] },
   { paraId: 2090, network: 'kusama', name: 'Basilisk', kind: 'parachain', evidence: 'assumed', aliases: ['basilisk'] },
@@ -157,7 +198,11 @@ const BY_ALIAS = new Map()
 
 for (const row of REGISTRY) {
   /** @type {ChainEntry} */
-  const entry = Object.freeze({ ...row, aliases: Object.freeze(row.aliases ?? []) })
+  const entry = Object.freeze({
+    ...row,
+    aliases: Object.freeze(row.aliases ?? []),
+    retired: row.retired ? Object.freeze({ ...row.retired }) : null,
+  })
   BY_KEY.set(chainKey(entry.network, entry.paraId), entry)
   for (const alias of [entry.name, ...entry.aliases]) {
     const key = `${entry.network}:${alias.toLowerCase()}`
@@ -251,6 +296,40 @@ export function assumedChains(identifiers, network = 'polkadot') {
   }
   return out
 }
+
+/**
+ * Which of these identifiers name a chain that has LEFT its relay.
+ *
+ * The third reconciliation call, and the one with teeth. `unknownChains()` says "we cannot name
+ * this"; `assumedChains()` says "we are repeating what we were told"; this one says **"this chain
+ * is not there any more, and the number you are looking at stopped moving on a date"**. Moonbeam
+ * ran for four and a half years and its RPC still answers every call correctly about a chain that
+ * stopped on 2026-08-10 — a page that ranks it against Hydration without saying so is comparing a
+ * live figure to a photograph.
+ *
+ * Equilibrium had been gone for thirteen months before this file noticed, so the failure this
+ * guards against is not hypothetical and not fast.
+ *
+ * @param {Array<string|number>} identifiers
+ * @param {'polkadot'|'kusama'} [network]
+ * @returns {ChainEntry[]} the resolvable ones that are retired, in first-seen order
+ */
+export function retiredChains(identifiers, network = 'polkadot') {
+  const out = []
+  const seen = new Set()
+  for (const id of identifiers ?? []) {
+    const entry = resolveChain(id, network)
+    if (!entry || !entry.retired || seen.has(entry.name)) continue
+    seen.add(entry.name)
+    out.push(entry)
+  }
+  return out
+}
+
+/** Every chain this registry knows to have left, newest departure first. */
+export const RETIRED_CHAINS = Object.freeze(
+  CHAINS.filter((c) => c.retired).sort((a, b) => b.retired.on.localeCompare(a.retired.on)),
+)
 
 /** The kinds, in the fixed order a categorical palette should assign slots in. */
 export const CHAIN_KINDS = /** @type {const} */ (['relay', 'system', 'parachain'])

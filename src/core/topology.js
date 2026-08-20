@@ -55,45 +55,94 @@ import { encodeSs58 } from './codec/ss58.js'
  *                                   Dotlake still says `statemint` and `hydradx`; the netflows
  *                                   dataset says `HydraDX`. Resolving those here means one
  *                                   place to fix rather than a `CHAIN_LABEL` per page.
+ * @property {'observed'|'repo'|'assumed'} evidence  where the id↔name pairing came from:
+ *
+ *   observed  Dotlake sent this exact `para_id` next to this exact chain name, in rows read on
+ *             2026-08-20 across four windows spanning 2024–2026. The strongest thing this file
+ *             has, and still only as good as Dotlake.
+ *   repo      written down in this repository — docs/platform/xcm.md or the netflows dataset —
+ *             and verified there against a chain.
+ *   assumed   neither. Public knowledge, transcribed, never checked here. `assumedChains()`
+ *             lists them so a page can say so out loud instead of implying a verification that
+ *             did not happen.
  */
 
-/** @type {Array<Omit<ChainEntry,'aliases'> & {aliases?: string[]}>} */
+/**
+ * The Polkadot rows marked `observed` were reconciled against Dotlake's own `xcm-transfers`
+ * rows on 2026-08-20, over four windows in 2024, 2025 and 2026 — roughly 30,000 messages. The
+ * `aliases` here are Dotlake's exact spellings, which is why several of them are historical or
+ * ugly: `statemint`, `hydradx`, `kilt-spiritnet`, `polkadot-bridgehub`.
+ *
+ * What that reconciliation also showed, and why the NAME is the key on the `/xcm/` page rather
+ * than the id: Dotlake's `origin_para_id`/`dest_para_id` disagrees with its own chain name on
+ * a small minority of rows — para 1000 arriving labelled `polkadot-bridgehub`, para 2034
+ * labelled `astar`, `moonbeam` or `polkadot`. Roughly 0.1–2% per chain, never the majority. The
+ * name is right and the id is the field that slips, so the page keys on the name, resolves it
+ * here, and counts the disagreements into its data notes.
+ *
+ * Three chain names arrive with NO para id ever attached — `sora`, `subsocial`, `polimec`.
+ * They are deliberately absent rather than transcribed from memory: an entry here is a claim
+ * about which account holds a chain's money, and a wrong para id produces a valid-looking
+ * sovereign address that holds nothing, which reads on a page as "this chain has no money".
+ * `chainLabel()` renders them as their own identifier and `unknownChains()` names them.
+ *
+ * @type {Array<Omit<ChainEntry,'aliases'> & {aliases?: string[]}>}
+ */
 const REGISTRY = [
   // ── Polkadot ────────────────────────────────────────────────────────────────────────────
-  { paraId: null, network: 'polkadot', name: 'Polkadot', kind: 'relay', aliases: ['relay', 'polkadot-relay', 'dot'] },
-  { paraId: 1000, network: 'polkadot', name: 'Asset Hub', kind: 'system', aliases: ['statemint', 'assethub', 'asset-hub', 'polkadot-asset-hub'] },
-  { paraId: 1001, network: 'polkadot', name: 'Collectives', kind: 'system', aliases: ['collectives'] },
-  { paraId: 1002, network: 'polkadot', name: 'Bridge Hub', kind: 'system', aliases: ['bridgehub', 'bridge-hub'] },
-  { paraId: 1004, network: 'polkadot', name: 'People Chain', kind: 'system', aliases: ['people', 'people-chain'] },
-  { paraId: 1005, network: 'polkadot', name: 'Coretime', kind: 'system', aliases: ['coretime'] },
-  { paraId: 2000, network: 'polkadot', name: 'Acala', kind: 'parachain', aliases: ['acala'] },
-  { paraId: 2004, network: 'polkadot', name: 'Moonbeam', kind: 'parachain', aliases: ['moonbeam'] },
-  { paraId: 2006, network: 'polkadot', name: 'Astar', kind: 'parachain', aliases: ['astar'] },
-  { paraId: 2011, network: 'polkadot', name: 'Equilibrium', kind: 'parachain', aliases: ['equilibrium'] },
-  { paraId: 2012, network: 'polkadot', name: 'Parallel', kind: 'parachain', aliases: ['parallel'] },
-  { paraId: 2030, network: 'polkadot', name: 'Bifrost', kind: 'parachain', aliases: ['bifrost', 'bifrost-polkadot'] },
-  { paraId: 2031, network: 'polkadot', name: 'Centrifuge', kind: 'parachain', aliases: ['centrifuge'] },
-  { paraId: 2032, network: 'polkadot', name: 'Interlay', kind: 'parachain', aliases: ['interlay'] },
-  { paraId: 2034, network: 'polkadot', name: 'Hydration', kind: 'parachain', aliases: ['hydradx', 'hydration', 'hydra-dx'] },
-  { paraId: 2035, network: 'polkadot', name: 'Phala', kind: 'parachain', aliases: ['phala'] },
-  { paraId: 3367, network: 'polkadot', name: 'Hyperbridge', kind: 'parachain', aliases: ['hyperbridge', 'nexus'] },
+  { paraId: null, network: 'polkadot', name: 'Polkadot', kind: 'relay', evidence: 'repo', aliases: ['relay', 'polkadot-relay', 'dot'] },
+  { paraId: 1000, network: 'polkadot', name: 'Asset Hub', kind: 'system', evidence: 'repo', aliases: ['statemint', 'assethub', 'asset-hub', 'polkadot-asset-hub'] },
+  { paraId: 1001, network: 'polkadot', name: 'Collectives', kind: 'system', evidence: 'observed', aliases: ['collectives'] },
+  { paraId: 1002, network: 'polkadot', name: 'Bridge Hub', kind: 'system', evidence: 'observed', aliases: ['polkadot-bridgehub', 'bridgehub', 'bridge-hub'] },
+  { paraId: 1004, network: 'polkadot', name: 'People Chain', kind: 'system', evidence: 'observed', aliases: ['people', 'people-chain'] },
+  { paraId: 1005, network: 'polkadot', name: 'Coretime', kind: 'system', evidence: 'observed', aliases: ['coretime'] },
+  { paraId: 2000, network: 'polkadot', name: 'Acala', kind: 'parachain', evidence: 'repo', aliases: ['acala'] },
+  { paraId: 2004, network: 'polkadot', name: 'Moonbeam', kind: 'parachain', evidence: 'observed', aliases: ['moonbeam'] },
+  { paraId: 2006, network: 'polkadot', name: 'Astar', kind: 'parachain', evidence: 'observed', aliases: ['astar'] },
+  { paraId: 2008, network: 'polkadot', name: 'Crust', kind: 'parachain', evidence: 'observed', aliases: ['crust'] },
+  { paraId: 2011, network: 'polkadot', name: 'Equilibrium', kind: 'parachain', evidence: 'assumed', aliases: ['equilibrium'] },
+  { paraId: 2012, network: 'polkadot', name: 'Parallel', kind: 'parachain', evidence: 'observed', aliases: ['parallel'] },
+  { paraId: 2026, network: 'polkadot', name: 'Nodle', kind: 'parachain', evidence: 'observed', aliases: ['nodle'] },
+  { paraId: 2030, network: 'polkadot', name: 'Bifrost', kind: 'parachain', evidence: 'observed', aliases: ['bifrost', 'bifrost-polkadot'] },
+  { paraId: 2031, network: 'polkadot', name: 'Centrifuge', kind: 'parachain', evidence: 'observed', aliases: ['centrifuge'] },
+  { paraId: 2032, network: 'polkadot', name: 'Interlay', kind: 'parachain', evidence: 'observed', aliases: ['interlay'] },
+  { paraId: 2034, network: 'polkadot', name: 'Hydration', kind: 'parachain', evidence: 'repo', aliases: ['hydradx', 'hydration', 'hydra-dx'] },
+  { paraId: 2035, network: 'polkadot', name: 'Phala', kind: 'parachain', evidence: 'observed', aliases: ['phala'] },
+  { paraId: 2037, network: 'polkadot', name: 'Unique', kind: 'parachain', evidence: 'observed', aliases: ['unique', 'unique-network'] },
+  { paraId: 2040, network: 'polkadot', name: 'Polkadex', kind: 'parachain', evidence: 'observed', aliases: ['polkadex'] },
+  { paraId: 2043, network: 'polkadot', name: 'OriginTrail', kind: 'parachain', evidence: 'observed', aliases: ['origintrail', 'neuroweb'] },
+  { paraId: 2046, network: 'polkadot', name: 'Darwinia', kind: 'parachain', evidence: 'observed', aliases: ['darwinia'] },
+  { paraId: 2051, network: 'polkadot', name: 'Ajuna', kind: 'parachain', evidence: 'observed', aliases: ['ajuna'] },
+  { paraId: 2086, network: 'polkadot', name: 'KILT', kind: 'parachain', evidence: 'observed', aliases: ['kilt-spiritnet', 'kilt', 'spiritnet'] },
+  { paraId: 2092, network: 'polkadot', name: 'Zeitgeist', kind: 'parachain', evidence: 'observed', aliases: ['zeitgeist'] },
+  { paraId: 2094, network: 'polkadot', name: 'Pendulum', kind: 'parachain', evidence: 'observed', aliases: ['pendulum'] },
+  { paraId: 2104, network: 'polkadot', name: 'Manta', kind: 'parachain', evidence: 'observed', aliases: ['manta'] },
+  { paraId: 3338, network: 'polkadot', name: 'peaq', kind: 'parachain', evidence: 'observed', aliases: ['peaq'] },
+  { paraId: 3345, network: 'polkadot', name: 'Energy Web X', kind: 'parachain', evidence: 'observed', aliases: ['energywebx', 'energy-web-x'] },
+  { paraId: 3367, network: 'polkadot', name: 'Hyperbridge', kind: 'parachain', evidence: 'observed', aliases: ['hyperbridge', 'nexus'] },
+  { paraId: 3369, network: 'polkadot', name: 'Mythos', kind: 'parachain', evidence: 'observed', aliases: ['mythos'] },
+  { paraId: 3370, network: 'polkadot', name: 'LAOS', kind: 'parachain', evidence: 'observed', aliases: ['laos'] },
+  { paraId: 3388, network: 'polkadot', name: 'Robonomics', kind: 'parachain', evidence: 'observed', aliases: ['robonomics'] },
+  { paraId: 3397, network: 'polkadot', name: 'JAMTON', kind: 'parachain', evidence: 'observed', aliases: ['jamton'] },
 
   // ── Kusama ──────────────────────────────────────────────────────────────────────────────
-  { paraId: null, network: 'kusama', name: 'Kusama', kind: 'relay', aliases: ['relay', 'kusama-relay', 'ksm'] },
-  { paraId: 1000, network: 'kusama', name: 'Asset Hub', kind: 'system', aliases: ['statemine', 'assethub', 'asset-hub', 'kusama-asset-hub'] },
-  { paraId: 1001, network: 'kusama', name: 'Encointer', kind: 'system', aliases: ['encointer'] },
-  { paraId: 1002, network: 'kusama', name: 'Bridge Hub', kind: 'system', aliases: ['bridgehub', 'bridge-hub'] },
-  { paraId: 1004, network: 'kusama', name: 'People Chain', kind: 'system', aliases: ['people', 'people-chain'] },
-  { paraId: 1005, network: 'kusama', name: 'Coretime', kind: 'system', aliases: ['coretime'] },
-  { paraId: 2000, network: 'kusama', name: 'Karura', kind: 'parachain', aliases: ['karura'] },
-  { paraId: 2001, network: 'kusama', name: 'Bifrost', kind: 'parachain', aliases: ['bifrost', 'bifrost-kusama'] },
-  { paraId: 2007, network: 'kusama', name: 'Shiden', kind: 'parachain', aliases: ['shiden'] },
-  { paraId: 2023, network: 'kusama', name: 'Moonriver', kind: 'parachain', aliases: ['moonriver'] },
-  { paraId: 2085, network: 'kusama', name: 'Heiko', kind: 'parachain', aliases: ['heiko', 'parallel-heiko'] },
-  { paraId: 2087, network: 'kusama', name: 'Picasso', kind: 'parachain', aliases: ['picasso'] },
-  { paraId: 2090, network: 'kusama', name: 'Basilisk', kind: 'parachain', aliases: ['basilisk'] },
-  { paraId: 2092, network: 'kusama', name: 'Kintsugi', kind: 'parachain', aliases: ['kintsugi'] },
-  { paraId: 2110, network: 'kusama', name: 'Mangata', kind: 'parachain', aliases: ['mangata'] },
+  // Not reconciled against anything. `/xcm/` can be pointed at Kusama and nothing in this repo
+  // has read a Kusama row, so every one of these is a transcription and says so.
+  { paraId: null, network: 'kusama', name: 'Kusama', kind: 'relay', evidence: 'repo', aliases: ['relay', 'kusama-relay', 'ksm'] },
+  { paraId: 1000, network: 'kusama', name: 'Asset Hub', kind: 'system', evidence: 'assumed', aliases: ['statemine', 'assethub', 'asset-hub', 'kusama-asset-hub'] },
+  { paraId: 1001, network: 'kusama', name: 'Encointer', kind: 'system', evidence: 'assumed', aliases: ['encointer'] },
+  { paraId: 1002, network: 'kusama', name: 'Bridge Hub', kind: 'system', evidence: 'assumed', aliases: ['kusama-bridgehub', 'bridgehub', 'bridge-hub'] },
+  { paraId: 1004, network: 'kusama', name: 'People Chain', kind: 'system', evidence: 'assumed', aliases: ['people', 'people-chain'] },
+  { paraId: 1005, network: 'kusama', name: 'Coretime', kind: 'system', evidence: 'assumed', aliases: ['coretime'] },
+  { paraId: 2000, network: 'kusama', name: 'Karura', kind: 'parachain', evidence: 'assumed', aliases: ['karura'] },
+  { paraId: 2001, network: 'kusama', name: 'Bifrost', kind: 'parachain', evidence: 'assumed', aliases: ['bifrost', 'bifrost-kusama'] },
+  { paraId: 2007, network: 'kusama', name: 'Shiden', kind: 'parachain', evidence: 'assumed', aliases: ['shiden'] },
+  { paraId: 2023, network: 'kusama', name: 'Moonriver', kind: 'parachain', evidence: 'assumed', aliases: ['moonriver'] },
+  { paraId: 2085, network: 'kusama', name: 'Heiko', kind: 'parachain', evidence: 'assumed', aliases: ['heiko', 'parallel-heiko'] },
+  { paraId: 2087, network: 'kusama', name: 'Picasso', kind: 'parachain', evidence: 'assumed', aliases: ['picasso'] },
+  { paraId: 2090, network: 'kusama', name: 'Basilisk', kind: 'parachain', evidence: 'assumed', aliases: ['basilisk'] },
+  { paraId: 2092, network: 'kusama', name: 'Kintsugi', kind: 'parachain', evidence: 'assumed', aliases: ['kintsugi'] },
+  { paraId: 2110, network: 'kusama', name: 'Mangata', kind: 'parachain', evidence: 'assumed', aliases: ['mangata'] },
 ]
 
 export const NETWORKS = /** @type {const} */ (['polkadot', 'kusama'])
@@ -177,6 +226,30 @@ export function unknownChains(identifiers, network = 'polkadot') {
     if (!resolveChain(id, network)) missing.push(key)
   }
   return missing
+}
+
+/**
+ * Which of these identifiers this file names on hearsay rather than on evidence.
+ *
+ * The counterpart to `unknownChains()`: that one finds what the registry cannot name at all,
+ * this one finds what it names without ever having checked. Both belong in a page's data
+ * notes, because "we have never heard of this chain" and "we are repeating what we were told
+ * about this chain" are different admissions and only the first is visible without asking.
+ *
+ * @param {Array<string|number>} identifiers
+ * @param {'polkadot'|'kusama'} [network]
+ * @returns {ChainEntry[]} the resolvable ones whose id↔name pairing is `assumed`
+ */
+export function assumedChains(identifiers, network = 'polkadot') {
+  const out = []
+  const seen = new Set()
+  for (const id of identifiers ?? []) {
+    const entry = resolveChain(id, network)
+    if (!entry || entry.evidence !== 'assumed' || seen.has(entry.name)) continue
+    seen.add(entry.name)
+    out.push(entry)
+  }
+  return out
 }
 
 /** The kinds, in the fixed order a categorical palette should assign slots in. */
@@ -263,6 +336,41 @@ export function describeSovereign(paraId, { on = 'sibling', network = 'polkadot'
     accountId: account,
     hex: `0x${toHex(account)}`,
     address: encodeSs58(account, ss58Prefix),
+  }
+}
+
+/* --------------------------------------------------------------------- the self-check ---- */
+
+/**
+ * Two addresses this repository has already verified against a chain, checked at import.
+ *
+ *   sibl 2034  docs/platform/xcm.md — read live on 2026-08-19, and `Assets::Account(1337, …)`
+ *              against it returned 5,285,506.68 USDC, so the account is not merely well-formed,
+ *              it is the one holding Hydration's money on Asset Hub.
+ *   para 2000  src/data/netflows.json — the address the 2021–2023 Polkalytics capture used for
+ *              Acala's relay-chain sovereign account, i.e. an independent derivation.
+ *
+ * It throws, and that is deliberate — the same call as `decodeAssetDetails`. Every failure mode
+ * of this derivation is silent: a wrong prefix, a big-endian id, a hash instead of truncation,
+ * or an SS58 prefix of 42 instead of 0 all produce a perfectly valid address that belongs to
+ * nobody, and every balance read against it comes back empty. "This chain holds nothing" is a
+ * plausible sentence, which is exactly what makes it dangerous. The check is pure arithmetic
+ * over two constants, so it either passes everywhere or fails everywhere.
+ */
+const DERIVATION_FIXTURES = [
+  { paraId: 2034, on: 'sibling', address: '13cKp89Uh2yWgTG28JA1QEvPUMjEPKejqkjHKf9zqLiFKjH6', hex: '0x7369626cf2070000000000000000000000000000000000000000000000000000' },
+  { paraId: 2000, on: 'relay', address: '13YMK2eYoAvStnzReuxBjMrAvPXmmdsURwZvc62PrdXimbNy', hex: '0x70617261d0070000000000000000000000000000000000000000000000000000' },
+]
+
+for (const fixture of DERIVATION_FIXTURES) {
+  const hex = `0x${toHex(sovereignAccount(fixture.paraId, { on: fixture.on }))}`
+  const address = encodeSs58(sovereignAccount(fixture.paraId, { on: fixture.on }), 0)
+  if (hex !== fixture.hex || address !== fixture.address) {
+    throw new Error(
+      `topology: the sovereign derivation no longer reproduces a verified account — ` +
+        `para ${fixture.paraId} on ${fixture.on} derives ${address} (${hex}), expected ` +
+        `${fixture.address} (${fixture.hex}). Every balance read with this is wrong and empty.`,
+    )
   }
 }
 

@@ -400,14 +400,21 @@ export function createApp({
       return send(res, 405, 'Method not allowed', { allow: 'GET, HEAD', 'content-type': 'text/plain; charset=utf-8' })
     }
 
+    let pathname
     let url
     try {
       url = new URL(req.url, 'http://localhost')
+      // INSIDE the try, and that placement is the whole point. A lone `%`, or any truncated
+      // escape (`/%E0%A4%A`), makes decodeURIComponent throw URIError — and this function is
+      // `async`, so a throw out here is a REJECTED PROMISE that `createServer` never awaits.
+      // Node's default unhandled-rejection policy is `throw`, so `GET /%` from any anonymous
+      // visitor terminated the process. Verified: one request, one dead container, and the
+      // socket hung with no response besides. A malformed escape is a client mistake and gets
+      // the client's answer.
+      pathname = decodeURIComponent(url.pathname)
     } catch {
       return send(res, 400, 'Bad request', { 'content-type': 'text/plain; charset=utf-8' })
     }
-
-    const pathname = decodeURIComponent(url.pathname)
 
     try {
       if (pathname === '/healthz') {
@@ -459,7 +466,18 @@ const invokedDirectly =
 if (invokedDirectly) {
   const dev = process.argv.includes('--dev')
   const app = createApp({ dev })
-  const server = createServer(app.handle)
+
+  // `handle` is async, and `createServer` does not await it — so a rejection it does not catch
+  // is an UNHANDLED rejection, which under Node's default policy kills the process. One
+  // anonymous GET should never be able to do that, whatever future edit reintroduces the
+  // possibility, so the last line of defence lives here rather than in a code comment.
+  const server = createServer((req, res) => {
+    Promise.resolve(app.handle(req, res)).catch((problem) => {
+      console.error('[server] request handler rejected:', problem)
+      if (res.headersSent) return res.end()
+      send(res, 500, 'Internal error', { 'content-type': 'text/plain; charset=utf-8' })
+    })
+  })
 
   server.listen(PORT, HOST, () => {
     console.log(`polkadot-analytics ${dev ? '(api only) ' : ''}listening on http://${HOST}:${PORT}`)

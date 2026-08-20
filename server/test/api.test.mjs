@@ -448,3 +448,22 @@ test('startup recovers stale leases exactly once, and mode A degrades to 503 wit
 function emptyRegistry() {
   return { resolve: () => ({ error: 'none' }), resolveJob: () => ({ error: 'none' }) }
 }
+
+/* -------------------------------------------------------------------------- hostile ---- */
+
+test('a malformed percent-escape is answered, not thrown out of the handler', async (t) => {
+  const { app } = rig(t, { jobs: { pages: pagedJob() } })
+
+  // `handle` is async and the listener does not await it, so a throw here is an unhandled
+  // rejection — which under Node's default policy terminates the process. `GET /%` from any
+  // anonymous visitor used to do exactly that. It must be a 400, and it must not reject.
+  for (const path of ['/%', '/%E0%A4%A', '/api/%zz', '/api/syn/pages%']) {
+    const res = await get(app, path)
+    assert.equal(res.status, 400, `${path} must be answered`)
+    assert.equal(res.body, 'Bad request')
+  }
+
+  // And the routes around it still work, i.e. the guard did not swallow the normal path.
+  assert.equal((await get(app, '/healthz')).body, 'ok')
+  assert.equal((await get(app, '/api/syn/pages?days=3')).status, 200)
+})

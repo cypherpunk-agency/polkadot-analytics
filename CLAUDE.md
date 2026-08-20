@@ -249,6 +249,12 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   `docs/concept/plan.md` and `docs/concept/research/critique.md` already carry the measurements
   (6.22 s / 1 k, 5.82 / 20 k, 5.61 / 200 k) and `hydration.mjs` already opens by warning about it.
   The trap is not that the rate is unknown; it is that the arithmetic is so convenient.
+  **And the trailing averages above understate the spread badly once you walk history**: measured
+  day by day off orca on 2026-08-20, a UTC day held **6,188 blocks on 2025-01-25 (13.96 s/block)**
+  and **17,702 on 2026-07-15 (4.88 s/block)** — a factor of 2.9, with the halving falling between
+  April and June 2025. A backfill that steps day by day must carry the *previous day's measured*
+  block count forward and check it; `swaps-daily` does, and never needed its scan fallback in 61
+  days. See `docs/platform/hydration.md`.
 - **A daily bar is labelled by its OPEN.** A price read on-chain at 00:00 UTC on day D lines up with
   day D's open, not its close. Comparing against the close leaves a ~1.4 % median offset that reads as
   genuine oracle drift rather than as an off-by-one-day.
@@ -258,3 +264,17 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   answered with 102 query fields, and the relay chain had no `Paras::Heads` entry for Moonbeam's
   para 2004 at all. Nothing is down; the numbers are simply old, and they render perfectly. Read
   `Timestamp::Now` and compare it against the clock before believing any per-chain figure.
+- **A `jobs` entry SHADOWS an `operations` entry of the same name — it does not sit beside it.**
+  `/api/<source>/<name>` resolves mode A first (`server/index.mjs`), so naming a store-backed job
+  after a live operation takes the URL away from it: the page keeps getting 200s, now carrying a
+  store envelope it cannot draw, and nothing throws or logs. This is why the first handler is
+  `hydration/swaps-daily` and not `hydration/swaps`. `npm run check` now fails the registry group
+  on a collision, and `server/test/api.test.mjs` asserts the shadowing so the reason survives.
+- **A store fact is keyed by its PARAMS, so two identities never share a segment.** An operation
+  parameterised by a free `{from, to}` range re-fetches and re-stores every day of every window
+  anyone asks for — ten overlapping year-long readers are ten full backfills against an upstream we
+  do not own, with correct answers, a full coverage bar and nothing anywhere reporting it. Pick a
+  fixed bucket many readers land on (`swaps-daily` uses `{month}`, segments = its ISO days). The
+  opposite mistake is equally quiet: an identity of "everything up to now" can never be immutable,
+  and if it completes anyway `serveFromStore` answers *complete* forever and no later day is ever
+  fetched. See `docs/architecture/jobs.md`.

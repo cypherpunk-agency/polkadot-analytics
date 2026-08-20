@@ -367,6 +367,30 @@ Measured on 2026-08-20 from `Timestamp::Now` at both ends of each window:
 | last 1,296,000 blocks | 6.472 s |
 | last 2,628,000 blocks | **6.845 s** |
 
+**And it has been much slower than any of those.** Measured a different way on 2026-08-20 — resolving
+whole UTC days to block heights off orca's `blocks` table, so each row is a real day divided by its
+real block count:
+
+| Day | Blocks in the UTC day | Average block time |
+|---|---:|---:|
+| 2025-01-25 | 6,188 | **13.96 s** |
+| 2025-02-15 | 6,230 | 13.87 s |
+| 2025-04-10 | 6,307 | 13.70 s |
+| 2025-06-20 | 13,880 | 6.22 s |
+| 2025-09-05 | 14,231 | 6.07 s |
+| 2025-12-01 | 14,047 | 6.15 s |
+| 2026-02-14 | 12,584 | 6.87 s |
+| 2026-05-01 | 10,291 | 8.40 s |
+| 2026-07-15 | 17,702 | **4.88 s** |
+| 2026-08-19 | 14,855 | 5.81 s |
+
+The chain roughly halved its block time between April and June 2025 and has drifted since; a day has
+held as few as **6,188** blocks and as many as **17,702**, a factor of 2.9. Anything that walks
+history — a backfill stepping day by day, a "block at this date" lookup — must carry a *measured*
+local rate forward and check it, never a constant. `server/sources/hydration.mjs`'s `swaps-daily` job
+hints each day's boundary with the previous day's own observed block count, cut by a quarter, and
+falls back to a full scan when its own probe says the hint overshot.
+
 Assuming 12 s puts a "365 days ago" label on a block that is actually **208 days** old. This repository
 already knew: `docs/concept/plan.md` and `docs/concept/research/critique.md` record 6.22 s / 1 k,
 5.82 s / 20 k, 5.61 s / 200 k, and `server/sources/hydration.mjs` opens by saying day boundaries come
@@ -728,7 +752,7 @@ Three different floors, and confusing them is how a chart acquires an unexplaine
 | Floor | Block | Date | What it means |
 |---|---:|---|---|
 | squid `swaps` (legs) | 5,000,006 | 2024-04-28 | oldest individual leg the squid indexes |
-| squid `routedTrades` | **6,837,788** | **2025-01-25** | oldest leg-grouping — **the floor for this page** |
+| squid `routedTrades` | **6,837,788** | **2025-01-25 05:58:36 UTC** | oldest leg-grouping — **the floor for this page** |
 | first `Broadcast.Swapped3` | 7,567,547 | 2025-05-19 | the event our old source depended on |
 
 All three read live on 2026-08-20. The middle row is the one that bounds the dashboard: orca reaches
@@ -748,6 +772,70 @@ nobody waits through. Longer windows need the job queue, not a bigger number in 
 stableswap and the Omnipool is counted in both; the second is what the traders sent, once. The
 dashboard fetches both and states the ratio, because a volume figure without that sentence is
 unfalsifiable.
+
+### Backfilling the whole history: what orca actually holds, and what it costs
+
+Read on 2026-08-20 off `orca-prod-pool-01`, one boundary scan and one `totalCount` per month —
+exact counts, not a sample. Month edges are the first block at or after `YYYY-MM-01T00:00:00Z`.
+
+| Month | Blocks | Routed trades | Trades/day |
+|---|---:|---:|---:|
+| 2025-01 | 191,008 | 41,263 | 1,331 (trading starts on the 25th) |
+| 2025-02 | 172,858 | 253,894 | 9,068 |
+| 2025-03 | 196,985 | 298,804 | 9,639 |
+| 2025-04 | 196,965 | 345,473 | 11,516 |
+| 2025-05 | 282,447 | 455,657 | 14,699 |
+| 2025-06 | 417,414 | 352,149 | 11,738 |
+| 2025-07 | 439,960 | 336,631 | 10,859 |
+| 2025-08 | 441,463 | **590,441** | **19,046** |
+| 2025-09 | 424,876 | 416,086 | 13,870 |
+| 2025-10 | 438,915 | 438,374 | 14,141 |
+| 2025-11 | 423,257 | 401,000 | 13,367 |
+| 2025-12 | 435,841 | 263,994 | 8,516 |
+| 2026-01 | 434,408 | 350,473 | 11,306 |
+| 2026-02 | 368,732 | 302,077 | 10,788 |
+| 2026-03 | 381,025 | 500,239 | 16,137 |
+| 2026-04 | 331,724 | 393,960 | 13,132 |
+| 2026-05 | 311,157 | 199,520 | **6,436** |
+| 2026-06 | 379,230 | 299,287 | 9,976 |
+| 2026-07 | 449,931 | 226,758 | 7,315 |
+| 2026-08 (1–19) | 289,810 | 119,355 | 6,282 |
+| **total** | | **6,585,435** | **11,050** |
+
+**Sizing a backfill off the live window underestimates it by about a third.** The 14-day window
+measured ~8,500 trades a day; the mean over the whole history is **11,050**, and August 2025 ran at
+19,046 — 3.0× the quietest month. A quarter of all the routed trades orca holds were made in
+2025-08 through 2025-11.
+
+**orca's `blocks` table has no gaps.** For every window checked — ten sampled days and all nineteen
+months above — `blocks.totalCount` over `[from, to)` was exactly `to - from`. A parachain numbers
+its blocks consecutively, so that equality is a free completeness check on any range, and
+`swaps-daily` refuses to store a day that fails it.
+
+**What it costs to actually walk it.** Four whole months were ingested day by day on 2026-08-20
+(`hydration/swaps-daily`): 121 days, 1,112,356 routed trades. Mean **9.0 s per day**, median 7.8 s,
+worst 31.5 s — which fits `2.27 s + 0.563 ms × trades` to about 1 %. The whole 596-day history is
+therefore **~84 minutes** of wall time with one request in flight, and **~2.9 GB** off orca. Not one
+day in 121 needed the slow boundary scan, and the per-day trade counts summed to orca's own
+whole-month `totalCount` exactly, for every month: 41,263 / 253,894 / 590,441 / 226,758.
+
+**What is stored, per day.** `/api/hydration/swaps-daily?month=YYYY-MM` answers from the store, one
+fact per UTC day: the day's block window with the timestamps that prove it, trade and leg counts and
+the leg-inflation factor, priced input volume and how many trades could not be priced, the pallet
+split, per-initiation and per-asset volume, the top forty routes and top fifty accounts, the
+concentration shares computed over *every* account, **the rates derived from that day's own trades**
+— which is the cheapest daily price series this venue produces — orca's own published pool volume
+over exactly those blocks, and the quality counters every caveat on a page is generated from. A day
+before 2025-01-25 is stored with `coverage: "before-source-floor"` and `trades: null`, never `0`.
+
+Two other things worth knowing before writing a walker over this data:
+
+- **`routedTrades` keyset-pages cleanly.** `orderBy: [PARA_BLOCK_HEIGHT_ASC, ID_ASC]` with the
+  connection's own `endCursor`; ~1.1 s per 1,000-row page, and page 8 costs what page 1 costs.
+  Offset paging over the same table does not — the last page of a day costs the most.
+- **A day boundary is 0.7 s with a height hint and 1.9–5.0 s without one.** The hint has to come
+  from a measured block count, never a block time; see
+  [block time is a trailing average](#block-time-is-a-trailing-average-not-a-constant).
 
 Operational detail for these endpoints — rate limits, caching policy, and the known
 quirks of each — lives in [data-sources.md](data-sources.md).

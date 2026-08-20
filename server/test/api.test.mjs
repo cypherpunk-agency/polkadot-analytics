@@ -309,6 +309,21 @@ test('mode A: params are validated before anything is enqueued', async (t) => {
   assert.deepEqual(spawns, [])
 })
 
+test('a jobs entry SHADOWS an operation of the same name — the mode-B run never fires', async (t) => {
+  // Documented at the top of server/index.mjs and enforced by `npm run check`; asserted here
+  // because the failure is invisible from the outside. The page that reads this URL keeps
+  // getting 200s, and gets a store envelope it has no idea how to draw.
+  const cached = cachedOperation()
+  const { app } = rig(t, { operations: { pages: cached.operation }, jobs: { pages: pagedJob() } })
+
+  const res = await get(app, '/api/syn/pages?days=3')
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['x-store'], 'partial', 'mode A answered')
+  assert.equal(res.headers['x-cache'], undefined)
+  assert.equal(cached.calls.n, 0, 'the operation of the same name was never called at all')
+  assert.equal(res.json().data.length, 0, 'and what the caller gets is an empty store envelope')
+})
+
 test('mode A: a handler that declares its params mutable is refused, not queued', async (t) => {
   const { app, queue } = rig(t, { jobs: { live: pagedJob({ immutable: () => false }) } })
 

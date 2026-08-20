@@ -52,6 +52,7 @@ Each source module declares:
 | `transport` | `graphql`, `jsonrpc`, `rest`, or a combination |
 | `covers` | which chains or networks it can speak for |
 | `operations` | the callable surface: `summary`, `ttlMs`, `schema`, `run(params)` |
+| `jobs` | optional. The store-backed half of that surface: `summary`, `schema`, `immutable(params)`, `nextBatch(ctx)` — see [jobs.md](jobs.md). It answers on the SAME URL shape and **wins over an `operations` entry of the same name**, so the two must never share one |
 
 `schema` is validated by `lib/params.mjs`, which **rejects** out-of-range values rather than
 clamping them — a page that asks for 5,000 days and silently gets 90 draws a confident, wrong

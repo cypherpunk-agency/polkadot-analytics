@@ -73,6 +73,11 @@ const ORCA_HOSTS = [
 ]
 const RPC = 'https://rpc.hydradx.cloud'
 
+/** The bare hostname, which is what the job engine's politeness gate keys on — one in-flight
+ *  request per host, and the hostname string belongs here rather than in the engine. */
+const hostOf = (url) => url.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+const RPC_HOST = hostOf(RPC)
+
 const PAGE = 1000
 
 /** Nominal 6 s blocks. Used ONLY to guess where to start looking for a UTC day boundary — the
@@ -153,20 +158,22 @@ export function decodeAssetDetails(hex) {
  * registry — there are ~1,400 entries and almost all of them are share tokens nobody traded
  * today.
  */
-async function fetchAssets(ids) {
+async function fetchAssets(ids, { run = (fn) => fn() } = {}) {
   const wanted = [...new Set(ids)].filter((id) => Number.isInteger(id) && id >= 0)
   /** @type {Map<number, ReturnType<typeof decodeAssetDetails> & {id:number}>} */
   const assets = new Map()
 
   for (let i = 0; i < wanted.length; i += 200) {
     const batch = wanted.slice(i, i + 200)
-    const changes = await jsonRpc({
-      source: 'hydration-rpc',
-      url: RPC,
-      method: 'state_queryStorageAt',
-      params: [batch.map(assetKey)],
-      timeoutMs: 30_000,
-    })
+    const changes = await run(() =>
+      jsonRpc({
+        source: 'hydration-rpc',
+        url: RPC,
+        method: 'state_queryStorageAt',
+        params: [batch.map(assetKey)],
+        timeoutMs: 30_000,
+      }),
+    )
     const byKey = new Map((changes?.[0]?.changes ?? []).map(([key, value]) => [key.toLowerCase(), value]))
     for (const id of batch) {
       const raw = byKey.get(assetKey(id).toLowerCase())
@@ -193,8 +200,8 @@ const CANARIES = [
   [22, 'USDC', 6],
 ]
 
-async function verifyRegistry() {
-  const assets = await fetchAssets(CANARIES.map(([id]) => id))
+async function verifyRegistry({ run } = {}) {
+  const assets = await fetchAssets(CANARIES.map(([id]) => id), { run })
   for (const [id, symbol, decimals] of CANARIES) {
     const got = assets.get(id)
     if (!got || got.symbol !== symbol || got.decimals !== decimals) {
@@ -299,13 +306,15 @@ query PlatformVolume($from: Int!, $to: Int!) {
   }
 }`
 
-/** First host that answers. A dead host is a reported fact, not a silent failover. */
-async function connect() {
+/** First host that answers. A dead host is a reported fact, not a silent failover.
+ *  `run(host, fn)` wraps the attempt — the job passes the politeness gate, which needs the
+ *  hostname it is gating; the request path passes nothing and calls straight through. */
+async function connect(run = (_host, fn) => fn()) {
   const failures = []
   for (const url of ORCA_HOSTS) {
-    const host = url.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    const host = hostOf(url)
     try {
-      const data = await graphql({ source: ORCA, url, query: HEAD_AND_FLOOR, timeoutMs: 20_000 })
+      const data = await run(host, () => graphql({ source: ORCA, url, query: HEAD_AND_FLOOR, timeoutMs: 20_000 }))
       const head = data?.blocks?.nodes?.[0]
       const floor = data?.floor?.nodes?.[0]
       if (!head || !floor) {
@@ -374,6 +383,183 @@ function initiation(operationId) {
   if (!operationId) return 'Direct'
   const kind = String(operationId).split('/')[0].split(':')[0]
   return kind || 'Direct'
+}
+
+/* --------------------------------------------------- assets, and what a trade was worth ---- */
+//
+// Everything below is shared by BOTH readers of this module: the live `swaps` operation and the
+// stored `swaps-daily` job. It is one implementation on purpose. A decimals rule or a pricing
+// rule that exists twice is a rule that will be corrected once, and the half nobody looked at
+// then renders a plausible number that is wrong by 10ⁿ — which is the failure this whole repo
+// is arranged against.
+
+/**
+ * orca's own asset table: its mixed-type key mapped to a registry id, plus its own opinion of
+ * the symbol and decimals. `run` wraps each call, so a job can put it behind the politeness
+ * gate while the request path calls it directly.
+ */
+async function fetchSquidAssets({ url, ids, run = (fn) => fn() }) {
+  /** @type {Map<string, {registryId:number|null, symbol:string|null, decimals:number|null}>} */
+  const out = new Map()
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = ids.slice(i, i + 400)
+    const data = await run(() =>
+      graphql({ source: ORCA, url, query: SQUID_ASSETS, variables: { ids: batch }, timeoutMs: 30_000 }),
+    )
+    for (const asset of data?.assets?.nodes ?? []) {
+      const registryId = Number(asset.assetRegistryId)
+      out.set(String(asset.id), {
+        registryId: Number.isInteger(registryId) ? registryId : null,
+        symbol: asset.symbol ?? null,
+        decimals: asset.decimals ?? null,
+      })
+    }
+  }
+  return out
+}
+
+/** The registry ids worth asking the chain about — deduped, nulls dropped. */
+const registryIdsOf = (squidAssets) =>
+  [...new Set([...squidAssets.values()].map((a) => a.registryId).filter((id) => id !== null))]
+
+/**
+ * One resolved meaning per orca asset key, and a record of where it came from.
+ *
+ * orca's `assetId` is a mixed-type key — the numeric registry id for `Token` assets and the EVM
+ * contract address for `Erc20` ones (HOLLAR is `0x531a…f99a`). Joining it to the registry by a
+ * numeric cast would drop every Erc20 asset, which on this venue includes HOLLAR, aDOT and the
+ * whole GIGA family. So the squid maps its own key to a registry id, and the registry — read
+ * from the chain and self-checked by `verifyRegistry` — says what that id is worth.
+ *
+ * The chain is the authority and wins wherever it has an answer. It does not always have one:
+ * an `External`-typed registry entry — an asset registered over XCM, DED and DAMN among them —
+ * decodes to `symbol: null, decimals: null` on chain, because its metadata lives on its own
+ * chain rather than in Hydration's registry. Dropping those legs would quietly shrink the
+ * totals; taking orca's word for them and saying so does not. Where BOTH have an answer and
+ * they differ, the chain is used and the disagreement is reported — a decimals disagreement is
+ * a factor of ten on every figure that asset touches and must never be settled silently.
+ */
+export function resolveAssetMeaning(squidIds, squidAssets, assets) {
+  const disagreements = []
+  const borrowedMetadata = []
+  /** @type {Map<string, {symbol:string|null, decimals:number|null, registryId:number|null}>} */
+  const resolved = new Map()
+  for (const squidId of squidIds) {
+    const squid = squidAssets.get(squidId) ?? null
+    const registryId = squid?.registryId ?? null
+    const chain = registryId === null ? null : assets.get(registryId) ?? null
+
+    if (chain && chain.decimals !== null && squid?.decimals != null && chain.decimals !== squid.decimals) {
+      disagreements.push(
+        `${squidId}: chain says ${chain.symbol}/${chain.decimals}, orca says ${squid.symbol}/${squid.decimals}`,
+      )
+    }
+
+    if (chain && chain.decimals !== null && chain.symbol) {
+      resolved.set(squidId, { symbol: chain.symbol, decimals: chain.decimals, registryId })
+    } else if (squid && squid.decimals != null && squid.symbol) {
+      borrowedMetadata.push(`${squid.symbol} (id ${registryId ?? squidId})`)
+      resolved.set(squidId, { symbol: squid.symbol, decimals: squid.decimals, registryId })
+    } else {
+      resolved.set(squidId, { symbol: null, decimals: null, registryId })
+    }
+  }
+
+  const unmappedAssetIds = squidIds.filter((id) => !squidAssets.has(id) || squidAssets.get(id).registryId === null)
+  const unknownAssets = squidIds
+    .filter((id) => resolved.get(id).decimals === null)
+    .map((id) => resolved.get(id).registryId ?? id)
+
+  const symbolOf = (squidId) => resolved.get(String(squidId))?.symbol ?? null
+
+  // Two registered assets can carry the same ticker — a bridged USDT and a native one, an Erc20
+  // wrapper and the token it wraps. Collapsing them onto one label turns a real arbitrage
+  // between two representations into a nonsensical USDT→USDT route. So a symbol shared by more
+  // than one traded asset gets its registry id appended, and only then.
+  const symbolUsers = new Map()
+  for (const squidId of squidIds) {
+    const symbol = symbolOf(squidId)
+    if (symbol) symbolUsers.set(symbol, (symbolUsers.get(symbol) ?? 0) + 1)
+  }
+  const labelOf = (squidId) => {
+    const meta = resolved.get(String(squidId))
+    if (!meta?.symbol) return null
+    if (symbolUsers.get(meta.symbol) <= 1) return meta.symbol
+    return `${meta.symbol}·${meta.registryId ?? squidId}`
+  }
+  const amountOf = (record) => {
+    const meta = resolved.get(String(record.assetId))
+    if (!meta || meta.decimals === null) return null
+    const amount = Number(record.amount)
+    return Number.isFinite(amount) ? amount / 10 ** meta.decimals : null
+  }
+
+  return { resolved, disagreements, borrowedMetadata, unmappedAssetIds, unknownAssets, symbolOf, labelOf, amountOf }
+}
+
+/**
+ * Rates out of the order book, then the canonical `Trade` shape.
+ *
+ * Rates come only from single-asset-in, single-asset-out trades: those are the ones that state a
+ * price unambiguously. A route that consumed two assets and produced one states nothing about
+ * either rate on its own.
+ *
+ * Volume is the INPUT side — what the trader actually sent, before any hop. Every input leg is
+ * valued, and a single unpriceable leg makes the whole trade unpriced: `null`, never `0`,
+ * because "we could not value this" and "this was worth nothing" are different facts.
+ *
+ * @param {Array<object>} raw   normalised orca rows, as the pager below builds them
+ * @param {ReturnType<typeof resolveAssetMeaning>} meaning
+ */
+export function valueTrades(raw, { symbolOf, labelOf, amountOf }) {
+  const priceable = []
+  for (const trade of raw) {
+    if (trade.inputs.length !== 1) continue
+    const inAmount = amountOf(trade.inputs[0])
+    const outAmount = amountOf(trade.output)
+    if (!inAmount || !outAmount) continue
+    priceable.push({
+      inSymbol: symbolOf(trade.inputs[0].assetId),
+      inAmount,
+      outSymbol: symbolOf(String(trade.output.assetId)),
+      outAmount,
+    })
+  }
+  const { rates } = deriveRates(priceable)
+
+  const trades = raw.map((t) => {
+    const pallet = palletName(t.swapper)
+    let usd = 0
+    for (const record of t.inputs) {
+      const amount = amountOf(record)
+      const symbol = symbolOf(record.assetId)
+      const rate = symbol === null ? undefined : rates[symbol]
+      if (amount === null || rate === undefined) {
+        usd = null
+        break
+      }
+      usd += amount * rate
+    }
+    const firstIn = t.inputs[0]
+    return {
+      id: t.id,
+      account: pallet ?? String(t.swapper).toLowerCase(),
+      timestamp: t.timestamp,
+      date: dayOf(t.timestamp),
+      // The stacked dimension is HOW THE TRADE WAS INITIATED — a direct Omnipool swap, a router
+      // route, a DCA schedule instalment, a batch. On a venue where a single Omnipool is most of
+      // the liquidity, that is the question with an interesting answer.
+      venue: t.venue,
+      tokenIn: labelOf(firstIn.assetId),
+      tokenOut: labelOf(String(t.output.assetId)),
+      amountIn: amountOf(firstIn) ?? 0,
+      usd,
+      hops: t.hops,
+      isPallet: Boolean(pallet),
+    }
+  })
+
+  return { trades, rates }
 }
 
 /* --------------------------------------------------------------------------- windows ---- */
@@ -463,6 +649,572 @@ export function spanWindow(result, firstDay, lastDay) {
   }
 }
 
+
+/* ------------------------------------------------------- stored history: mode A ---- */
+//
+// The live `swaps` operation above answers a request by fetching the window every time, which is
+// why it is capped at fourteen days. This is the other half: one closed UTC day per stored fact,
+// fetched once and never again. Together they are the two modes of docs/concept/plan.md §2 —
+// the cache for what can still change, the store for what cannot.
+//
+// ── why the identity is a MONTH and the segment is a DAY ─────────────────────────────────────
+// A fact is keyed by `(source, operation, canonical params, segment)`. The params are part of
+// the key, so two identities NEVER share a segment: an operation parameterised by an arbitrary
+// `{from, to}` range would refetch and re-store the same day once per distinct range a reader
+// asks for, and a year of overlapping windows would cost a year of orca traffic each time. The
+// identity therefore has to be a fixed bucket that many readers land on, and it has to be a
+// bucket that can be `immutable` — which rules out "everything up to now", because a job that
+// reaches `done` frees nothing: the demand path answers "complete" from then on and no later day
+// is ever fetched (server/lib/demand.mjs). A calendar month is the smallest bucket that is both.
+//
+// The cost of that choice, stated rather than discovered: the CURRENT month is not servable from
+// the store at all, and last month's days only become servable once the month has ended. A page
+// that wants both history and this week reads the store for whole past months and the live
+// `swaps` operation for the tail. That seam is real; it is not hidden.
+//
+// ── what "immutable" means here, and where the guarantee actually comes from ─────────────────
+// `immutable()` is a pure function of the params and the wall clock — it cannot ask orca
+// anything — so it is the cheap gate, not the guarantee: the month must be entirely in the past
+// plus a settling margin. The GUARANTEE is in `nextBatch`, which refuses to write a day unless
+// orca has indexed a block at or after the day's END instant. A squid that is hours or weeks
+// behind therefore produces a failed attempt, never a truncated day frozen into the store
+// forever. That inversion is deliberate: a wrong day here would render perfectly.
+
+/** Stamped on every row. Bump it when the payload's meaning changes, so a stored fact can be
+ *  told apart from one produced by different arithmetic (plan §6.1). */
+const SWAPS_DAILY_VERSION = 'hydration/swaps-daily@1'
+
+const MONTH_RE = /^\d{4}-(?:0[1-9]|1[0-2])$/
+
+/** How long after a month ends before its days are treated as settled. orca ran 26 s behind the
+ *  chain when this was written (verified 2026-08-20), so two hours is ~275× the observed lag —
+ *  and it costs nothing, because the days it delays are days nobody could have read yet. The
+ *  real protection against a lagging indexer is the head check in `nextBatch`. */
+const SETTLE_MS = 2 * 60 * 60_000
+
+/** Per-day list caps. A stored day is a summary, not a transcript: the demand envelope returns
+ *  EVERY segment of an identity in one response with no paging (server/lib/demand.mjs), so a
+ *  month of raw trades — ~340,000 rows, ~150 MB — is not a payload anybody can serve. */
+const TOP_ACCOUNTS = 50
+const TOP_ROUTES = 40
+
+/** Blocks to step past a day's first block before looking for its last. Never a block TIME:
+ *  Hydration's has ranged from 13.96 s/block (2025-01-25) to 4.88 s (2026-07-15) — a day has
+ *  been as short as 6,188 blocks and as long as 17,702 (verified live, 2026-08-20). The hint is
+ *  the previous day's own measured block count, cut by a quarter, and the query checks it. */
+const FIRST_DAY_HINT_BLOCKS = 4_000
+
+const monthOf = (month) => month.split('-').map(Number)
+
+/** The instant a month ends, as ms epoch. UTC throughout: `Date.UTC` has no DST to get wrong. */
+function monthEndMs(month) {
+  const [year, index] = monthOf(month)
+  return index === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, index, 1)
+}
+
+/** Every UTC day in the month, as ISO dates — which is also the segment id, and ISO dates sort
+ *  as strings in their real order. A counter here would draw the chart out of sequence.
+ *  Exported, with `monthIsSettled` and `summariseDay`, because those three are the parts of this
+ *  job that can be tested without an upstream — see server/test/hydration-swaps-daily.test.mjs. */
+export function daysOfMonth(month) {
+  const [year, index] = monthOf(month)
+  const days = []
+  for (let at = Date.UTC(year, index - 1, 1); at < monthEndMs(month); at += 86_400_000) {
+    days.push(new Date(at).toISOString().slice(0, 10))
+  }
+  return days
+}
+
+/**
+ * THE most dangerous line in this file (docs/architecture/jobs.md). Total by construction: an
+ * unparseable month is not immutable, it is refused — a predicate that throws would burn the
+ * job's attempt budget on a design error, and one that is wrong in the permissive direction
+ * freezes a partial answer forever.
+ */
+export function monthIsSettled(params, now = Date.now()) {
+  const month = params?.month
+  if (typeof month !== 'string' || !MONTH_RE.test(month)) return false
+  return now >= monthEndMs(month) + SETTLE_MS
+}
+
+/* ---- the queries this job adds, beyond the ones the live operation already uses ---- */
+
+/** Head, floor, and the day's END boundary, in one request. `probe` is the self-check on the
+ *  height hint: a hint that has accidentally overshot the boundary would return the hint block
+ *  itself and the day would silently end early. `edge` is the OTHER self-check — the day's first
+ *  block and the one before it, so the boundary carried forward in the cursor is re-proved
+ *  against the chain's own timestamps rather than trusted for a month at a time. */
+const DAY_FRAME = `
+query DayFrame($est: Int!, $from: Int!, $prev: Int!, $at: Datetime!) {
+  head: blocks(orderBy: HEIGHT_DESC, first: 1) { nodes { height timestamp } }
+  floor: routedTrades(orderBy: PARA_BLOCK_HEIGHT_ASC, first: 1) { nodes { paraBlockHeight block { timestamp } } }
+  probe: blocks(filter: { height: { equalTo: $est } }) { nodes { height timestamp } }
+  edge: blocks(filter: { height: { greaterThanOrEqualTo: $prev, lessThanOrEqualTo: $from } }, orderBy: HEIGHT_ASC) {
+    nodes { height timestamp }
+  }
+  boundary: blocks(
+    filter: { height: { greaterThanOrEqualTo: $est }, timestamp: { greaterThanOrEqualTo: $at } }
+    orderBy: HEIGHT_ASC
+    first: 1
+  ) { nodes { height timestamp } }
+}`
+
+/** The same, with no hint to check — the first day of a month has no previous boundary to step
+ *  from. 1.9–5.0 s against a 13.7 M-row table (measured 2026-08-20), paid once per month. */
+const FIRST_FRAME = `
+query FirstFrame($at: Datetime!) {
+  head: blocks(orderBy: HEIGHT_DESC, first: 1) { nodes { height timestamp } }
+  floor: routedTrades(orderBy: PARA_BLOCK_HEIGHT_ASC, first: 1) { nodes { paraBlockHeight block { timestamp } } }
+  boundary: blocks(filter: { timestamp: { greaterThanOrEqualTo: $at } }, orderBy: HEIGHT_ASC, first: 1) {
+    nodes { height timestamp }
+  }
+}`
+
+/**
+ * Everything about the day that is one number: how many trades orca counts in it, how many
+ * BLOCKS it holds, and Hydration's own published pool volume over exactly those blocks.
+ *
+ * The block count is the completeness check, and it is free here. A parachain numbers its blocks
+ * consecutively, so `blocks` in `[from, to)` must be exactly `to - from`; a squid that skipped a
+ * block would otherwise hand us a day that is short by however many trades were in it, with
+ * nothing anywhere saying so. Ten days sampled across the whole range matched exactly
+ * (2026-08-20), so a mismatch is a real fault rather than a quirk to tolerate.
+ */
+const DAY_STATS = `
+query DayStats($from: Int!, $to: Int!, $last: Int!) {
+  trades: routedTrades(filter: { paraBlockHeight: { greaterThanOrEqualTo: $from, lessThan: $to } }) { totalCount }
+  blocks(filter: { height: { greaterThanOrEqualTo: $from, lessThan: $to } }) { totalCount }
+  platformTotalVolumesByPeriod(filter: { startBlockNumber: $from, endBlockNumber: $last }) {
+    nodes { totalVolNorm omnipoolVolNorm stableswapVolNorm xykpoolVolNorm }
+  }
+}`
+
+/**
+ * Asset metadata memoised for the life of the worker PROCESS, which is short by design: the
+ * worker drains the queue and exits (job-worker.mjs). Decimals and symbols do not change per
+ * day, and re-reading them for every one of 596 days would be 596 RPC round-trips to say the
+ * same thing. Misses are remembered too — an id the registry does not know today will not know
+ * itself any better on the next day of the same backfill — and a restarted worker asks again.
+ */
+const registryMemo = new Map()
+const registryMisses = new Set()
+const squidAssetMemo = new Map()
+
+/** First orca host that answers this query, gated per host. A host that did not answer is
+ *  RETURNED alongside the data rather than swallowed — the caller records it on the day, so a
+ *  fact fetched from the second host says so instead of looking identical to one from the
+ *  first. */
+async function orcaQuery({ gate, query, variables, timeoutMs }) {
+  const failures = []
+  for (const url of ORCA_HOSTS) {
+    const host = hostOf(url)
+    try {
+      const data = await gate(host, () => graphql({ source: ORCA, url, query, variables, timeoutMs }))
+      return { data, url, host, failures }
+    } catch (error) {
+      failures.push(`${host}: ${error.message}`)
+    }
+  }
+  throw new UpstreamError(`no orca host answered — ${failures.join('; ')}`, { kind: 'transport', source: ORCA })
+}
+
+/** Round money to cents and rates to six significant figures. Not cosmetic: a raw double prints
+ *  as 17 characters, and this is multiplied by every list in every one of ~600 stored days. */
+const money = (n) => (n === null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100)
+const sig6 = (n) => (Number.isFinite(n) ? Number(n.toPrecision(6)) : null)
+
+/** One day of trades, rolled up into the payload that is actually stored. */
+export function summariseDay({ date, trades, rates, blocks, platform, quality }) {
+  const byVenue = new Map()
+  const byAsset = new Map()
+  const byRoute = new Map()
+  const byAccount = new Map()
+
+  let usd = 0
+  let unpriced = 0
+  let legs = 0
+  let palletTrades = 0
+  let palletUsd = 0
+
+  for (const trade of trades) {
+    const value = trade.usd ?? 0
+    if (trade.usd === null) unpriced += 1
+    else usd += value
+    legs += trade.hops ?? 0
+    if (trade.isPallet) {
+      palletTrades += 1
+      palletUsd += value
+    }
+
+    const venue = byVenue.get(trade.venue) ?? { venue: trade.venue, usd: 0, count: 0 }
+    venue.usd += value
+    venue.count += 1
+    byVenue.set(trade.venue, venue)
+
+    const inSymbol = trade.tokenIn ?? '?'
+    const asset = byAsset.get(inSymbol) ?? { symbol: inSymbol, usd: 0, tradesIn: 0, tradesOut: 0 }
+    asset.usd += value
+    asset.tradesIn += 1
+    byAsset.set(inSymbol, asset)
+    const outSymbol = trade.tokenOut ?? '?'
+    const out = byAsset.get(outSymbol) ?? { symbol: outSymbol, usd: 0, tradesIn: 0, tradesOut: 0 }
+    out.tradesOut += 1
+    byAsset.set(outSymbol, out)
+
+    const routeName = `${inSymbol}→${outSymbol}`
+    const route = byRoute.get(routeName) ?? { route: routeName, usd: 0, count: 0 }
+    route.usd += value
+    route.count += 1
+    byRoute.set(routeName, route)
+
+    const account = byAccount.get(trade.account) ?? {
+      account: trade.account,
+      usd: 0,
+      count: 0,
+      pallet: trade.isPallet,
+    }
+    account.usd += value
+    account.count += 1
+    byAccount.set(trade.account, account)
+  }
+
+  const accounts = [...byAccount.values()].sort((a, b) => b.usd - a.usd)
+  // Shares are computed over EVERY account and then the list is trimmed, so "top four share"
+  // stays a share of everything rather than a share of what survived the trim.
+  const shareOf = (n) => (usd > 0 ? (accounts.slice(0, n).reduce((sum, a) => sum + a.usd, 0) / usd) * 100 : null)
+
+  return {
+    date,
+    coverage: 'indexed',
+    blocks,
+    trades: trades.length,
+    legs,
+    // Hydration emits one event per swap LEG. Kept per day because it is the one number that
+    // says whether the grouping upstream is still happening at all.
+    legInflation: trades.length ? sig6(legs / trades.length) : null,
+    usd: money(usd),
+    // `null` is not `0`: a trade with an unpriceable input leg is counted here and left out of
+    // the dollar total, so the two numbers disagree by exactly this much.
+    unpricedTrades: unpriced,
+    accounts: accounts.length,
+    pallet: { trades: palletTrades, usd: money(palletUsd) },
+    topFourShare: sig6(shareOf(4)),
+    topTenShare: sig6(shareOf(10)),
+    venues: [...byVenue.values()].sort((a, b) => b.usd - a.usd).map((v) => ({ ...v, usd: money(v.usd) })),
+    assets: [...byAsset.values()].sort((a, b) => b.usd - a.usd).map((a) => ({ ...a, usd: money(a.usd) })),
+    routes: [...byRoute.values()]
+      .sort((a, b) => b.usd - a.usd)
+      .slice(0, TOP_ROUTES)
+      .map((r) => ({ ...r, usd: money(r.usd) })),
+    routesTotal: byRoute.size,
+    topAccounts: accounts.slice(0, TOP_ACCOUNTS).map((a) => ({ ...a, usd: money(a.usd) })),
+    // The day's own price discovery, kept because it is the cheapest daily price series on this
+    // venue and because every dollar above was computed with it. Rates are derived from THIS
+    // day's trades alone, so a symbol's rate varies day to day — which is the point.
+    rates: Object.fromEntries(Object.entries(rates).map(([symbol, rate]) => [symbol, sig6(rate)])),
+    platform,
+    quality,
+  }
+}
+
+/** One day, fetched and summarised. Every upstream call is gated on the host it goes to. */
+async function ingestDay({ gate, day, fromBlock, fromBlockAt, hintBlocks }) {
+  const dayStart = `${day}T00:00:00Z`
+  const dayEnd = `${addDaysIso(day, 1)}T00:00:00Z`
+
+  // The registry decode is trusted by every dollar below, so it is re-checked against three
+  // known assets on every batch — a runtime upgrade mid-backfill must fail loudly rather than
+  // rescale the rest of the history.
+  await verifyRegistry({ run: (fn) => gate(RPC_HOST, fn) })
+
+  /* ---- the day's block window, read from the chain, never multiplied out of a block time ---- */
+
+  let url
+  let head
+  let floor
+  let from = fromBlock
+  let fromAt = fromBlockAt ?? null
+  const hostFailures = []
+
+  if (from === null || from === undefined) {
+    const first = await orcaQuery({ gate, query: FIRST_FRAME, variables: { at: dayStart }, timeoutMs: 120_000 })
+    hostFailures.push(...first.failures)
+    url = first.url
+    head = first.data?.head?.nodes?.[0]
+    floor = first.data?.floor?.nodes?.[0]
+    const start = first.data?.boundary?.nodes?.[0]
+    if (!head || !floor) throw new UpstreamError('orca answered without a head block or a first routed trade.', { kind: 'upstream', source: ORCA })
+    if (!start) {
+      throw new UpstreamError(`orca has no block at or after ${dayStart}; its head is #${head.height} at ${head.timestamp}.`, {
+        kind: 'upstream',
+        source: ORCA,
+      })
+    }
+    from = start.height
+    fromAt = start.timestamp
+  }
+
+  const est = from + Math.max(1, hintBlocks ?? FIRST_DAY_HINT_BLOCKS)
+  const frame = await orcaQuery({
+    gate,
+    query: DAY_FRAME,
+    variables: { est, from, prev: Math.max(1, from - 1), at: dayEnd },
+    timeoutMs: 120_000,
+  })
+  hostFailures.push(...frame.failures)
+  url = frame.url
+  head = frame.data?.head?.nodes?.[0] ?? head
+  floor = frame.data?.floor?.nodes?.[0] ?? floor
+  if (!head || !floor) throw new UpstreamError('orca answered without a head block or a first routed trade.', { kind: 'upstream', source: ORCA })
+
+  // The carried-forward boundary, re-proved: the day's first block must be at or after the day's
+  // start, and the block before it must be before it. That is the whole definition of "first
+  // block of the day", and checking it costs nothing because it rode along with this request. A
+  // cursor that drifted by even one block would otherwise attribute a trade to the wrong day for
+  // the rest of the month, and every total would still look entirely reasonable.
+  const edge = frame.data?.edge?.nodes ?? []
+  const atFrom = edge.find((node) => node.height === from)
+  const beforeFrom = edge.find((node) => node.height === from - 1)
+  const startMs = Date.parse(dayStart)
+  if (!atFrom || Date.parse(atFrom.timestamp) < startMs || (beforeFrom && Date.parse(beforeFrom.timestamp) >= startMs)) {
+    throw new UpstreamError(
+      `block ${from} is not the first block of ${day}: it is at ${atFrom?.timestamp ?? 'a height orca does not have'}` +
+        `${beforeFrom ? `, and block ${from - 1} is at ${beforeFrom.timestamp}` : ''}.`,
+      { kind: 'decode', source: ORCA },
+    )
+  }
+  fromAt = atFrom.timestamp
+
+  const probe = frame.data?.probe?.nodes?.[0]
+  let end = frame.data?.boundary?.nodes?.[0] ?? null
+  let assisted = true
+  if (!probe || !end || Date.parse(probe.timestamp) >= Date.parse(dayEnd)) {
+    // The hint overshot (or the block it names is not there yet), so the answer above may be the
+    // hint block rather than the boundary. Pay for the full scan instead of trusting it.
+    assisted = false
+    const scan = await gate(hostOf(url), () =>
+      graphql({ source: ORCA, url, query: BOUNDARY_SCAN, variables: { at: dayEnd }, timeoutMs: 120_000 }),
+    )
+    end = scan?.boundary?.nodes?.[0] ?? null
+  }
+
+  // THE guarantee. No block at or after the day's end means orca's index stops inside this day,
+  // and a day summarised from a partial index would be a wrong number stored forever.
+  if (!end) {
+    throw new UpstreamError(
+      `orca has not indexed past ${dayEnd} — its head is block ${head.height} at ${head.timestamp}. ` +
+        `Refusing to store ${day} from an index that stops inside it.`,
+      { kind: 'upstream', source: ORCA },
+    )
+  }
+
+  const to = end.height
+  // `to` is EXCLUSIVE — the first block of the next day. Both edges are real block heights read
+  // off the chain's own timestamps; `firstBlockAt` is kept as the evidence, because a day whose
+  // first block is at 00:00:30 and one whose first block is at 04:00:00 are different facts.
+  const blocks = {
+    from,
+    to,
+    count: to - from,
+    firstBlockAt: fromAt,
+    toBlockAt: end.timestamp,
+    boundaryAssisted: assisted,
+  }
+
+  /* ---- days before this source has any routed trades at all ---- */
+
+  if (to <= floor.paraBlockHeight) {
+    return {
+      day: {
+        date: day,
+        // Not "no trades": orca does not group swap legs into routed trades before its floor, so
+        // a count of 0 would be a claim about the venue that nothing here supports. Every field
+        // an indexed day carries is present and explicitly null — a key that is simply absent
+        // reads, at the far end, exactly like a typo in the key name.
+        coverage: 'before-source-floor',
+        blocks,
+        trades: null,
+        legs: null,
+        legInflation: null,
+        usd: null,
+        unpricedTrades: null,
+        accounts: null,
+        pallet: null,
+        topFourShare: null,
+        topTenShare: null,
+        venues: null,
+        assets: null,
+        routes: null,
+        routesTotal: null,
+        topAccounts: null,
+        rates: null,
+        platform: null,
+        quality: null,
+        floorBlock: floor.paraBlockHeight,
+        floorAt: floor.block.timestamp,
+      },
+      head,
+      to,
+      toAt: end.timestamp,
+      blocksInDay: blocks.count,
+    }
+  }
+
+  /* ---- one number each: trade count, block count, and orca's own published volume ---- */
+
+  const stats = await gate(hostOf(url), () =>
+    graphql({ source: ORCA, url, query: DAY_STATS, variables: { from, to, last: to - 1 }, timeoutMs: 60_000 }),
+  )
+  const expected = stats?.trades?.totalCount ?? null
+  const indexedBlocks = stats?.blocks?.totalCount ?? null
+  if (indexedBlocks !== null && indexedBlocks !== blocks.count) {
+    throw new UpstreamError(
+      `orca holds ${indexedBlocks} of the ${blocks.count} blocks in ${day} (${from}–${to - 1}). A parachain numbers ` +
+        'its blocks consecutively, so a short count is a gap in the index — every trade in the missing blocks would ' +
+        'be absent from a day this job would then never fetch again.',
+      { kind: 'upstream', source: ORCA },
+    )
+  }
+  if (expected !== null && expected > MAX_TRADES) {
+    throw new UpstreamError(`${expected} routed trades in ${day} is past the ${MAX_TRADES} ceiling this service holds in memory.`, {
+      kind: 'upstream',
+      source: ORCA,
+    })
+  }
+  const volume = stats?.platformTotalVolumesByPeriod?.nodes?.[0] ?? null
+  const platform = volume
+    ? {
+        total: money(Number(volume.totalVolNorm)),
+        omnipool: money(Number(volume.omnipoolVolNorm)),
+        stableswap: money(Number(volume.stableswapVolNorm)),
+        xyk: money(Number(volume.xykpoolVolNorm)),
+      }
+    : null
+
+  /* ---- the trades ---- */
+
+  const raw = []
+  const squidAssetIds = new Set()
+  let multiAsset = 0
+  let multiSwapper = 0
+  let withoutBalances = 0
+  let pages = 0
+
+  // Counted where the request is made, not in the `for` header: an increment in the header is
+  // skipped by the `break`, so the last page of every day goes unrecorded. The live operation
+  // above had that off-by-one and its `meta.pagesFetched` was short by one per window.
+  for (let after = null; ; ) {
+    const data = await gate(hostOf(url), () =>
+      graphql({ source: ORCA, url, query: TRADES, variables: { from, to, first: PAGE, after }, timeoutMs: 60_000 }),
+    )
+    pages += 1
+    const connection = data?.routedTrades
+    const nodes = connection?.nodes ?? []
+    for (const node of nodes) {
+      const inputs = node.routeTradeInputs?.nodes ?? []
+      const outputs = node.routeTradeOutputs?.nodes ?? []
+      if (!inputs.length || !outputs.length) {
+        withoutBalances += 1
+        continue
+      }
+      if (inputs.length > 1 || outputs.length > 1) multiAsset += 1
+      const swappers = node.participantSwappers ?? []
+      if (swappers.length > 1) multiSwapper += 1
+
+      for (const record of inputs.concat(outputs)) squidAssetIds.add(String(record.assetId))
+
+      raw.push({
+        id: node.id,
+        height: node.paraBlockHeight,
+        timestamp: Math.floor(Date.parse(node.block.timestamp) / 1000),
+        swapper: swappers[0] ?? null,
+        venue: initiation(node.swaps?.nodes?.[0]?.operationId),
+        hops: node.swaps?.totalCount ?? 0,
+        inputs: inputs.map((r) => ({ assetId: String(r.assetId), amount: r.amount })),
+        output: outputs[outputs.length - 1],
+      })
+    }
+    if (!connection?.pageInfo?.hasNextPage || !nodes.length) break
+    after = connection.pageInfo.endCursor
+  }
+
+  // The paging cross-check, and here it REFUSES rather than annotating. The live operation can
+  // afford to note a discrepancy and move on — it re-fetches the window on the next request. A
+  // stored day is fetched once and never again, so a page silently lost at the seam would be a
+  // permanently short day that nothing ever revisits.
+  if (expected !== null && expected !== raw.length + withoutBalances) {
+    throw new UpstreamError(
+      `orca counted ${expected} routed trades in ${day} (blocks ${from}–${to - 1}) but paging returned ` +
+        `${raw.length + withoutBalances} over ${pages} page(s). That is a paging fault, not a rounding one.`,
+      { kind: 'upstream', source: ORCA },
+    )
+  }
+
+  /* ---- assets: orca supplies the key, the chain registry supplies the meaning ---- */
+
+  const squidIds = [...squidAssetIds]
+  const freshSquidIds = squidIds.filter((id) => !squidAssetMemo.has(id))
+  if (freshSquidIds.length) {
+    const fetched = await fetchSquidAssets({
+      url,
+      ids: freshSquidIds,
+      run: (fn) => gate(hostOf(url), fn),
+    })
+    for (const id of freshSquidIds) squidAssetMemo.set(id, fetched.get(id) ?? null)
+  }
+  const squidAssets = new Map()
+  for (const id of squidIds) {
+    const meta = squidAssetMemo.get(id)
+    if (meta) squidAssets.set(id, meta)
+  }
+
+  const wantedRegistryIds = registryIdsOf(squidAssets)
+  const freshRegistryIds = wantedRegistryIds.filter((id) => !registryMemo.has(id) && !registryMisses.has(id))
+  if (freshRegistryIds.length) {
+    const fetched = await fetchAssets(freshRegistryIds, { run: (fn) => gate(RPC_HOST, fn) })
+    for (const id of freshRegistryIds) {
+      if (fetched.has(id)) registryMemo.set(id, fetched.get(id))
+      else registryMisses.add(id)
+    }
+  }
+  const assets = new Map()
+  for (const id of wantedRegistryIds) if (registryMemo.has(id)) assets.set(id, registryMemo.get(id))
+
+  const meaning = resolveAssetMeaning(squidIds, squidAssets, assets)
+  const { trades, rates } = valueTrades(raw, meaning)
+
+  const summary = summariseDay({
+    date: day,
+    trades,
+    rates,
+    blocks,
+    platform,
+    quality: {
+      expectedTrades: expected,
+      pagesFetched: pages,
+      tradesWithoutBalances: withoutBalances,
+      multiAsset,
+      multiSwapper,
+      // Every one of these is a caveat the page has to be able to state from the payload alone.
+      unknownAssets: meaning.unknownAssets,
+      unmappedAssetIds: meaning.unmappedAssetIds,
+      assetDisagreements: meaning.disagreements,
+      borrowedMetadata: meaning.borrowedMetadata,
+      orcaHost: hostOf(url),
+      hostFailures,
+    },
+  })
+  if (from < floor.paraBlockHeight) {
+    // The day straddles orca's first routed trade — the whole-day case returned above — so this
+    // is a partial day of coverage rather than a quiet one.
+    summary.coverage = 'partial-source-floor'
+    summary.floorBlock = floor.paraBlockHeight
+    summary.floorAt = floor.block.timestamp
+  }
+
+  return { day: summary, head, to, toAt: end.timestamp, blocksInDay: blocks.count }
+}
+
 /* ------------------------------------------------------------------------------ page ---- */
 
 export default {
@@ -545,7 +1297,7 @@ export default {
         let withoutBalances = 0
         let pages = 0
 
-        for (let after = null; ; pages += 1) {
+        for (let after = null; ; ) {
           const data = await graphql({
             source: ORCA,
             url,
@@ -553,6 +1305,9 @@ export default {
             variables: { from, to, first: PAGE, after },
             timeoutMs: 60_000,
           })
+          // After the request, not in the `for` header — the header's increment is skipped by
+          // the `break` below, so the final page was never counted.
+          pages += 1
           const connection = data?.routedTrades
           const nodes = connection?.nodes ?? []
           for (const node of nodes) {
@@ -594,156 +1349,16 @@ export default {
 
         /* ---- assets: orca supplies the key, the chain registry supplies the meaning ---- */
 
-        // orca's `assetId` is a mixed-type key — the numeric registry id for `Token` assets and
-        // the EVM contract address for `Erc20` ones (HOLLAR is `0x531a…f99a`). Joining it to the
-        // registry by a numeric cast would drop every Erc20 asset, which on this venue includes
-        // HOLLAR, aDOT and the whole GIGA family. So the squid maps its own key to a registry
-        // id, and the registry — read from the chain and self-checked above — says what that id
-        // is worth. Where both have an opinion, disagreements are reported, not averaged.
         const squidIds = [...squidAssetIds]
-        /** @type {Map<string, {registryId:number|null, symbol:string|null, decimals:number|null}>} */
-        const squidAssets = new Map()
-        for (let i = 0; i < squidIds.length; i += 400) {
-          const batch = squidIds.slice(i, i + 400)
-          const data = await graphql({ source: ORCA, url, query: SQUID_ASSETS, variables: { ids: batch }, timeoutMs: 30_000 })
-          for (const asset of data?.assets?.nodes ?? []) {
-            const registryId = Number(asset.assetRegistryId)
-            squidAssets.set(String(asset.id), {
-              registryId: Number.isInteger(registryId) ? registryId : null,
-              symbol: asset.symbol ?? null,
-              decimals: asset.decimals ?? null,
-            })
-          }
-        }
+        const squidAssets = await fetchSquidAssets({ url, ids: squidIds })
+        const assets = await fetchAssets(registryIdsOf(squidAssets))
 
-        const unmappedAssetIds = squidIds.filter((id) => !squidAssets.has(id) || squidAssets.get(id).registryId === null)
-        const registryIds = [...new Set([...squidAssets.values()].map((a) => a.registryId).filter((id) => id !== null))]
-        const assets = await fetchAssets(registryIds)
+        const meaning = resolveAssetMeaning(squidIds, squidAssets, assets)
+        const { disagreements, borrowedMetadata, unmappedAssetIds, unknownAssets, symbolOf, labelOf, amountOf } = meaning
 
-        /**
-         * One resolved meaning per orca asset key, and a record of where it came from.
-         *
-         * The chain is the authority and wins wherever it has an answer. It does not always
-         * have one: an `External`-typed registry entry — an asset registered over XCM, DED and
-         * DAMN among them — decodes to `symbol: null, decimals: null` on chain, because its
-         * metadata lives on its own chain rather than in Hydration's registry. Dropping those
-         * legs would quietly shrink the totals; taking orca's word for them and saying so does
-         * not. Where BOTH have an answer and they differ, the chain is used and the
-         * disagreement is reported — a decimals disagreement is a factor of ten on every
-         * figure that asset touches and must never be settled silently.
-         */
-        const disagreements = []
-        const borrowedMetadata = []
-        /** @type {Map<string, {symbol:string|null, decimals:number|null, registryId:number|null}>} */
-        const resolved = new Map()
-        for (const squidId of squidIds) {
-          const squid = squidAssets.get(squidId) ?? null
-          const registryId = squid?.registryId ?? null
-          const chain = registryId === null ? null : assets.get(registryId) ?? null
+        /* ---- pricing, and the canonical Trade shape ---- */
 
-          if (chain && chain.decimals !== null && squid?.decimals != null && chain.decimals !== squid.decimals) {
-            disagreements.push(
-              `${squidId}: chain says ${chain.symbol}/${chain.decimals}, orca says ${squid.symbol}/${squid.decimals}`,
-            )
-          }
-
-          if (chain && chain.decimals !== null && chain.symbol) {
-            resolved.set(squidId, { symbol: chain.symbol, decimals: chain.decimals, registryId })
-          } else if (squid && squid.decimals != null && squid.symbol) {
-            borrowedMetadata.push(`${squid.symbol} (id ${registryId ?? squidId})`)
-            resolved.set(squidId, { symbol: squid.symbol, decimals: squid.decimals, registryId })
-          } else {
-            resolved.set(squidId, { symbol: null, decimals: null, registryId })
-          }
-        }
-
-        const unknownAssets = squidIds
-          .filter((id) => resolved.get(id).decimals === null)
-          .map((id) => resolved.get(id).registryId ?? id)
-
-        const symbolOf = (squidId) => resolved.get(String(squidId))?.symbol ?? null
-
-        // Two registered assets can carry the same ticker — a bridged USDT and a native one,
-        // an Erc20 wrapper and the token it wraps. Collapsing them onto one label turns a real
-        // arbitrage between two representations into a nonsensical USDT→USDT route. So a
-        // symbol shared by more than one traded asset gets its registry id appended, and only
-        // then.
-        const symbolUsers = new Map()
-        for (const squidId of squidIds) {
-          const symbol = symbolOf(squidId)
-          if (symbol) symbolUsers.set(symbol, (symbolUsers.get(symbol) ?? 0) + 1)
-        }
-        const labelOf = (squidId) => {
-          const meta = resolved.get(String(squidId))
-          if (!meta?.symbol) return null
-          if (symbolUsers.get(meta.symbol) <= 1) return meta.symbol
-          return `${meta.symbol}·${meta.registryId ?? squidId}`
-        }
-        const amountOf = (record) => {
-          const meta = resolved.get(String(record.assetId))
-          if (!meta || meta.decimals === null) return null
-          const amount = Number(record.amount)
-          return Number.isFinite(amount) ? amount / 10 ** meta.decimals : null
-        }
-
-        /* ---- pricing ---- */
-
-        // Rates come only from single-asset-in, single-asset-out trades: those are the ones
-        // that state a price unambiguously. A route that consumed two assets and produced one
-        // states nothing about either rate on its own.
-        const priceable = []
-        for (const trade of raw) {
-          if (trade.inputs.length !== 1) continue
-          const inAmount = amountOf(trade.inputs[0])
-          const outAmount = amountOf(trade.output)
-          if (!inAmount || !outAmount) continue
-          priceable.push({
-            inSymbol: symbolOf(trade.inputs[0].assetId),
-            inAmount,
-            outSymbol: symbolOf(String(trade.output.assetId)),
-            outAmount,
-          })
-        }
-        const { rates } = deriveRates(priceable)
-
-        /* ---- the canonical Trade shape ---- */
-
-        const trades = raw.map((t) => {
-          const pallet = palletName(t.swapper)
-          // Volume is the INPUT side: what the trader actually sent, before any hop. Every
-          // input leg is valued, and a single unpriceable leg makes the whole trade unpriced —
-          // null, never 0, because "we could not value this" and "this was worth nothing" are
-          // different facts.
-          let usd = 0
-          for (const record of t.inputs) {
-            const amount = amountOf(record)
-            const symbol = symbolOf(record.assetId)
-            const rate = symbol === null ? undefined : rates[symbol]
-            if (amount === null || rate === undefined) {
-              usd = null
-              break
-            }
-            usd += amount * rate
-          }
-          const firstIn = t.inputs[0]
-          return {
-            id: t.id,
-            account: pallet ?? String(t.swapper).toLowerCase(),
-            timestamp: t.timestamp,
-            date: dayOf(t.timestamp),
-            // The stacked dimension is HOW THE TRADE WAS INITIATED — a direct Omnipool swap, a
-            // router route, a DCA schedule instalment, a batch. On a venue where a single
-            // Omnipool is most of the liquidity, that is the question with an interesting
-            // answer.
-            venue: t.venue,
-            tokenIn: labelOf(firstIn.assetId),
-            tokenOut: labelOf(String(t.output.assetId)),
-            amountIn: amountOf(firstIn) ?? 0,
-            usd,
-            hops: t.hops,
-            isPallet: Boolean(pallet),
-          }
-        })
+        const { trades, rates } = valueTrades(raw, meaning)
 
         /* ---- notes, generated from this payload ---- */
 
@@ -944,6 +1559,82 @@ export default {
         })
 
         return trimForWire(spanWindow(result, firstDay, lastDay))
+      },
+    },
+  },
+
+  /**
+   * Store-backed ingest. Not named `swaps`: a `jobs` entry WINS over an `operations` entry of
+   * the same name (server/index.mjs), so calling this one `swaps` would silently take
+   * `/api/hydration/swaps` away from the live operation `/hydration/` is drawn from — the page
+   * would render, answer 200, and show nothing. One operation, one mode.
+   */
+  jobs: {
+    'swaps-daily': {
+      summary:
+        'One closed UTC day of Hydration routed trades per stored fact, a calendar month at a time. ' +
+        'Fetched once and never again; this is how history reaches back past the live window.',
+      schema: {
+        // A month, and only a month. The identity has to be a bucket many readers land on, or
+        // the store re-fetches the same day once per distinct window — see the note above.
+        month: { type: 'string', required: true, pattern: MONTH_RE, maxLength: 7 },
+      },
+
+      immutable: (params) => monthIsSettled(params),
+
+      // Knowable without asking anybody: a month has the number of days a month has. The engine
+      // records it before the first batch so the coverage bar has a denominator from the start.
+      plan: async ({ params }) => ({ totalUnits: daysOfMonth(params?.month ?? '').length || null }),
+
+      async nextBatch({ params, cursor, gate }) {
+        const days = daysOfMonth(params.month)
+        const state = cursor ?? { day: days[0], fromBlock: null, fromBlockAt: null, blocksPerDay: null }
+        const index = days.indexOf(state.day)
+        if (index < 0) {
+          // A cursor from another month's job, or a hand-edited one. Not weather — say so.
+          throw new UpstreamError(`the stored cursor names ${state.day}, which is not a day of ${params.month}.`, {
+            kind: 'decode',
+            source: ORCA,
+          })
+        }
+
+        // The hint for finding this day's last block is the PREVIOUS day's measured block count,
+        // cut by a quarter. Never an assumed block time — this chain's has moved by a factor of
+        // 2.9 inside the range this job backfills.
+        const hintBlocks =
+          state.blocksPerDay === null || state.blocksPerDay === undefined
+            ? FIRST_DAY_HINT_BLOCKS
+            : Math.max(1, Math.floor(state.blocksPerDay * 0.75))
+
+        const { day, head, to, toAt, blocksInDay } = await ingestDay({
+          gate,
+          day: state.day,
+          fromBlock: state.fromBlock,
+          fromBlockAt: state.fromBlockAt,
+          hintBlocks,
+        })
+
+        const finished = index + 1 >= days.length
+        return {
+          rows: [
+            {
+              segment: state.day,
+              payload: day,
+              // What this row was computed against, so it can be audited and re-derived.
+              head: `orca block ${head.height} @ ${head.timestamp}`,
+              codeVersion: SWAPS_DAILY_VERSION,
+            },
+          ],
+          // The next day starts at THIS day's last block — the boundary is carried forward
+          // rather than looked up twice. Omitted on the final batch, where the contract keeps
+          // the last committed cursor.
+          cursor: finished
+            ? undefined
+            : { day: days[index + 1], fromBlock: to, fromBlockAt: toAt, blocksPerDay: blocksInDay },
+          done: finished,
+          doneUnits: index + 1,
+          totalUnits: days.length,
+        }
       },
     },
   },

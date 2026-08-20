@@ -183,6 +183,44 @@ jobs: {
 returned. A crash between batches replays at most one page, and because facts insert idempotently
 on their segment key, the replay is free.
 
+### Choosing the identity, before choosing anything else
+
+This is the decision the contract does not make for you, and getting it wrong is expensive rather
+than wrong-looking. **The params are part of the fact key** — `(source, operation, canonical
+params, segment)` — so two identities never share a segment, even when they name the same day.
+
+An operation parameterised by a free `{from, to}` range therefore re-fetches and re-stores every
+day of every window a reader asks for. Ten readers with ten slightly different ranges over the same
+year are ten full backfills against an upstream we do not own, and nothing anywhere reports it: the
+coverage bar fills, the answers are right, the store is ten times the size it should be and the
+upstream saw ten times the traffic. So the identity has to be a **fixed bucket that many readers
+land on**.
+
+The other constraint pulls against making that bucket "everything":
+
+> **A job that reaches `done` frees nothing.** `serveFromStore` answers *complete* for an identity
+> whose job finished, and never enqueues another one. An identity of "all days up to now" is
+> therefore permanently frozen at whatever "now" meant when it finished — and `immutable()` would
+> have had to lie to let it start at all.
+
+Which leaves a bucket that is (a) coarse enough to be shared, (b) fine enough that new data is not
+held hostage to it, and (c) genuinely finished at a knowable moment. For a daily series a **calendar
+month** is the smallest thing that is all three, and that is what `hydration/swaps-daily` uses: the
+identity is `{ month }`, the segments are its ISO days.
+
+State the cost of the bucket on the page rather than discovering it later. A month-bucketed store
+cannot serve the current month at all, so a page that wants both history and this week reads the
+store for whole past months and a TTL-cached operation for the tail.
+
+### Do not name a job after an operation
+
+A `jobs` entry and an `operations` entry share the URL shape `/api/<source>/<name>`, and **the job
+wins** (`server/index.mjs`). Naming a job after an existing operation does not put a second mode
+beside the first — it takes the URL away from it. The page reading that URL keeps getting `200`s,
+now carrying a store envelope it has no idea how to draw, and nothing throws, logs or fails. This
+is why `hydration.mjs` calls its handler `swaps-daily` and not `swaps`, and why `npm run check`
+fails the registry group on a collision.
+
 **Writing one, in order.**
 
 1. Decide the segment. It should be the smallest chunk that is independently meaningful — a day,
@@ -229,6 +267,44 @@ as JSON where it can (`days=30` is the number 30), which diverges from the HTTP 
 source declares as a list: `assets=DOT,USDC` is comma-split by `readParams` but stays one string
 here, minting a second identity. Until `enqueue` consults the param schema, pass those as JSON:
 `assets=["DOT","USDC"]`.
+
+## What the store actually costs
+
+Measured, not estimated — `hydration/swaps-daily` filling four whole calendar months into
+`server/data/store.sqlite` on 2026-08-20. **121 days, 1,112,356 routed trades, and the file
+finished at 1,499,136 bytes.**
+
+| | |
+|---|---|
+| one indexed day, JSON payload | **13.2 – 15.5 kB** (12,104 B smallest, 17,201 B largest) |
+| one day with nothing to index | 544 B — a block window and an explicit `coverage` |
+| on disk, per indexed day | **≈ 14.3 – 16.7 kB** |
+| SQLite overhead over the logical rows | **1.079×** (pages, and the four-column primary key) |
+| per routed trade summarised | **1.35 B on disk** (1,499,136 B / 1,112,356 trades) |
+| time per day | mean **9.0 s**, median 7.8 s, p90 15.3 s, worst 31.5 s |
+| time, as a model | **2.27 s per day + 0.563 ms per trade** (fits all four months to ±1 %) |
+
+**The payload is nearly flat in the trade count**, which is the number that makes the disk
+conversation easy: a day is a summary with bounded lists (fifty accounts, forty routes, every
+asset and every derived rate), so a day with 19,046 trades costs 15.5 kB and a day with 7,315
+costs 13.6 kB. Cost scales with **days**, not with volume.
+
+Extrapolating to everything orca holds — 2025-01-01 to 2026-08-19, 596 days, 6,585,435 routed
+trades:
+
+- **≈ 9 MB on disk**, and about **84 minutes** of wall time to fill, one request in flight.
+- **≈ 2.9 GB pulled from orca** to produce it. The store is 0.3 % of what it reads; the fetch is
+  the expensive half, and the whole point of mode A is doing it once.
+
+For scale in the other direction: storing the **trades themselves** rather than a daily summary is
+268 B per trade in the canonical `Trade` shape — 2.8 MiB a day and **1.64 GiB** for the same
+history, a factor of ~190. It would also be unservable: `serveFromStore` returns every segment of
+an identity in one response with no paging, and a month of raw trades is ~150 MB in a single
+answer. The summary month is 428 kB over the wire, measured.
+
+**A backfill needs headroom beyond the data.** During the fill the WAL reached ~2.9 MB against
+~1 MB of committed rows and settled back to zero when the last connection closed. Provision for
+the file plus a few MB, not for the file exactly.
 
 ## What does not belong here
 

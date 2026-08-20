@@ -75,16 +75,35 @@ export function describe() {
         path: `/api/${source.id}/${id}`,
         summary: op.summary,
         cacheSeconds: Math.round(op.ttlMs / 1000),
-        parameters: Object.entries(op.schema ?? {}).map(([name, spec]) => ({
-          name,
-          type: spec.type,
-          required: Boolean(spec.required),
-          default: spec.default ?? null,
-          min: spec.min ?? null,
-          max: spec.max ?? null,
-          oneOf: spec.oneOf ?? null,
-        })),
+        parameters: parametersOf(op.schema),
+      })),
+      // Mode A, listed SEPARATELY rather than folded in beside the cached operations. They
+      // share the URL shape and nothing else: there is no TTL to publish (the answer is
+      // immutable and kept forever), the envelope carries coverage and a job to poll, and a
+      // reader who treats one as the other will look for a cache header that is not coming.
+      // Omitting them was worse — a store-backed operation is public and answerable, so
+      // leaving it out of the self-description made the listing quietly incomplete.
+      jobs: Object.entries(source.jobs ?? {}).map(([id, handler]) => ({
+        id,
+        path: `/api/${source.id}/${id}`,
+        summary: handler.summary,
+        mode: 'store',
+        parameters: parametersOf(handler.schema),
       })),
     })),
   }
+}
+
+/** Parameter descriptions, shared by both modes: a job handler declares a schema in exactly the
+ *  same shape an operation does, and readParams validates both against it. */
+function parametersOf(schema) {
+  return Object.entries(schema ?? {}).map(([name, spec]) => ({
+    name,
+    type: spec.type,
+    required: Boolean(spec.required),
+    default: spec.default ?? null,
+    min: spec.min ?? null,
+    max: spec.max ?? null,
+    oneOf: spec.oneOf ?? null,
+  }))
 }

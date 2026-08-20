@@ -290,6 +290,7 @@ async function checkRegistry() {
   }
 
   let operationCount = 0
+  let jobCount = 0
   for (const [key, source] of Object.entries(sources)) {
     const where = `source \`${key}\``
     if (typeof source?.id !== 'string' || !source.id) fail('registry', `${where} has no \`id\`.`, 'It is the first path segment of /api/<source>/<operation>.')
@@ -317,9 +318,32 @@ async function checkRegistry() {
         fail('registry', `${opWhere} has no \`run\` function.`, 'The HTTP layer calls op.run(params) and nothing else.')
       }
     }
+
+    // Mode A: a `jobs` entry is a store-backed operation on the same URL shape, and it RESOLVES
+    // FIRST (server/index.mjs). So a job named after an existing operation does not sit beside
+    // it — it takes the URL away from it, and the page drawn from that URL keeps answering 200
+    // with an envelope it cannot read. Nothing throws, nothing logs; the chart is just empty.
+    // One operation, one mode, checked here rather than discovered on a dashboard.
+    for (const [jobId, handler] of Object.entries(source.jobs ?? {})) {
+      jobCount += 1
+      const jobWhere = `job \`${key}/${jobId}\``
+      if (Object.prototype.hasOwnProperty.call(source.operations, jobId)) {
+        fail('registry', `${jobWhere} has the same name as an operation of the same source.`,
+          'A jobs entry wins over an operations entry at /api/<source>/<name>, so the operation becomes unreachable and its page renders empty with no error anywhere. Rename one of them.')
+      }
+      if (typeof handler?.summary !== 'string' || !handler.summary.trim()) {
+        fail('registry', `${jobWhere} has no \`summary\`.`, 'It is the only description a caller ever sees.')
+      }
+      for (const required of ['immutable', 'nextBatch']) {
+        if (typeof handler?.[required] !== 'function') {
+          fail('registry', `${jobWhere} has no \`${required}\` function.`,
+            'The job engine refuses a handler that does not implement the contract at the top of server/lib/job-worker.mjs.')
+        }
+      }
+    }
   }
 
-  console.log(dim(`  registry: ${Object.keys(sources).length} sources, ${operationCount} operations`))
+  console.log(dim(`  registry: ${Object.keys(sources).length} sources, ${operationCount} operations, ${jobCount} store-backed job${jobCount === 1 ? '' : 's'}`))
 }
 
 /* ------------------------------------------------------ group 4: no third-party origins ---- */

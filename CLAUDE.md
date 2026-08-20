@@ -60,6 +60,32 @@ docs/
 
 ## Working agreements
 
+- **Write down what you learned, before you move on.** This repo is a knowledge base as much as
+  a site, and the only thing that keeps it one is that findings get written down at the moment
+  they are found. When you learn how a chain, pallet, contract, indexer or API *actually*
+  behaves — especially where it differs from its own documentation — record it before the task
+  that turned it up is finished. Where it goes:
+  - **`docs/platform/`** — how the thing works. One file per chain or protocol. This is the
+    knowledge base proper: the test is whether the next person can answer the question from
+    this repo without going and reading a chain first.
+  - **`CLAUDE.md`'s "Facts worth not re-deriving"** — traps that fail *silently*. A wrong
+    number that renders perfectly belongs here, in one or two sentences, stating the trap and
+    why it is quiet.
+  - **`docs/decisions/`** — why a choice went the way it did, including the options rejected.
+  - **`docs/concept/plan.md`** — what we decided to build, and what is still open.
+
+  Two rules about *how*: carry the evidence and its date (what you read, off which endpoint,
+  when — the way `docs/platform/hyperbridge.md` does), and mark the difference between what you
+  verified and what you inferred. And **correct what is already there when it turns out to be
+  wrong** — appending a contradiction and leaving both is worse than either, because the next
+  reader cannot tell which one is current.
+
+  **This applies to subagents in full, and matters more for them.** A subagent's context is
+  discarded when it finishes: research it did not write into the repo is not merely un-shared,
+  it is destroyed, and the next agent pays to re-derive it. A subagent that finds something
+  worth knowing writes it down as part of the task, not as an optional extra — and says in its
+  final report what it recorded and where.
+
 - **Storage keys are computed, never hardcoded.** A hardcoded prefix is right until a runtime
   upgrade moves it, and then reads as "this map is empty" rather than as an error. See
   `server/sources/hydration.mjs` and `bulletin-chain.js`.

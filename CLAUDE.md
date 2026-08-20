@@ -3,8 +3,8 @@
 Public analytics dashboards over Polkadot ecosystem data, at
 [analytics.cypherpunk.agency](https://analytics.cypherpunk.agency). Also a knowledge base: the
 `docs/platform/` notes exist so questions about XCM, Asset Hub, contracts, the People Chain,
-Hydration, Hyperbridge and Bulletin can be answered from this repo without going and reading a
-chain first.
+Hydration, Hyperbridge, Bulletin and the bridges can be answered from this repo without going and
+reading a chain first.
 
 **This is not an app built on the Polkadot SDK.** It reads public chains, indexers and APIs and
 draws the result. It may use the SDK if something genuinely needs it; nothing does yet.
@@ -138,7 +138,7 @@ docs/
 npm install
 npm run dev       # Vite on :5180, API on :8080, /api proxied
 npm run preview   # production build + the real server on :8080
-npm run check     # syntax, secret scan, source-registry and no-external-URL checks
+npm run check     # syntax, secrets, source registry, no external URLs, docs, no local paths
 ```
 
 ## Facts worth not re-deriving
@@ -172,3 +172,52 @@ npm run check     # syntax, secret scan, source-registry and no-external-URL che
 - The Bulletin devnet RPC is `bulletin-paseo.tservices.es:8443`. **Not**
   `paseo-bulletin-next-rpc.polkadot.io` — a different chain, which renders a plausible and
   entirely wrong view.
+- **Three "global consensus" sovereign prefixes exist in current SDK source, and Ethereum uses
+  none of them.** `GlobalConsensusConvertsFor` hashes `(b"glblcnsnss_", network)`; the current
+  `ExternalConsensusLocationsConverterFor` hashes `(b"glblcnsnss/prchn_", network, para_id)` for a
+  parachain behind a foreign consensus and `(b"glblcnsnss", network, tail)` for everything else —
+  **except Ethereum, which it special-cases onto `(b"ethereum-chain", chain_id: u64)`**
+  (source-verified in `polkadot/xcm/xcm-builder/src/location_conversion.rs`, 2026-08-20). All of
+  them derive a valid-looking `AccountId32`; the wrong one returns `null`, which renders as "the
+  Ethereum bridge holds nothing". Verified live on Asset Hub the same day: Ethereum's reserve is
+  `1jMhfSJv5MkSQmEq97UmXCmMV63SHoQ3ednwkRSKETrCREU` with 20,679.76 DOT (both `glblcnsnss`
+  derivations have no account at all), and Kusama Asset Hub's is
+  `12GvRkNCmXFuaaziTJ2ZKAfa7MArKfLT2HYvLjQuepP3JuHf` with 407,487.13 DOT — para id encoded as a
+  **plain u32**, not SCALE-compact. Derive both, read both, keep the one with a balance, and write
+  down which one it was.
+- `pallet-assets` emits `Issued { asset_id, owner, amount }` but `Burned { asset_id, owner,
+  balance }` — **the same quantity under a different field name** (source-verified,
+  `substrate/frame/assets/src/lib.rs`, 2026-08-20). Reading `amount` on a burn gives `undefined`,
+  and a supply series built as mints minus burns quietly becomes a series of mints.
+- **USDC (1337) and USDt (1984) on Asset Hub are not bridged.** Circle and Tether issue them
+  directly — no wrapper, no bridge custodian. Ethereum-issued USDC
+  (`0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48`) exists **separately** in `ForeignAssets`, with a
+  supply of 550,876 on 2026-08-20 (verified live). Two USDCs, different ids, different provenance,
+  same three letters. Never sum by symbol, and never call the total "bridged".
+- **Chainflip's DOT leg moved from the relay chain to Asset Hub, and the relay leg is deprecated
+  in place.** `cf_supported_assets` still returns `Polkadot.DOT` beside `Assethub.DOT/USDT/USDC`,
+  and every fee, delay and safety-margin map still carries a `Polkadot` key — but
+  `cf_available_pools` has an `Assethub.DOT / Ethereum.USDC` pool and **no `Polkadot.DOT` pool at
+  all** (verified live, `archive.mainnet.chainflip.io`, 2026-08-20). Its own SDK agrees:
+  `@chainflip/utils` 2.2.8 has `legacyChainflipChains = ["Polkadot"]`. Measuring the relay vault
+  today reads a deprecated address, and nothing in the RPC says so.
+- **iBTC's 8 decimals are a compile-time Rust constant** — `IBTC("interBTC", 8) = 1` in
+  `interbtc/primitives/src/lib.rs` (source-verified 2026-08-20) — and cannot be read from any
+  storage item. It is the one asset here whose divisor does not come from a registry, so it needs
+  a plausibility canary instead: chain-wide issuance was **2.118 iBTC** on 2026-08-20
+  (`Tokens::TotalIssuance(Token(IBTC))`, verified live), and a decimals error is a factor of 10ⁿ,
+  so any figure in the thousands of BTC is the constant being wrong rather than the protocol
+  growing.
+- **Moonbeam removed `pallet_assets` entirely.** Its runtime carries the tombstone
+  `// [Removed] Assets: pallet_assets = 104` and registers
+  `EvmForeignAssets: pallet_moonbeam_foreign_assets = 114`, whose assets are native EVM ERC-20
+  contracts read with `eth_call` (source-verified in `runtime/moonbeam/src/lib.rs`;
+  `pallet_assets` appears zero times in its live metadata, verified live 2026-08-20). A
+  Substrate-only read of Moonbeam finds GLMR and nothing else — not an empty map, not an error,
+  just a chain that appears to hold one token.
+- **A parachain can answer every call and still be weeks stale.** On 2026-08-20 Moonbeam's
+  `Timestamp::Now` read 2026-08-10T11:36:12Z and Interlay's read 2026-07-27T12:13:01Z — 10 and 24
+  days behind the wall clock — while both RPCs served state normally, Interlay's GraphQL squid
+  answered with 102 query fields, and the relay chain had no `Paras::Heads` entry for Moonbeam's
+  para 2004 at all. Nothing is down; the numbers are simply old, and they render perfectly. Read
+  `Timestamp::Now` and compare it against the clock before believing any per-chain figure.

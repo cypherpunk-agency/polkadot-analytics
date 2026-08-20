@@ -8,7 +8,16 @@
 //
 // The source is READ-ONLY. This script never writes outside src/data/.
 //
-//   node scripts/build-netflows-dataset.mjs [path-to-parachain-netflows]
+//   node scripts/build-netflows-dataset.mjs <path-to-parachain-netflows>
+//   NETFLOWS_SOURCE=<path-to-parachain-netflows> node scripts/build-netflows-dataset.mjs
+//
+// There is deliberately NO default path. This script used to default to one contributor's
+// Windows checkout, which meant `npm run data:netflows` was reproducible by exactly one person
+// and failed for everyone else with a path they had never heard of. A required argument fails
+// on the first line with an instruction instead. Clone the source repo yourself and point at it:
+//
+//   git clone https://github.com/Polkalytics/parachain-netflows
+//   npm run data:netflows -- ./parachain-netflows
 
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
@@ -20,7 +29,6 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
 const OUT_FILE = join(REPO, 'src', 'data', 'netflows.json')
 
-const DEFAULT_SOURCE = 'D:/Code/web3/parachain-netflows'
 const SOURCE_REPO = 'https://github.com/Polkalytics/parachain-netflows'
 const SOURCE_REPORT = 'Polkadot Parachain Netflows until March 2023 — Polkalytics, Tommi Enenkel'
 
@@ -240,7 +248,20 @@ const pretty = (value, indent = '') => {
 }
 
 const main = async () => {
-  const sourceDir = resolve(process.argv[2] ?? DEFAULT_SOURCE)
+  // Argument first, environment second, nothing third. A missing source is a usage error, not
+  // a guess: guessing is what produced a hardcoded drive letter in the first place.
+  const given = process.argv[2] ?? process.env.NETFLOWS_SOURCE
+  if (!given) {
+    console.error(
+      'Usage: node scripts/build-netflows-dataset.mjs <path-to-parachain-netflows>\n' +
+        '   or: NETFLOWS_SOURCE=<path> node scripts/build-netflows-dataset.mjs\n\n' +
+        `The source is a clone of ${SOURCE_REPO} — 45 MB of raw CSVs that are\n` +
+        'deliberately not committed here. There is no default path: one machine\'s checkout is\n' +
+        'not a location anybody else has.',
+    )
+    process.exit(2)
+  }
+  const sourceDir = resolve(given)
   console.log(`source: ${sourceDir}`)
 
   const built = {}

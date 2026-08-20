@@ -28,6 +28,7 @@ written account of what it is querying.
 | [people-chain.md](platform/people-chain.md) | identity off the relay chain, registrars and judgements, resolving an address to a name |
 | [hydration.md](platform/hydration.md) | the Omnipool, stableswap, the Router, DCA, the money market, HOLLAR — and the `Broadcast.Swapped3` event this site reads |
 | [hyperbridge.md](platform/hyperbridge.md) | consensus-proof interoperability, the nexus indexer, and HyperFX intent orders |
+| [bridges.md](platform/bridges.md) | every bridge that reaches Polkadot, what each one asks you to trust, and why their numbers cannot be added together |
 | [bulletin.md](platform/bulletin.md) | content-addressed transaction storage, leases, Store vs Renew, the Products Devnet |
 | [data-sources.md](platform/data-sources.md) | every endpoint this site reads, what it costs, and what is wrong with it |
 

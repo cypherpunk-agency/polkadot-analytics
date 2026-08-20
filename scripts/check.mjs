@@ -20,13 +20,18 @@
 //      build time and published at /knowledge/, so a construct the renderer does not support
 //      does not fail — it renders as literal asterisks on a public page, and a link to a file
 //      that was renamed renders as plain text that reads like prose.
+//   6. SOMEBODY'S LAPTOP in the repository. A drive letter or a home directory says who wrote
+//      the line and how their machine is laid out, and it is meaningless to every other reader.
+//      In a script it is worse than a disclosure: it is a default that works for exactly one
+//      person, so the command runs on one machine and fails everywhere else with a path nobody
+//      recognises. That is how `npm run data:netflows` came to be unreproducible.
 //
 // Dependency-free on purpose. `vite` is this repo's only dependency and it is a devDependency;
 // a verification script that needed its own toolchain would be the first crack in that.
 //
 // Usage:
 //   node scripts/check.mjs                    run everything
-//   node scripts/check.mjs --only=secrets     run one group (syntax|secrets|registry|urls|docs)
+//   node scripts/check.mjs --only=secrets     run one group (syntax|secrets|registry|urls|docs|paths)
 //   node scripts/check.mjs --list             show the group names and exit
 
 import { spawnSync } from 'node:child_process'
@@ -509,19 +514,8 @@ function checkDocs() {
       report(doc.file, `${doc.file} renders an unhandled link: ${match[0]}`, 'The renderer supports `[text](target)` and `[text](target "title")` only.')
     }
 
-    // Deliberately NOT routed through `report`: a local path fails the build wherever it is,
-    // published or not. The rule is that these do not exist in this repository at all. An
-    // unpublished document becomes a published one by a one-line edit to PUBLISHED_SECTIONS,
-    // and that is precisely the moment nobody re-reads the file — so a yellow note here would
-    // be a leak scheduled for later. It is also the one finding that costs nothing to fix.
-    for (const { line, text } of localPaths(doc.source)) {
-      fail('docs', `${doc.file}:${line} contains a local filesystem path: ${text}`,
-        `A path from somebody's machine says who they are and how they work, and it is meaningless to every reader. ` +
-        (doc.published
-          ? 'This document is published at a world-readable URL.'
-          : `\`${doc.section}/\` is not published today, but publishing it is a one-line change and this would go out with it.`) +
-        ' Replace it with the repository name or a path relative to the repository root.')
-    }
+    // Local filesystem paths used to be checked here, which meant they were checked in `docs/`
+    // and NOWHERE ELSE — and the one that mattered was in a script. See `checkPaths` below.
   }
 
   for (const { from, href, target } of brokenLinks) {
@@ -549,22 +543,47 @@ function checkDocs() {
   }
 }
 
+/* ------------------------------------------- group 6: nobody's laptop in the repository ---- */
+
 /**
- * Paths that belong to somebody's laptop rather than to this project.
+ * Paths that belong to somebody's machine rather than to this project.
  *
- * A local path on a public page is a small privacy leak (whose machine, what else is on it,
- * what the directory is called) and is useless to every reader. It gets in because these
- * documents are partly written by agents working across several checkouts.
+ * This used to be a rule about `docs/` only — `localPaths` was called from exactly one place,
+ * inside `checkDocs`, so it read the markdown and nothing else. Meanwhile
+ * `scripts/build-netflows-dataset.mjs` opened with a hardcoded Windows drive-letter default and
+ * passed every run of this script, and a handover note in `docs/` stated as fact that the
+ * repository contained no local paths. Both were true of the half that was checked.
  *
- * This FAILS anywhere in `docs/`, including the directories that are withheld from the site.
- * Unlike a mangled construct or a dead link, a drive letter is not an intermediate state of a
- * document being written — it is never right, and it never becomes right by being edited.
+ * So the scan is now the whole repository, and the claim it defends is the one that was always
+ * being made: A PATH FROM SOMEBODY'S MACHINE DOES NOT EXIST HERE. Two different harms, and the
+ * second is the expensive one:
  *
- * The lookarounds are what keep this from firing on every URL in the repo: `https://` matches
- * a naive `[A-Za-z]:/` at the `s:/`. A drive letter is preceded by a non-letter and followed by
- * exactly one slash.
+ *   · In a DOCUMENT it is a disclosure — whose machine, how it is laid out, what else is on it —
+ *     and it is meaningless to every reader. `docs/` is published at a world-readable URL.
+ *   · In a SCRIPT it is a default that works for one person. `npm run data:netflows` ran on one
+ *     laptop and failed everywhere else with a path nobody recognised. That is not a leak, it is
+ *     a command that only appears to exist.
+ *
+ * It fails wherever it is found, published or not, tracked or not. Unlike a mangled construct or
+ * a dead link, a drive letter is never an intermediate state of something being written: it is
+ * never right, and it does not become right by being edited around.
+ *
+ * TWO LOOKAROUNDS AND A QUANTIFIER keep this from firing on things that are not paths:
+ *
+ *   · A drive letter is preceded by a non-letter and followed by exactly one slash — otherwise
+ *     `https://` matches a naive `[A-Za-z]:/` at its own `s:/`.
+ *   · That slash must be followed by SOMETHING. A bare `X:/` with nothing after it is a fragment
+ *     of prose about the pattern (this comment used to contain one) and discloses nothing; a
+ *     real one always carries the directory that makes it a leak.
+ *   · `/home/` and `/Users/` are also URL paths on this site: the page directories are served at
+ *     `/home/`, `/hydration/` and so on, and `index.html` loads `/home/main.js`. A home
+ *     directory is not a file, so a segment ending in a web file extension is not one.
  */
-const LOCAL_PATH_RE = /(?<![A-Za-z0-9])[A-Za-z]:[\\/](?![\\/])[^\s`'")\]]*|\/(?:home|Users)\/[A-Za-z0-9._-]+/g
+const LOCAL_PATH_RE =
+  /(?<![A-Za-z0-9])[A-Za-z]:[\\/](?![\\/])[^\s`'")\]]+|\/(?:home|Users)\/(?![A-Za-z0-9._-]*\.(?:js|mjs|css|html|json|svg|png|ico|webp|txt)(?![A-Za-z0-9]))[A-Za-z0-9._-]+/g
+
+/** Extensions worth reading as text. A local path inside a PNG is not a thing that happens. */
+const PATH_SCAN_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.html', '.css', '.json', '.md', '.svg', '.yml', '.yaml', '.sh', '.toml', ''])
 
 function localPaths(source) {
   const found = []
@@ -575,6 +594,47 @@ function localPaths(source) {
   return found
 }
 
+function checkPaths() {
+  // Which documents are published only changes the HINT, never whether it fails — but a reader
+  // fixing a `docs/` finding deserves to be told whether it is already on the internet.
+  let published = new Map()
+  try {
+    published = new Map(collectDocuments(ROOT).docs.map((doc) => [doc.file, doc.published]))
+  } catch {
+    note('the knowledge base could not be collected, so local-path findings in docs/ carry no publication hint.')
+  }
+
+  const files = walk(ROOT).filter((f) => PATH_SCAN_EXT.has(extname(f).toLowerCase()))
+  let scanned = 0
+
+  for (const file of files) {
+    const name = rel(file)
+    let text
+    try {
+      const info = statSync(file)
+      if (!info.isFile() || info.size > 2 * 1024 * 1024) continue
+      text = readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    if (text.includes('\0')) continue // binary despite the extension
+    scanned += 1
+
+    for (const { line, text: match } of localPaths(text)) {
+      const where = published.has(name)
+        ? published.get(name)
+          ? ' This document is published at a world-readable URL.'
+          : ' This document is not published today, but publishing it is a one-line change to PUBLISHED_SECTIONS and this would go out with it.'
+        : ''
+      fail('paths', `${name}:${line} contains a local filesystem path: ${match}`,
+        `A path from somebody's machine says who they are and how they work, it is meaningless to every reader, and as a default value it is a command that runs on one computer.${where}` +
+        ' Replace it with a path relative to the repository root, or — for a script that needs a location outside the repo — a required argument or environment variable with no default.')
+    }
+  }
+
+  console.log(dim(`  paths: scanned ${scanned} text file${scanned === 1 ? '' : 's'} across the repository`))
+}
+
 /* ----------------------------------------------------------------------------- runner ---- */
 
 const GROUPS = {
@@ -583,6 +643,7 @@ const GROUPS = {
   registry: checkRegistry,
   urls: checkUrls,
   docs: checkDocs,
+  paths: checkPaths,
 }
 
 const args = process.argv.slice(2)

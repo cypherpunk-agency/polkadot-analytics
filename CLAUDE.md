@@ -183,8 +183,22 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   `1jMhfSJv5MkSQmEq97UmXCmMV63SHoQ3ednwkRSKETrCREU` with 20,679.76 DOT (both `glblcnsnss`
   derivations have no account at all), and Kusama Asset Hub's is
   `12GvRkNCmXFuaaziTJ2ZKAfa7MArKfLT2HYvLjQuepP3JuHf` with 407,487.13 DOT — para id encoded as a
-  **plain u32**, not SCALE-compact. Derive both, read both, keep the one with a balance, and write
-  down which one it was.
+  **plain u32**, not SCALE-compact. Two further traps in the preimage, each producing a
+  valid-looking account with no state: the Ethereum `chain_id` is a **plain u64 little-endian**
+  there even though the same field is `#[codec(compact)]` inside `NetworkId`; and the tail is a
+  `&[Junction]`, which SCALE-encodes with a compact length prefix, so a bare global-consensus
+  preimage **ends in `0x00`**.
+  **But do not transcribe any of this — ask the runtime.** Asset Hub exposes
+  `LocationToAccountApi_convert_location` over plain anonymous `state_call` (arg: a
+  `VersionedLocation`, `0x05` for V5; result: `Result<AccountId, Error>`, so `0x00` then 32 bytes).
+  Hand-derivation and the runtime API agree byte-for-byte on all five locations tested — and the
+  API **cannot go stale across a runtime upgrade, because it is the tuple rather than a copy of
+  it.** This is the same principle as computing storage keys instead of hardcoding them, one level
+  up: when a chain will tell you the answer, do not re-implement its logic.
+  One more thing the derivation makes look broken when it is not: the **Kusama global-consensus
+  sovereign is genuinely empty**. KSM does not arrive from Kusama-the-relay; it arrives from
+  **Kusama Asset Hub**, whose para-level sovereign
+  `12GvRkNCmXFuaaziTJ2ZKAfa7MArKfLT2HYvLjQuepP3JuHf` is the one holding the 407,487 DOT.
 - `pallet-assets` emits `Issued { asset_id, owner, amount }` but `Burned { asset_id, owner,
   balance }` — **the same quantity under a different field name** (source-verified,
   `substrate/frame/assets/src/lib.rs`, 2026-08-20). Reading `amount` on a burn gives `undefined`,

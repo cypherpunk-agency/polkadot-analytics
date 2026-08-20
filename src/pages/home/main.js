@@ -10,6 +10,7 @@
 import '../../design/app.css'
 import { mountShell } from '../../design/shell.js'
 import { append, clear, el, notice } from '../../design/dom.js'
+import { loadingPanel } from '../../design/loading.js'
 import { catalogue } from '../../core/client.js'
 import { DASHBOARDS, pageByKey } from '../../sources/pages.js'
 // Provided by scripts/knowledge-plugin.mjs at build time — plain data, no markdown parser and
@@ -120,13 +121,23 @@ append(
 /* ------------------------------------------------------------------------ what we read ---- */
 
 const sourcesHost = el('section.card', null, el('header', null, el('h2', { text: 'What this site reads' })))
+// The card's body is its own node so the loading panel can own it without taking the heading
+// with it — `loadingPanel` clears whatever host it is given.
+const sourcesBody = el('div')
+append(sourcesHost, sourcesBody)
 append(main, sourcesHost)
 
 // Not top-level await: the build targets browsers that predate it, and a module that fails to
 // parse takes the whole page with it rather than just this card.
 async function listSources() {
+  // The same loading state every dashboard gets, for the same reason: on a cold container this
+  // card sat as a bare heading with nothing under it, which is indistinguishable from a card
+  // that is going to stay empty. `rows` is the shape that lands here, so the layout is reserved.
+  const loading = loadingPanel(sourcesBody, { label: 'Reading the source catalogue', skeleton: ['rows'] })
   try {
     const { sources } = await catalogue()
+    loading.progress({ stage: 'Reading the source catalogue', done: sources.length, total: sources.length })
+    clear(sourcesBody)
     const list = el('div.rows')
     for (const source of sources) {
       const operations = source.operations.length
@@ -143,7 +154,7 @@ async function listSources() {
       )
     }
     append(
-      sourcesHost,
+      sourcesBody,
       list,
       el(
         'p.note',
@@ -155,13 +166,17 @@ async function listSources() {
     )
   } catch (error) {
     // The catalogue failing is not fatal to this page: the dashboard index above is built into
-    // the bundle. Say what is missing rather than showing an empty card.
-    clear(sourcesHost)
+    // the bundle. Say what is missing rather than showing an empty card. Only the body is
+    // replaced now, so the heading no longer has to be rebuilt to survive the failure.
+    clear(sourcesBody)
     append(
-      sourcesHost,
-      el('header', null, el('h2', { text: 'What this site reads' })),
+      sourcesBody,
       notice('warning', 'The source catalogue is unavailable', error.message ?? 'The API did not answer. The dashboards above may still work.'),
     )
+  } finally {
+    // In a `finally` for the reason renderPage() does it: otherwise the elapsed clock ticks on
+    // behind the failure notice for as long as the tab is open.
+    loading.stop()
   }
 }
 

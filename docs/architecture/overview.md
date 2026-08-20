@@ -59,6 +59,13 @@ payload the charts are drawn from, so it cannot describe a different dataset tha
 screen. An unpriced asset, an interpolated timestamp, a pallet account in a "top traders" list —
 these are on the page, not in a footnote nobody reads.
 
+**How current** is one of those caveats, and it travels the same way: a source puts a
+`meta.liveness` assertion next to its data and the page renders it, so "this upstream last had
+something new N hours ago" is on the page rather than assumed. It is the one failure the error
+taxonomy cannot see — an upstream that answers fast, completely and correctly with rows from
+three months ago — and it needs saying even when the answer is "this is an archive and it stopped
+in 2023". See [middleware.md](middleware.md#liveness-every-source-says-how-current-it-is).
+
 ## Adding things
 
 | I want to… | Do this |

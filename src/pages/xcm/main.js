@@ -321,7 +321,9 @@ function matrixCard(value) {
       format: formatCount,
       unit: 'messages',
     })
-    matrixTable(table, { rows: nodes, cols: nodes, cells, format: formatCount, unit: 'Messages' })
+    // countLabel: the second numeric column is messages that could be VALUED, not a count of
+    // anything else — two columns both headed "Count" read as a duplicate.
+    matrixTable(table, { rows: nodes, cols: nodes, cells, format: formatCount, unit: 'Messages', countLabel: 'Priced' })
   })
   return card
 }
@@ -379,7 +381,7 @@ function graphCard(value) {
   append(card, plot, table)
   queueMicrotask(() => {
     flowGraph(plot, { nodes, edges, groups, format: byValue ? money : formatCount, unit: byValue ? 'USD' : 'messages' })
-    flowTable(table, { nodes, edges, format: byValue ? exactUsd : formatCount, unit: byValue ? 'USD' : 'Messages' })
+    flowTable(table, { nodes, edges, format: byValue ? exactUsd : formatCount, unit: byValue ? 'USD' : 'Messages', countLabel: 'Priced' })
   })
   return card
 }

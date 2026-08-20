@@ -40,6 +40,8 @@ written account of what it is querying.
 | [0003](decisions/0003-no-secrets.md) | this repository holds no secrets, and cannot |
 | [0004](decisions/0004-server-side-aggregation.md) | aggregate on the server, render in the browser |
 | [0005](decisions/0005-public-no-gate.md) | published publicly, with no authentication gate |
+| [0006](decisions/0006-demand-driven-store.md) | a demand-driven store and a job queue, not a scheduled pipeline |
+| [0007](decisions/0007-bulletin-client-direct.md) | Bulletin is watched by the client, never stored server-side |
 
 ## `concept/` — working notes, deliberately not published
 

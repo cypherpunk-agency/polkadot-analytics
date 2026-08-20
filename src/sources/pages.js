@@ -184,16 +184,17 @@ export const PAGES = [
     kind: 'dashboard',
     href: '/netflows/',
     nav: 'Netflows',
-    title: 'Parachain netflows, 2021–2023',
+    title: 'Parachain netflows, 2022 → today',
     blurb:
-      'DOT and KSM held in parachain sovereign accounts, day by day from the first parachain to April 2023 — the Polkalytics study redrawn from its source CSVs, one line per chain on one shared scale, with the three places its own report and its data disagree.',
-    // `live: false`, and back to it. This carried `live: true` for a day while the page also
-    // read `asset-hub/sovereign-dot`; that half now has its own page (`sovereign`, above) and
-    // this one reads nothing at run time again. The dataset is compiled into the bundle and its
-    // newest number is from 2023-04-08, so a tile promising live data would be a plain lie —
-    // which is the entire reason this flag exists.
-    source: 'Archived Polkalytics dataset',
-    live: false,
+      'DOT held in parachain sovereign accounts, every UTC day from January 2022 to yesterday — read from the chains themselves at each day’s last block, across both accounts a parachain owns: `para` on the relay chain and `sibl` on Asset Hub. The 2023 Polkalytics study that first measured these accounts is drawn against it as an independent second reading, and where the two disagree the page says why.',
+    // `live: true`, and this time it stays. It went false for one day between the /sovereign/
+    // split and the backfill, which was correct for that day: the page read nothing. The
+    // archive-only era ended when `netflows-daily` filled the 2023→2026 hole — the page now
+    // reads a store-backed job for whole past months and a TTL-cached operation for the
+    // current one. Kusama is still the archive alone, because nothing here reads a Kusama
+    // chain, and the page says so on that toggle rather than in this flag.
+    source: 'Polkadot relay chain + Asset Hub',
+    live: true,
   },
   {
     key: 'knowledge',

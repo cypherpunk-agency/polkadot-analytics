@@ -146,7 +146,7 @@
 // another id. `Registrar::NextFreeParaId` is 3443 and nothing in relay state links an id to a
 // chain name, so that question cannot be settled from these two endpoints.
 
-import { jsonRpc, UpstreamError } from '../lib/upstream.mjs'
+import { callUpstream, jsonRpc, UpstreamError } from '../lib/upstream.mjs'
 import { liveness } from '../../src/core/liveness.js'
 import { CHAINS, chainOf, sovereignAccountHex, sovereignAddress, structuralLabel } from '../../src/core/topology.js'
 import { twox128, xxhash64 } from '../../src/core/codec/xxhash.js'
@@ -1581,6 +1581,817 @@ function sovereignNotes({ relayChain, ahChain, chains, missing, totals, issuance
   return notes
 }
 
+/* ═════════════════════════════════════════════ the daily series: sovereign DOT over time ═════ */
+//
+// `sovereign-dot` above answers "how much DOT is in these accounts right now". This section
+// answers the question `/netflows/` is named for — how much was in them on every day since the
+// first parachain — and it is the same measurement, taken 1,700 times.
+//
+// ── one request per chain per day, not one per account ───────────────────────────────────────
+// `state_queryStorageAt` reads MANY keys at ONE block, so a day costs a handful of requests
+// rather than one per sovereign account. And because the JSON-RPC endpoints accept a BATCH
+// (an array of calls in one POST, verified against both hosts on 2026-08-20), the day loop
+// batches across DAYS as well: ten days' block-boundary probes are two HTTP requests, not
+// twenty. Measured end to end over the whole 2022→2026 backfill: **~2.2 HTTP requests and ~1.4 s
+// per day** with both chains in flight at once, and ~0.9 kB stored per day — see
+// docs/platform/asset-hub.md.
+//
+// ── the day's value is its CLOSE, and that is not a stylistic choice ─────────────────────────
+// The 2023 Polkalytics dataset in `src/data/netflows.json` defines a day as "the last balance
+// observed at or before the end of that UTC day". Reading the state at the LAST BLOCK of the
+// UTC day reproduces it EXACTLY — Acala 1,462,204.186283087 DOT, Moonbeam 257,493.0765709934,
+// Parallel 649,004.9792496555, Astar 103,221.2311821044 all agree to the planck with that file's
+// 2022-05-31 row (verified 2026-08-20). Reading at 00:00 of the same day instead would line the
+// series up one day early against the archive and read as a genuine one-day lead, not as an
+// off-by-one. This is the same trap CLAUDE.md records for oracle bars, in the other direction.
+//
+// ── never extrapolate a block height from a date ─────────────────────────────────────────────
+// The day's last block is found by SEARCHING on `Timestamp::Now`, seeded with the previous
+// day's own measured block count and then corrected by a secant step against real timestamps.
+// Every answer is verified against the chain's own clock before it is used: the close block's
+// timestamp must fall inside the UTC day, and the block after it must fall outside. A height
+// multiplied out of an assumed block time has already produced two wrong-but-plausible numbers
+// in this repo (CLAUDE.md), and neither chain's rate is constant: the relay ran 14,173 blocks on
+// 2022-05-31 and 14,398 on 2023-01-15, and ASSET HUB has gone from 12.51 s a block in 2022 to
+// 2.24 s on 2026-08-19 — a factor of six inside the range this backfills. A rate averaged over
+// the whole span sits between Asset Hub's two regimes and is wrong in both halves, so the search
+// measures it LOCALLY, from the samples nearest the target.
+//
+// ── what a pruned read looks like, and why it cannot pass ────────────────────────────────────
+// A node that has discarded historical state answers a balance query with `null`, which is
+// indistinguishable from "this account holds nothing" — a whole chart of zeros that renders
+// perfectly. The guard is `Timestamp::Now`, which EVERY block has: a day whose close block
+// cannot produce a timestamp inside that UTC day is refused outright, and no row is written.
+// Both public endpoints were probed to genesis on 2026-08-20 and serve full archive state
+// (relay #1 = 2020-05-26; Asset Hub's clock starts at #305,204 = 2021-12-18T18:52:54Z, before
+// which the chain has state but sets no timestamp).
+//
+// ── the Asset Hub Migration is drawn, not hidden ─────────────────────────────────────────────
+// Before 2025-11-04 a parachain's DOT sat in its `para` account on the relay; after it, in its
+// `sibl` account on Asset Hub. Both legs are read on every day of the range and stored
+// SEPARATELY, so the page can draw the handover rather than assert a continuous line through
+// it. Summing them is correct — the migration moved the DOT, it did not duplicate it — but a
+// series that only reported the sum would hide the single largest structural break in it.
+
+/** Stamped on every stored row. Bump when the payload's meaning changes. */
+const NETFLOWS_VERSION = 'asset-hub/netflows-daily@1'
+
+/**
+ * The first month this series can be read.
+ *
+ * Not a taste decision: Asset Hub sets no `Timestamp::Now` before block #305,204
+ * (2021-12-18T18:52:54.582Z, verified live 2026-08-20), so a UTC day before that has no
+ * readable Asset Hub close and the second leg of the sum would be `null` rather than `0`.
+ * Polkadot's first parachains onboarded 2021-12-17 and NO sovereign account held any DOT until
+ * 2022-02-02 — the relay's own state says so, and the archived dataset's first non-null value
+ * (Acala, 1.23 DOT) is that same day. January 2022 is therefore a month of verified-empty days
+ * rather than a month of missing ones, which is why the series opens there and not later.
+ */
+const SERIES_FIRST_MONTH = '2022-01'
+
+const NETFLOWS_MONTH_RE = /^\d{4}-(?:0[1-9]|1[0-2])$/
+
+const DAY_MS = 86_400_000
+
+/**
+ * How long after a month ends before its days are treated as settled. An hour is ~60× Polkadot's
+ * worst observed finality lag and costs nothing: the days it delays are days nobody could have
+ * read yet. The real guarantee is in the handler, which cannot resolve a day's close block at
+ * all unless the chain has produced a block past the day's end.
+ */
+const NETFLOWS_SETTLE_MS = 60 * 60_000
+
+/** Days fetched per committed batch. The boundary search costs two HTTP requests per ROUND no
+ *  matter how many days are in flight, so a batch of ten pays for one search instead of ten —
+ *  measured at ~1.9 s per day at six and ~1.4 s at ten. A failed batch costs at most this many
+ *  days of work, and the facts insert idempotently, so a replay is free. */
+const DAYS_PER_BATCH = 10
+
+/** Sub-calls per JSON-RPC batch. Two ceilings, because the two kinds of call cost the upstream
+ *  very different amounts: a header lookup is free, a state read is not. */
+const RPC_BATCH_LIGHT = 240
+const RPC_BATCH_STATE = 60
+
+/** Keys per `state_queryStorageAt` HTTP request, across however many days it covers. */
+const KEYS_PER_REQUEST = 300
+
+/** A chain holding less than this is folded into one `dust` row rather than getting its own
+ *  entry on every one of ~1,700 days. One DOT: below it a line is invisible against a chart
+ *  whose top series is measured in millions, and the aggregate keeps the totals exact. */
+const DUST_PLANCK = 10_000_000_000n
+
+/** Per-day cap on individually listed chains, after the dust floor. Measured over the whole
+ *  2022→2026 series: it binds on 816 of 1,662 days, the largest holding at the fortieth row is
+ *  50.1 DOT, and the most ever folded into one day's `dust` is 175.05 DOT against a ten-million
+ *  DOT total. The totals are unaffected either way — only the ability to name those chains is. */
+const MAX_CHAIN_ROWS = 40
+
+/** Most days `sovereign-dot-recent` will read in one request. */
+const RECENT_MAX_DAYS = 40
+
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10)
+const dayStartMs = (day) => Date.parse(`${day}T00:00:00Z`)
+const addDaysIso = (day, n) => isoDay(dayStartMs(day) + n * DAY_MS)
+const monthOfDay = (day) => day.slice(0, 7)
+
+function monthEndMs(month) {
+  const [year, index] = month.split('-').map(Number)
+  return index === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, index, 1)
+}
+
+/** Every UTC day of the month, as ISO dates — which is also the segment id. ISO dates sort as
+ *  strings in their real order; a counter here would draw the chart out of sequence. */
+function daysOfMonth(month) {
+  const [year, index] = month.split('-').map(Number)
+  const days = []
+  for (let at = Date.UTC(year, index - 1, 1); at < monthEndMs(month); at += DAY_MS) days.push(isoDay(at))
+  return days
+}
+
+/**
+ * The most dangerous line in this section. Total by construction: anything unparseable, before
+ * the series floor, or not yet finished is NOT immutable and is refused before a job exists.
+ * A predicate wrong in the permissive direction freezes a partial answer forever.
+ */
+export function netflowsMonthIsSettled(params, now = Date.now()) {
+  const month = params?.month
+  if (typeof month !== 'string' || !NETFLOWS_MONTH_RE.test(month)) return false
+  if (month < SERIES_FIRST_MONTH) return false
+  return now >= monthEndMs(month) + NETFLOWS_SETTLE_MS
+}
+
+/* ------------------------------------------------------------------ batched JSON-RPC ---- */
+
+/**
+ * Many JSON-RPC calls in one POST.
+ *
+ * Substrate's HTTP endpoint answers a JSON array with an array, and both public endpoints used
+ * here were verified to do so on 2026-08-20. Everything is matched back by `id` rather than by
+ * position — a server is permitted to reorder a batch response, and reading it positionally
+ * would silently attribute one block's balances to another day.
+ *
+ * A sub-call error is a real error: it throws, exactly as a single-call error does. A batch that
+ * swallowed one failed member would hand back `undefined` where a balance belongs, and
+ * `undefined` scales to `null`, which draws as a gap in a series that is actually wrong.
+ */
+async function jsonRpcBatch({ host, calls, timeoutMs = 60_000 }) {
+  if (!calls.length) return []
+  const answer = await callUpstream({
+    source: host.id,
+    url: host.url,
+    method: 'POST',
+    body: calls.map((call, id) => ({ jsonrpc: '2.0', id, method: call.method, params: call.params ?? [] })),
+    timeoutMs,
+  })
+  if (!Array.isArray(answer)) {
+    throw new UpstreamError(`${host.label} answered a JSON-RPC batch of ${calls.length} with a single object.`, {
+      kind: 'upstream',
+      source: host.id,
+    })
+  }
+  const out = new Array(calls.length)
+  const filled = new Set()
+  for (const item of answer) {
+    const id = Number(item?.id)
+    if (!Number.isInteger(id) || id < 0 || id >= calls.length) {
+      throw new UpstreamError(`${host.label} answered a batch with an id (${item?.id}) that was not in it.`, {
+        kind: 'decode',
+        source: host.id,
+      })
+    }
+    if (item.error) {
+      throw new UpstreamError(`${calls[id].method} was rejected: ${item.error.message ?? JSON.stringify(item.error)}`, {
+        kind: 'upstream',
+        source: host.id,
+      })
+    }
+    out[id] = item.result
+    filled.add(id)
+  }
+  if (filled.size !== calls.length) {
+    throw new UpstreamError(
+      `${host.label} answered ${filled.size} of the ${calls.length} calls in one batch. A short batch would leave a balance undefined, which renders as a gap rather than as an error.`,
+      { kind: 'upstream', source: host.id },
+    )
+  }
+  return out
+}
+
+/** Chunk a call list and run the chunks one after another through `run` (the politeness gate,
+ *  or a bare call when there is no job around it). */
+async function batchCalls(run, host, calls, perRequest, timeoutMs) {
+  const out = []
+  for (let i = 0; i < calls.length; i += perRequest) {
+    const slice = calls.slice(i, i + perRequest)
+    out.push(...(await run(host, () => jsonRpcBatch({ host, calls: slice, timeoutMs }))))
+  }
+  return out
+}
+
+/* ------------------------------------------------------------- the day's last block ---- */
+
+const clamp = (value, lo, hi) => Math.min(Math.max(value, lo), hi)
+
+/**
+ * For each instant, the FIRST block at or after it — resolved for many instants at once.
+ *
+ * Every round probes `guess` and `guess - 1` for every unresolved target, in two HTTP requests
+ * total no matter how many targets there are: one batch of `chain_getBlockHash` and one batch of
+ * `Timestamp::Now`. A target is resolved only when the chain's own clock says `ts(guess) >=
+ * target` AND `ts(guess-1) < target`, which is the entire definition of "first block at or
+ * after" and is checked rather than assumed.
+ *
+ * The next guess is a secant step over that target's own widest pair of samples, falling back
+ * to `blockMs` on the first round and to a bisection whenever the secant leaves the bracket. The
+ * bracket `[lo, hi]` is maintained from real observations, so the search cannot fail to
+ * terminate — it can only run out of rounds, which throws.
+ */
+async function firstBlocksAtOrAfter(host, { targets, hints, head, headAt, blockMs, run }) {
+  const state = targets.map((target, i) => {
+    // The head is a real observation and it is free, so every target starts with one sample
+    // already in hand. That is what makes the FIRST secant step useful on a cold start, where
+    // the only alternative is a 24-deep bisection over twenty million blocks.
+    const seen = new Map()
+    if (Number.isFinite(headAt)) seen.set(head, { at: headAt, hash: null })
+    const hint = Math.round(hints[i])
+    // A hint that lands outside the chain is not a hint. Falling back to the middle of the
+    // range costs one bisection step; trusting it costs a walk from block 1 upwards.
+    const guess = Number.isFinite(hint) && hint >= 2 && hint <= head ? hint : Math.floor(head / 2)
+    return { target, lo: 1, hi: head, guess, seen, done: null }
+  })
+
+  for (let round = 0; round < 48; round += 1) {
+    const pending = state.filter((s) => !s.done)
+    if (!pending.length) break
+
+    const heights = new Set()
+    for (const s of pending) {
+      heights.add(s.guess)
+      if (s.guess > 1) heights.add(s.guess - 1)
+    }
+    const wanted = [...heights]
+    const hashes = await batchCalls(
+      run,
+      host,
+      wanted.map((height) => ({ method: 'chain_getBlockHash', params: [height] })),
+      RPC_BATCH_LIGHT,
+      30_000,
+    )
+    const hashOf = new Map()
+    wanted.forEach((height, i) => hashOf.set(height, hashes[i] ?? null))
+
+    const unread = [...new Set(wanted.map((h) => hashOf.get(h)).filter(Boolean))]
+    const stamps = await batchCalls(
+      run,
+      host,
+      unread.map((hash) => ({ method: 'state_getStorage', params: [KEYS.timestamp, hash] })),
+      RPC_BATCH_STATE,
+      45_000,
+    )
+    const timeOf = new Map()
+    unread.forEach((hash, i) => timeOf.set(hash, stamps[i] ? Number(littleEndian(stamps[i], 0, 8)) : null))
+
+    for (const s of pending) {
+      for (const height of [s.guess - 1, s.guess]) {
+        if (height < 1 || s.seen.has(height)) continue
+        const hash = hashOf.get(height)
+        // No hash: past this node's head. No timestamp: pruned state, or a chain that had not
+        // started its clock. Both are "we cannot read here" — recorded as such, never as zero.
+        s.seen.set(height, { hash: hash ?? null, at: hash ? (timeOf.get(hash) ?? null) : null })
+      }
+      resolveOrNarrow(s)
+      if (s.done) continue
+      s.guess = nextGuess(s, blockMs)
+      if (s.guess === null) {
+        throw new UpstreamError(
+          `${host.label}: every block between ${s.lo} and ${s.hi} has been read and none of them is the first at or after ` +
+            `${new Date(s.target).toISOString()}. ${describeSamples(s)}`,
+          { kind: 'decode', source: host.id },
+        )
+      }
+    }
+  }
+
+  const stuck = state.find((s) => !s.done)
+  if (stuck) {
+    throw new UpstreamError(
+      `${host.label}: could not locate the block at or after ${new Date(stuck.target).toISOString()} in 48 rounds ` +
+        `(bracket ${stuck.lo}–${stuck.hi}). ${describeSamples(stuck)}`,
+      { kind: 'upstream', source: host.id },
+    )
+  }
+  return state.map((s) => s.done)
+}
+
+/**
+ * The answer, read out of everything sampled so far — not just out of the pair probed this
+ * round.
+ *
+ * This is what makes the search terminate. An earlier version only tested the current guess
+ * against its own predecessor, so a bracket could narrow to a handful of blocks whose
+ * timestamps were all already known, and the loop would spend its remaining rounds re-reading
+ * them. Testing every ADJACENT pair in the sample set instead means a boundary that has been
+ * observed is recognised immediately, whichever round observed the two halves of it.
+ *
+ * The bracket is narrowed from the same samples: below the first observation at or after the
+ * target, and above the last observation before it.
+ */
+function resolveOrNarrow(s) {
+  const points = [...s.seen.entries()]
+    .filter(([, sample]) => sample.at !== null && sample.hash)
+    .sort((a, b) => a[0] - b[0])
+
+  for (let i = 1; i < points.length; i += 1) {
+    const [height, sample] = points[i]
+    const [prevHeight, prev] = points[i - 1]
+    if (prevHeight !== height - 1) continue
+    if (prev.at < s.target && sample.at >= s.target) {
+      s.done = {
+        height,
+        hash: sample.hash,
+        at: sample.at,
+        closeHeight: prevHeight,
+        closeHash: prev.hash,
+        closeAt: prev.at,
+      }
+      return
+    }
+  }
+
+  for (const [height, sample] of points) {
+    if (sample.at < s.target) s.lo = Math.max(s.lo, height + 1)
+    else s.hi = Math.min(s.hi, height)
+  }
+  // A height whose state could not be read is below every target this series asks for — the
+  // chain's clock had not started — so it only ever raises the floor.
+  for (const [height, sample] of s.seen) {
+    if (sample.at === null) s.lo = Math.max(s.lo, height + 1)
+  }
+}
+
+/**
+ * Where to probe next: a secant step from the sample nearest the target in TIME, using the rate
+ * measured across the widest pair of samples this target has. Falls back to the bracket's
+ * midpoint, and then to the nearest unread height inside the bracket — which is what guarantees
+ * every round adds a NEW observation and the loop cannot spin.
+ */
+function nextGuess(s, blockMs) {
+  const points = [...s.seen.entries()].filter(([, sample]) => sample.at !== null).sort((a, b) => a[0] - b[0])
+  if (!points.length) return midpointOrScan(s)
+
+  // The rate is measured LOCALLY, from the two samples nearest the target. A rate averaged
+  // across the whole chain is worse than useless here: Asset Hub produced twelve-second blocks
+  // before the migration and six-second blocks after it, so the global average sits between the
+  // two and is wrong in both halves of the range by a factor of two.
+  const byCloseness = [...points].sort((a, b) => Math.abs(a[1].at - s.target) - Math.abs(b[1].at - s.target))
+  const anchor = byCloseness[0]
+  let rate = blockMs
+  for (const other of byCloseness.slice(1)) {
+    const span = Math.abs(other[0] - anchor[0])
+    const elapsed = Math.abs(other[1].at - anchor[1].at)
+    if (span >= 2 && elapsed > 0) {
+      rate = elapsed / span
+      break
+    }
+  }
+
+  // A secant step is only taken when it lands INSIDE the bracket. Clamping it to the edge
+  // instead is what turned a cold start into a one-block-per-round walk from block 1.
+  if (Number.isFinite(rate) && rate > 0) {
+    const projected = Math.round(anchor[0] + (s.target - anchor[1].at) / rate)
+    if (projected >= s.lo && projected <= s.hi) {
+      for (const height of [projected, projected + 1, projected - 1, projected + 2, projected - 2]) {
+        if (height < s.lo || height > s.hi) continue
+        if (!s.seen.has(height) || (height > 1 && !s.seen.has(height - 1))) return height
+      }
+    }
+  }
+  return midpointOrScan(s)
+}
+
+/** Bisection, and behind it a scan — the two steps that cannot fail to add a new observation. */
+function midpointOrScan(s) {
+  const mid = clamp(Math.floor((s.lo + s.hi) / 2), s.lo, s.hi)
+  if (!s.seen.has(mid) || (mid > 1 && !s.seen.has(mid - 1))) return mid
+  for (let height = s.lo; height <= s.hi; height += 1) {
+    if (!s.seen.has(height) || (height > 1 && !s.seen.has(height - 1))) return height
+  }
+  return null
+}
+
+/** The eight samples nearest the bracket, for an error message a maintainer can act on. */
+function describeSamples(s) {
+  const points = [...s.seen.entries()]
+    .sort((a, b) => Math.abs(a[0] - s.lo) - Math.abs(b[0] - s.lo))
+    .slice(0, 8)
+    .sort((a, b) => a[0] - b[0])
+    .map(([height, sample]) => `${height}=${sample.at === null ? 'unreadable' : new Date(sample.at).toISOString()}`)
+  return `Nearest reads: ${points.join(', ')}.`
+}
+
+/**
+ * Milliseconds per block near the head, MEASURED — two reads, one per host, and only when there
+ * is no cursor to carry a rate forward.
+ *
+ * Worth its four requests for exactly one caller: `sovereign-dot-recent`, whose targets are days
+ * old rather than years old, so a rate taken at the head is the right rate for them. Asset Hub's
+ * has moved from 12.5 s/block in 2022 to 2.24 s/block today, and a hint built on the wrong one
+ * costs several extra search rounds per request. For a backfill reaching years back this measures
+ * the wrong era and is worth nothing — which is why it is a hint and the search verifies anyway.
+ */
+async function headBlockMs(host, head, headAt, run, span = 20_000) {
+  const from = Math.max(1, head - span)
+  if (from >= head || !Number.isFinite(headAt)) return null
+  const [hash] = await batchCalls(run, host, [{ method: 'chain_getBlockHash', params: [from] }], RPC_BATCH_LIGHT, 30_000)
+  if (!hash) return null
+  const [raw] = await batchCalls(run, host, [{ method: 'state_getStorage', params: [KEYS.timestamp, hash] }], RPC_BATCH_STATE, 30_000)
+  if (!raw) return null
+  const rate = (headAt - Number(littleEndian(raw, 0, 8))) / (head - from)
+  return Number.isFinite(rate) && rate > 100 ? rate : null
+}
+
+/* ------------------------------------------------------------------- reading the days ---- */
+
+/**
+ * Which para ids to read on a given day. Four sources, unioned, for the same reason
+ * `sovereign-dot` uses four: no single enumeration is complete, and the gaps are not the same
+ * gaps. The fourth — every id seen holding an account earlier in this backfill — is what stops a
+ * chain that leaves the registry mid-series from vanishing out of the chart while its sovereign
+ * account still holds DOT.
+ */
+const TOPOLOGY_PARA_IDS = CHAINS.filter((c) => c.network === 'polkadot' && c.paraId !== null).map((c) => c.paraId)
+
+async function enumerateParasAt(run, hashes) {
+  const calls = []
+  for (const hash of hashes) {
+    calls.push({ method: 'state_getKeysPaged', params: [KEYS.paraLifecycles, KEY_PAGE, KEYS.paraLifecycles, hash] })
+    calls.push({ method: 'state_getKeysPaged', params: [KEYS.registrarParas, KEY_PAGE, KEYS.registrarParas, hash] })
+  }
+  const out = await batchCalls(run, RELAY, calls, 24, 60_000)
+  return hashes.map((_, i) => {
+    const lifecycles = out[i * 2] ?? []
+    const registrar = out[i * 2 + 1] ?? []
+    if (lifecycles.length >= KEY_PAGE || registrar.length >= KEY_PAGE) {
+      throw new UpstreamError(
+        `the relay returned a full page of parachain registrations (${KEY_PAGE}); the enumeration for this day would be truncated and the day short.`,
+        { kind: 'upstream', source: RELAY.id },
+      )
+    }
+    return {
+      lifecycles: lifecycles.map(paraIdFromKey),
+      registrar: registrar.map(paraIdFromKey),
+    }
+  })
+}
+
+/**
+ * `System::Account` for a list of para ids, at one block, for several days at once. Keys per
+ * HTTP request are capped so a six-day batch is a handful of ordinary requests rather than one
+ * enormous one.
+ */
+async function accountsAt(run, host, on, frames, idsPerDay) {
+  const calls = frames.map((frame, i) => ({
+    method: 'state_queryStorageAt',
+    params: [[KEYS.timestamp, ...idsPerDay[i].map((id) => systemAccountKey(sovereignAccountHex(id, { on })))], frame.closeHash],
+  }))
+  // Group days into requests by total key count rather than by day count.
+  const results = new Array(calls.length)
+  let at = 0
+  while (at < calls.length) {
+    let keys = 0
+    let end = at
+    while (end < calls.length && (end === at || keys + calls[end].params[0].length <= KEYS_PER_REQUEST)) {
+      keys += calls[end].params[0].length
+      end += 1
+    }
+    const answer = await batchCalls(run, host, calls.slice(at, end), end - at, 60_000)
+    for (let i = 0; i < answer.length; i += 1) results[at + i] = answer[i]
+    at = end
+  }
+  return results.map((result) => {
+    const map = new Map()
+    for (const [key, value] of result?.[0]?.changes ?? []) {
+      if (value !== null && value !== undefined) map.set(String(key).toLowerCase(), value)
+    }
+    return map
+  })
+}
+
+const planck = (info) => (info ? (info.free ?? 0n) + (info.reserved ?? 0n) : null)
+
+/**
+ * One UTC day, both legs, as the payload that is actually stored.
+ *
+ * Amounts are exact planck as decimal STRINGS, never doubles: a post-migration sovereign holding
+ * is past 2^53 planck and a JSON number would round it silently. `null` means the account does
+ * not exist on that chain that day, which is a different fact from `"0"` — an account that
+ * exists holding nothing — and the two must not be collapsed.
+ */
+function summariseDay({ date, relayFrame, ahFrame, ids, enumerated, relayValues, ahValues }) {
+  const rows = []
+  let relayTotal = 0n
+  let assetHubTotal = 0n
+  let withAccount = 0
+
+  for (const id of ids) {
+    const relayRaw = relayValues.get(systemAccountKey(sovereignAccountHex(id, { on: 'relay' })).toLowerCase()) ?? null
+    const ahRaw = ahValues.get(systemAccountKey(sovereignAccountHex(id, { on: 'sibling' })).toLowerCase()) ?? null
+    if (!relayRaw && !ahRaw) continue
+    const relayAmount = relayRaw ? planck(decodeAccountInfo(relayRaw, RELAY.id)) : null
+    const ahAmount = ahRaw ? planck(decodeAccountInfo(ahRaw, AH.id)) : null
+    relayTotal += relayAmount ?? 0n
+    assetHubTotal += ahAmount ?? 0n
+    withAccount += 1
+    rows.push([id, relayAmount, ahAmount])
+  }
+
+  rows.sort((a, b) => Number((b[1] ?? 0n) + (b[2] ?? 0n) - ((a[1] ?? 0n) + (a[2] ?? 0n))))
+  const kept = []
+  let dustChains = 0
+  let dustRelay = 0n
+  let dustAssetHub = 0n
+  for (const row of rows) {
+    const total = (row[1] ?? 0n) + (row[2] ?? 0n)
+    if (total >= DUST_PLANCK && kept.length < MAX_CHAIN_ROWS) {
+      kept.push([row[0], row[1] === null ? null : String(row[1]), row[2] === null ? null : String(row[2])])
+    } else {
+      dustChains += 1
+      dustRelay += row[1] ?? 0n
+      dustAssetHub += row[2] ?? 0n
+    }
+  }
+
+  return {
+    date,
+    // The LAST block of the UTC day on each chain, with the chain's own clock reading for it.
+    // Two chains, two blocks: a single height for both would be a claim that is true of neither.
+    relay: { block: relayFrame.closeHeight, at: new Date(relayFrame.closeAt).toISOString() },
+    assetHub: { block: ahFrame.closeHeight, at: new Date(ahFrame.closeAt).toISOString() },
+    paras: { enumerated, read: ids.length, withAccount },
+    // [paraId, relay planck | null, Asset Hub planck | null]. `null` = no such account.
+    chains: kept,
+    // Two reasons a chain is folded in here and both are recorded: it held less than `floor`,
+    // or it fell outside the day's largest `cap` holdings. The day's `totals` still include it
+    // exactly, so no sum is affected — what is lost is the ability to NAME it.
+    dust: {
+      chains: dustChains,
+      relay: String(dustRelay),
+      assetHub: String(dustAssetHub),
+      floor: String(DUST_PLANCK),
+      cap: MAX_CHAIN_ROWS,
+    },
+    totals: { relay: String(relayTotal), assetHub: String(assetHubTotal), total: String(relayTotal + assetHubTotal) },
+  }
+}
+
+/**
+ * A run of consecutive UTC days, on both chains.
+ *
+ * `hint` carries the previous day's resolved boundary and measured block count per chain, which
+ * is what keeps the search to two or three rounds. It is a HINT in the strict sense: every value
+ * it produces is checked against the chain's own timestamps before anything is stored.
+ */
+async function readSovereignDays({ days, run, heads, hint, sticky }) {
+  const targets = days.map((day) => dayStartMs(day) + DAY_MS)
+
+  // With no cursor there is no rate to carry forward, so one is measured at the head.
+  const cold = !hint?.relay?.blocksPerDay || !hint?.assetHub?.blocksPerDay
+  const measured = cold
+    ? await Promise.all([
+        headBlockMs(RELAY, heads.relay.block, heads.relay.timeMs, run),
+        headBlockMs(AH, heads.assetHub.block, heads.assetHub.timeMs, run),
+      ]).then(([relay, assetHub]) => ({ relay, assetHub }))
+    : { relay: null, assetHub: null }
+
+  const rateFor = (side) =>
+    hint?.[side]?.blocksPerDay ? DAY_MS / hint[side].blocksPerDay : (measured[side] ?? DAY_MS / 14_400)
+
+  // The hint, and nothing more than a hint: the previous batch's last resolved boundary plus
+  // its own measured blocks-per-day, stepped forward. Every value it produces is checked
+  // against the chain's clock in `firstBlocksAtOrAfter` before it is used for anything.
+  const hintsFor = (side) => {
+    const base = hint?.[side]
+    const head = heads[side]
+    return days.map((_, i) => {
+      if (!base?.height || !base?.blocksPerDay) {
+        return Math.round(head.block - (head.timeMs - targets[i]) / rateFor(side))
+      }
+      const daysAhead = Math.round((targets[i] - base.target) / DAY_MS)
+      return base.height + daysAhead * base.blocksPerDay
+    })
+  }
+
+  const [relayFrames, ahFrames] = await Promise.all([
+    firstBlocksAtOrAfter(RELAY, {
+      targets,
+      hints: hintsFor('relay'),
+      head: heads.relay.block,
+      headAt: heads.relay.timeMs,
+      blockMs: rateFor('relay'),
+      run,
+    }),
+    firstBlocksAtOrAfter(AH, {
+      targets,
+      hints: hintsFor('assetHub'),
+      head: heads.assetHub.block,
+      headAt: heads.assetHub.timeMs,
+      blockMs: rateFor('assetHub'),
+      run,
+    }),
+  ])
+
+  // THE guard. Both close blocks must carry a timestamp INSIDE the UTC day. A pruned archive
+  // answers a balance query with `null`, which is indistinguishable from an empty account; it
+  // cannot answer this check, because every block has a `Timestamp::Now`.
+  days.forEach((day, i) => {
+    const from = dayStartMs(day)
+    for (const [side, frame, host] of [
+      ['relay', relayFrames[i], RELAY],
+      ['Asset Hub', ahFrames[i], AH],
+    ]) {
+      if (!frame.closeHash || frame.closeAt === null || frame.closeAt === undefined) {
+        throw new UpstreamError(
+          `${host.label} has no readable block at the close of ${day} (would-be block ${frame.closeHeight}). Refusing to store a day whose state could not be read — an unreadable balance is not a zero one.`,
+          { kind: 'upstream', source: host.id },
+        )
+      }
+      if (frame.closeAt < from || frame.closeAt >= from + DAY_MS) {
+        throw new UpstreamError(
+          `${host.label}: block ${frame.closeHeight} is dated ${new Date(frame.closeAt).toISOString()}, which is not inside ${day}. The ${side} leg of this day cannot be the day's close.`,
+          { kind: 'decode', source: host.id },
+        )
+      }
+    }
+  })
+
+  const enumerations = await enumerateParasAt(run, relayFrames.map((f) => f.closeHash))
+
+  const carried = new Set(sticky ?? [])
+  const idsPerDay = enumerations.map((row) => {
+    const ids = new Set([...row.lifecycles, ...row.registrar, ...TOPOLOGY_PARA_IDS, ...carried])
+    return [...ids].filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b)
+  })
+
+  const [relayValues, ahValues] = await Promise.all([
+    accountsAt(run, RELAY, 'relay', relayFrames, idsPerDay),
+    accountsAt(run, AH, 'sibling', ahFrames, idsPerDay),
+  ])
+
+  const payloads = days.map((day, i) =>
+    summariseDay({
+      date: day,
+      relayFrame: relayFrames[i],
+      ahFrame: ahFrames[i],
+      ids: idsPerDay[i],
+      enumerated: new Set([...enumerations[i].lifecycles, ...enumerations[i].registrar]).size,
+      relayValues: relayValues[i],
+      ahValues: ahValues[i],
+    }),
+  )
+
+  // The sticky set: any id that had an account today is read again tomorrow, whatever the
+  // relay's registration storage says about it by then.
+  const nextSticky = new Set(carried)
+  for (const payload of payloads) {
+    for (const row of payload.chains) nextSticky.add(row[0])
+  }
+
+  const last = days.length - 1
+  return {
+    payloads,
+    sticky: [...nextSticky].sort((a, b) => a - b),
+    hint: {
+      relay: {
+        height: relayFrames[last].height,
+        target: targets[last],
+        blocksPerDay: days.length > 1 ? Math.round((relayFrames[last].height - relayFrames[0].height) / (days.length - 1)) : hint?.relay?.blocksPerDay ?? null,
+      },
+      assetHub: {
+        height: ahFrames[last].height,
+        target: targets[last],
+        blocksPerDay: days.length > 1 ? Math.round((ahFrames[last].height - ahFrames[0].height) / (days.length - 1)) : hint?.assetHub?.blocksPerDay ?? null,
+      },
+    },
+  }
+}
+
+/** Both chains' finalized heads, and the assertion that the two legs are denominated alike. */
+async function netflowsHeads(run) {
+  const [relay, assetHub] = await Promise.all([run(RELAY, () => pin(RELAY)), run(AH, () => pin(AH))])
+  for (const chain of [relay, assetHub]) {
+    if (chain.tokenSymbol !== 'DOT' || chain.tokenDecimals !== 10) {
+      throw new UpstreamError(
+        `${chain.host.label} reports its native token as ${chain.tokenSymbol}/${chain.tokenDecimals}, not DOT/10. The two legs of this series are summed and cannot be summed across different units.`,
+        { kind: 'upstream', source: chain.host.id },
+      )
+    }
+    if (chain.timeMs === null) {
+      throw new UpstreamError(`${chain.host.label} served a finalized head with no \`Timestamp::Now\`.`, {
+        kind: 'upstream',
+        source: chain.host.id,
+      })
+    }
+  }
+  return { relay, assetHub }
+}
+
+/**
+ * How an upstream call is made, and it is the ONLY difference between the job and the live
+ * operation below. Inside a job every call goes through the engine's politeness gate — one
+ * in-flight request per host, across every job on the machine. Outside one there is no gate to
+ * go through, and the TTL cache is what keeps the request rate down instead.
+ */
+const hostnameOf = (url) => url.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+const gatedRun = (gate) => (host, fn) => gate(hostnameOf(host.url), fn)
+const directRun = (host, fn) => fn()
+
+/* ------------------------------------------------------------- operation: the live tail ---- */
+
+/**
+ * The most recent CLOSED UTC days, by the same method and in the same payload shape as the
+ * stored months.
+ *
+ * This exists because of the cost the month bucket imposes, stated here rather than discovered:
+ * a store identity of `{month}` cannot serve the current month at all — a job that reached
+ * `done` frees nothing, so "everything up to now" can never be an identity. The page therefore
+ * reads whole past months from the store and this operation for the tail, and the seam between
+ * them is at most one month wide and moves to zero on the first of every month.
+ *
+ * Today itself is deliberately absent. A day's value here is its CLOSE, and today has not
+ * closed; `sovereign-dot` is the operation that answers "right now".
+ */
+async function sovereignDotRecent({ days }) {
+  const heads = await netflowsHeads(directRun)
+
+  // The last day that has ENDED on both chains. Both, not either: a day whose Asset Hub close
+  // has not happened yet would be half a reading.
+  const edge = Math.min(heads.relay.timeMs, heads.assetHub.timeMs)
+  const lastClosed = addDaysIso(isoDay(edge), -1)
+  const firstDay = `${SERIES_FIRST_MONTH}-01`
+
+  const wanted = []
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const day = addDaysIso(lastClosed, -i)
+    if (day >= firstDay) wanted.push(day)
+  }
+
+  if (!wanted.length) {
+    return {
+      days: [],
+      first: null,
+      last: null,
+      requested: days,
+      relay: chainMeta(heads.relay),
+      assetHub: chainMeta(heads.assetHub),
+      fetchedAt: new Date().toISOString(),
+      meta: { liveness: [livenessOf(heads.assetHub, 'Asset Hub'), livenessOf(heads.relay, 'relay chain')] },
+      notes: [`Neither chain has closed a UTC day at or after ${firstDay}, which is where this series begins.`],
+    }
+  }
+
+  const { payloads } = await readSovereignDays({ days: wanted, run: directRun, heads, hint: null, sticky: [] })
+
+  return {
+    days: payloads,
+    first: wanted[0],
+    last: wanted[wanted.length - 1],
+    requested: days,
+    relay: chainMeta(heads.relay),
+    assetHub: chainMeta(heads.assetHub),
+    fetchedAt: new Date().toISOString(),
+    meta: { liveness: [livenessOf(heads.assetHub, 'Asset Hub'), livenessOf(heads.relay, 'relay chain')] },
+    notes: netflowsNotes({ payloads, first: wanted[0], last: wanted[wanted.length - 1], live: true }),
+  }
+}
+
+/**
+ * The caveats that come out of the payload itself, so they cannot describe a different reading
+ * than the one on screen.
+ */
+function netflowsNotes({ payloads, first, last, live }) {
+  const notes = [
+    `Each day is the state at that UTC day's LAST BLOCK on each chain — its close, not its open. That is the same definition the archived 2021–2023 dataset uses, and reading it at 00:00 instead would shift this series one day earlier against that file and read as a genuine lead rather than as an off-by-one.`,
+    `A chain's figure is the SUM of two accounts on two chains: \`para\` on the relay and \`sibl\` on Asset Hub, read at two different blocks because they are two different chains. Both legs are kept separately in the payload — the Asset Hub Migration on 2025-11-04 moved the money from one to the other, and a series that reported only the sum would hide the largest structural break in it.`,
+    `Amounts are exact planck as decimal strings. \`null\` means the account does not exist on that chain that day, which is not the same fact as \`"0"\` — an account that exists holding nothing — and the two are never collapsed.`,
+  ]
+  const dusty = payloads.filter((day) => day.dust.chains > 0)
+  if (dusty.length) {
+    const most = Math.max(...dusty.map((day) => day.dust.chains))
+    notes.push(
+      `Chains holding less than 1 DOT on a given day are summed into that day's single \`dust\` row rather than listed — up to ${most} of them on one day here. The day's totals still include them exactly, so nothing is lost from any sum; what is lost is the ability to name a chain that held under a DOT.`,
+    )
+  }
+  notes.push(
+    `Which chains are read on a day is the union of four enumerations at that day's own block: the relay's \`Paras::ParaLifecycles\`, its \`Registrar::Paras\`, this site's own topology registry, and every chain already seen holding an account earlier in the same fetch. No single one of them is complete — para 2004 is in neither relay item today and still holds DOT.`,
+  )
+  if (live) {
+    notes.push(
+      `This is the live tail, computed on request and cached for thirty minutes. Whole past months come from the store instead, fetched once and never again; ${first} to ${last} is the part that is not a whole month yet.`,
+    )
+  }
+  return notes
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════ registry ═════ */
 
 export default {
@@ -1621,6 +2432,100 @@ export default {
       ttlMs: 600_000,
       schema: {},
       run: () => sovereignDot(),
+    },
+
+    'sovereign-dot-recent': {
+      summary:
+        'The same daily reading the `netflows-daily` store holds, for the most recent CLOSED UTC days — the tail a month-bucketed store cannot serve. Both sovereign legs, per parachain, at each day’s last block on each chain.',
+      // Thirty minutes. The days it returns are closed and can never change; the TTL exists to
+      // bound how often a public page re-derives the same forty block boundaries, not because
+      // the answer goes stale.
+      ttlMs: 1_800_000,
+      schema: {
+        // Forty days is the ceiling because the seam this fills is at most one calendar month
+        // wide. Asking for a year here would be a backfill on the request path.
+        days: { type: 'int', min: 1, max: RECENT_MAX_DAYS, default: 32 },
+      },
+      run: ({ days }) => sovereignDotRecent({ days }),
+    },
+  },
+
+  /**
+   * The daily series `/netflows/` is named for. Not called `sovereign-dot`: a `jobs` entry WINS
+   * over an `operations` entry of the same name (server/index.mjs), so reusing that name would
+   * silently take `/api/asset-hub/sovereign-dot` away from the live operation `/sovereign/`
+   * reads — 200s all the way down, carrying an envelope the page cannot draw.
+   */
+  jobs: {
+    'netflows-daily': {
+      summary:
+        'DOT in every parachain sovereign account at the close of one UTC day, one stored fact per day, a calendar month at a time. Both legs — `para` on the relay and `sibl` on Asset Hub — read at that day’s last block on each chain. Fetched once and never again.',
+      schema: {
+        // A month, and only a month. The params are part of the fact key, so a free {from, to}
+        // range would refetch and re-store the same day once per distinct window a reader asks
+        // for — see docs/architecture/jobs.md.
+        month: { type: 'string', required: true, pattern: NETFLOWS_MONTH_RE, maxLength: 7 },
+      },
+
+      immutable: (params) => netflowsMonthIsSettled(params),
+
+      // Knowable without asking anybody. The engine records it before the first batch so the
+      // coverage bar has a denominator from the start.
+      plan: async ({ params }) => ({ totalUnits: daysOfMonth(params?.month ?? '').length || null }),
+
+      async nextBatch({ params, cursor, gate }) {
+        const run = gatedRun(gate)
+        const days = daysOfMonth(params.month)
+        const state = cursor ?? { day: days[0], hint: null, sticky: [] }
+        const index = days.indexOf(state.day)
+        if (index < 0) {
+          // A cursor from another month's job, or a hand-edited one. Not weather — say so.
+          throw new UpstreamError(`the stored cursor names ${state.day}, which is not a day of ${params.month}.`, {
+            kind: 'decode',
+            source: RELAY.id,
+          })
+        }
+
+        const heads = await netflowsHeads(run)
+        const slice = days.slice(index, index + DAYS_PER_BATCH)
+        const lastEnd = dayStartMs(slice[slice.length - 1]) + DAY_MS
+
+        // THE guarantee, and it is not the `immutable` predicate above — that one only knows
+        // the wall clock. A chain can answer every call and still be weeks behind (CLAUDE.md),
+        // and a day summarised from a chain that has not reached its end would be a wrong
+        // number stored forever.
+        for (const chain of [heads.relay, heads.assetHub]) {
+          if (chain.timeMs < lastEnd) {
+            throw new UpstreamError(
+              `${chain.host.label} has not produced a block past ${new Date(lastEnd).toISOString()} — its finalized head #${chain.block} is dated ${new Date(chain.timeMs).toISOString()}. Refusing to store days it has not reached.`,
+              { kind: 'upstream', source: chain.host.id },
+            )
+          }
+        }
+
+        const { payloads, sticky, hint } = await readSovereignDays({
+          days: slice,
+          run,
+          heads,
+          hint: state.hint,
+          sticky: state.sticky,
+        })
+
+        const finished = index + slice.length >= days.length
+        const head =
+          `relay #${heads.relay.block} @ ${new Date(heads.relay.timeMs).toISOString()}; ` +
+          `asset hub #${heads.assetHub.block} @ ${new Date(heads.assetHub.timeMs).toISOString()}`
+
+        return {
+          rows: payloads.map((payload) => ({ segment: payload.date, payload, head, codeVersion: NETFLOWS_VERSION })),
+          // The next batch starts where this one stopped, carrying the resolved boundary and the
+          // measured blocks-per-day forward so the search does not start cold every day.
+          cursor: finished ? undefined : { day: days[index + slice.length], hint, sticky },
+          done: finished,
+          doneUnits: index + slice.length,
+          totalUnits: days.length,
+        }
+      },
     },
   },
 }

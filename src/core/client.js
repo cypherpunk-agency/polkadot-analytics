@@ -85,6 +85,59 @@ export async function read(source, operation, params = {}, { signal } = {}) {
   return body.data
 }
 
+/**
+ * Read a STORE-BACKED (mode A) operation, envelope and all.
+ *
+ * `read()` above unwraps `body.data` because a cached operation's answer IS its data. A stored
+ * one is not: the server answers 200 with what it has plus what it is doing about the rest
+ * (server/lib/demand.mjs), and dropping that would turn "this is 12 of 31 days and a job is
+ * filling the rest" into a chart that is silently short. So this returns the whole envelope —
+ * `data` as `[{segment, payload, head, storedAt}]`, plus `coverage` and `job`.
+ *
+ * The first reader of an identity is what CREATES the fetch. An empty answer here is therefore
+ * the normal first response, not an error, and the caller must render it as coverage rather
+ * than as failure.
+ *
+ * @param {string} source
+ * @param {string} operation
+ * @param {Record<string, string|number|boolean>} [params]
+ * @param {{signal?: AbortSignal}} [options]
+ */
+export async function readStore(source, operation, params = {}, { signal } = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    query.set(key, String(value))
+  }
+  const url = `/api/${source}/${operation}${query.size ? `?${query}` : ''}`
+
+  let response
+  try {
+    response = await fetch(url, { signal, headers: { accept: 'application/json' } })
+  } catch (cause) {
+    if (cause?.name === 'AbortError') throw cause
+    throw new ApiError('This site could not be reached.', { kind: 'transport', source })
+  }
+
+  let body
+  try {
+    body = await response.json()
+  } catch {
+    throw new ApiError('This site returned something that is not JSON.', { kind: 'decode', source, status: response.status })
+  }
+
+  if (!response.ok || body.error) {
+    const error = body.error ?? {}
+    throw new ApiError(error.message ?? `Request failed with HTTP ${response.status}.`, {
+      kind: error.kind ?? 'server',
+      source: error.source ?? source,
+      status: response.status,
+    })
+  }
+
+  return body
+}
+
 /** The service's own description of what it can answer. Used by the home page. */
 export async function catalogue(options) {
   const response = await fetch('/api', { ...options, headers: { accept: 'application/json' } })

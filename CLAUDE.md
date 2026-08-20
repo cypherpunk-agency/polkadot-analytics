@@ -278,3 +278,31 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   opposite mistake is equally quiet: an identity of "everything up to now" can never be immutable,
   and if it completes anyway `serveFromStore` answers *complete* forever and no later day is ever
   fetched. See `docs/architecture/jobs.md`.
+- **A daily balance series is labelled by its CLOSE, and the 2021–2023 netflows archive is too.**
+  `src/data/netflows.json` defines a day as "the last balance observed at or before the end of that
+  UTC day", and reading `System::Account` at the UTC day's LAST BLOCK reproduces it to the planck —
+  Acala 1,462,204.186283087 DOT at relay #10,549,397 against that file's 2022-05-31 row (verified
+  2026-08-20). Reading at 00:00 of the same day instead shifts the whole series one day EARLY and
+  reads as a genuine one-day lead. This is the mirror of the oracle-bar entry above: there a bar is
+  labelled by its open, here by its close, and neither is guessable from the numbers.
+- **Asset Hub has state but NO CLOCK below block #305,204** (2021-12-18T18:52:54.582Z):
+  `state_getRuntimeVersion` there answers `statemint 601` while `Timestamp::Now` answers `null`
+  (verified live 2026-08-20). That is Statemint's pre-launch period, not pruning — but it looks
+  identical to a pruned archive, and a balance read against a pruned block also answers `null`,
+  which is indistinguishable from "this account holds nothing". Guard on `Timestamp::Now`, which
+  every real block has: refuse a day whose block cannot produce a timestamp inside that UTC day.
+  Both public endpoints (`rpc.polkadot.io`, `polkadot-asset-hub-rpc.polkadot.io`) are otherwise
+  full archives to genesis.
+- **Asset Hub's block rate has moved by a factor of six inside 2022–2026** — 12.51 s/block on
+  2022-05-31, 12.80 on 2024-03-01, 6.57 on the migration day 2025-11-04, **2.24 on 2026-08-19**
+  (all measured day-over-day from the chain, 2026-08-20). The relay chain sat at 6.00–6.10
+  throughout. A block rate averaged over the whole range sits between Asset Hub's two regimes and
+  is wrong in both halves, so a date→height extrapolation is worse here than the Hydration case
+  already recorded above. Measure the rate LOCALLY from the samples nearest the target, and verify
+  every boundary against the chain's own timestamps. See `docs/platform/asset-hub.md`.
+- **The 2023 netflows study measured ONE of the two sovereign accounts, and its last day is not a
+  whole day.** It read `para` on the relay chain only; on 883 of the 2,442 chain-days in its window
+  the same chain also held DOT in its `sibl` account on Asset Hub (up to 1.12% of its total then,
+  essentially all of it now). And on 2023-04-08, its final row, all eight chains disagree with a
+  fresh read by up to 23.6% — its captures stop mid-day, so its published "at the end" figures are
+  mid-day readings, not day-end ones. Everywhere else the two agree to a median 4.0 × 10⁻⁹.

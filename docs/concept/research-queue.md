@@ -78,6 +78,38 @@ Cost is a rough order of magnitude for the *research*, not the build.
 
 ---
 
+### From the netflows backfill (2026-08-20)
+
+- **O38 — What actually happened on 2023-10-24/25?** Acala's relay sovereign account goes 1.45 M →
+  12.63 M DOT and Parallel's 0.41 M → 16.36 M, then both decay for months. Verified against two
+  independent public nodes, so the read is right. The explanation on the page and in
+  `docs/platform/asset-hub.md` — first 96-week leases expiring, liquid-crowdloan contributions
+  returning to the account that made them — is **inferred, not verified**: nobody has read the
+  extrinsics at those blocks. It matters because this event, not bridged reserves, dominates every
+  peak-holding ranking over the 2022–2026 range. One `chain_getBlock` at relay #17,868,943 and
+  #17,883,304 would settle it.
+- **O39 — Kusama has no series.** `/netflows/?network=kusama` is still the 2023 archive alone,
+  because nothing here reads Kusama's relay or its Asset Hub. The same job would work unchanged
+  against two more hosts. Also unresolved: the Kusama Asset Hub Migration date (2025-10-07) is
+  still a transcription and has never been bisected the way Polkadot's was.
+- **O40 — Para 2019 is not in `src/core/topology.js`** and appears in the series holding up to
+  53,284 DOT (peak 2024-03-02). The page draws it as `para 2019`. Somebody should establish which
+  chain it is and add it — `unknownChains()` exists for exactly this reconciliation.
+- **O41 — The month bucket costs the page 55 requests.** Whole past months are one identity each,
+  so a full 2022→today load is 55 store reads (~860 kB) plus one live tail. That is fine today and
+  will not be in 2029. The fix is not a cursor on the demand envelope (`serveFromStore` returns
+  every segment of an identity in one response, deliberately) — it is a coarser identity for years
+  that are closed, which means two identities over the same days and the duplication
+  `docs/architecture/jobs.md` warns about. Worth deciding before it is urgent.
+- **O42 — `sovereign-dot-recent` costs ~45 s on a cold cache** at 19 days (measured 2026-08-20),
+  because the day-boundary search starts with no hint. A head-rate calibration cut it to 15.3 s;
+  nothing has measured how much further a two-point calibration would go.
+- **O43 — Nothing re-derives a stored day.** `netflows-daily` rows carry `head` and
+  `codeVersion: asset-hub/netflows-daily@1`, so a re-derive is possible, but there is no command
+  that does it and no check that a stored day still matches the chain. The 2023 archive is the only
+  independent check this series has, and it only covers 2022-02 → 2023-04. Same gap as O37, now
+  with a second source depending on it.
+
 ## Recently closed
 
 - **B7 — unreachable sources** → `docs/decisions/0010-unreachable-is-data.md` (2026-08-20). Return a payload carrying `unreachable()`; reserve throwing for a response we could not make sense of.

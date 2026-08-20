@@ -530,6 +530,165 @@ Both look like real phenomena. If you are producing a chart of staked DOT or ref
 
 ---
 
+## Reading sovereign balances day by day, back to 2022
+
+`/netflows/` draws DOT in every parachain sovereign account once per UTC day from 2022-01-01 to
+yesterday. Everything below was established while building it, and every figure marked *verified
+live* was read on **2026-08-20** from `https://rpc.polkadot.io` and
+`https://polkadot-asset-hub-rpc.polkadot.io`.
+
+### Both public RPCs are full archives
+
+Neither endpoint prunes historical state. Probed at ten heights each:
+
+| | Deepest readable state | What it says |
+|---|---|---|
+| Relay chain | block **#1** — `Timestamp::Now` = 2020-05-26T15:36:18Z | archive to genesis |
+| Asset Hub | block **#305,204** — `Timestamp::Now` = 2021-12-18T18:52:54.582Z | archive to genesis, but see below |
+
+Asset Hub's blocks **below #305,204 have state and no clock**: `state_getRuntimeVersion` at #305,203
+answers `statemint 601`, and `state_getStorage(Timestamp::Now)` at the same block answers `null`.
+That is Statemint's pre-launch period, not pruning. It is why the daily series starts in **January
+2022** rather than at the first parachain slots: before 2021-12-18 a UTC day has no readable Asset Hub
+close, and the second leg of every sum would be `null` rather than `0`.
+
+Nothing was lost by starting there. **No parachain sovereign account held any DOT at all until
+2022-02-02** — read directly off the relay at the close of every day of January 2022, and the archived
+Polkalytics dataset's first non-null value (Acala, 1.23 DOT) is that same day.
+
+### A pruned read looks exactly like an empty account, so guard on the clock
+
+A node that has discarded historical state answers `state_queryStorageAt` for `System::Account` with
+`null`, which is indistinguishable from "this account does not exist" — a whole chart of zeros that
+renders perfectly. The guard is **`Timestamp::Now`, which every block has**: the handler refuses a day
+unless the block it read carries a timestamp *inside* that UTC day. A balance key can legitimately be
+absent; the clock key cannot.
+
+### A day is its CLOSE, and this is checkable
+
+`src/data/netflows.json` defines a day as "the last balance observed at or before the end of that UTC
+day". Reading `System::Account` at the **last block of the UTC day** reproduces that *exactly*.
+Verified against the file's 2022-05-31 row, read at relay **#10,549,397** (`Timestamp::Now` = 2022-05-31T23:59:54.011Z):
+
+| Chain | Archived (2023) | Read at that block |
+|---|---|---|
+| Acala | 1,462,204.19 | 1,462,204.186283087 |
+| Moonbeam | 257,493.08 | 257,493.0765709934 |
+| Parallel | 649,004.98 | 649,004.9792496555 |
+| Astar | 103,221.23 | 103,221.2311821044 |
+
+Reading at 00:00 of the same day instead lines the series up one day EARLY against that file and reads
+as a genuine one-day lead rather than as an off-by-one. This is the same trap CLAUDE.md records for
+oracle bars, in the other direction: there a daily bar is labelled by its open, here by its close, and
+neither convention is guessable from the numbers.
+
+### What the 2023 study measured, and what it could not
+
+Compared across the whole overlap — 2022-02-02 to 2023-04-08, 431 days, 8 chains, 2,442 chain-days —
+the archive and a fresh read of the **`para` leg alone** agree to a **median deviation of 4.0 × 10⁻⁹**.
+The widest disagreement outside the archive's final day is **0.244%**, on Acala holding 1.23 DOT: the
+file stores two decimal places, so 1.2330 is recorded as 1.23. All 91 chain-days above 0.01% are small
+balances where that rounding dominates.
+
+Two things that comparison turned up, both worth knowing before trusting the 2023 numbers:
+
+- **The archive's final day is not a whole day.** On 2023-04-08 all eight chains disagree, by up to
+  **23.6%** (Moonbeam: 920,379.34 in the file against 1,137,849.16 at that day's last block). The
+  file's own coverage caveat says its captures run eight days past the report's window and stop; its
+  last row is therefore the last observation it happened to take, not that day's close. **Its published
+  "at the end" figures are mid-day readings.**
+- **It measured one of the two accounts.** It read `para` on the relay chain only. On **883 of the
+  2,442 chain-days in the overlap** the same chain also held DOT in its `sibl` account on Asset Hub —
+  at most 1.12% of that chain's total then, and essentially all of it now. Comparing the archive
+  against the SUM scores that leg as a disagreement when it is simply something the original never
+  had.
+
+Both readings use `free + reserved` and neither uses `frozen`. Confirmed on three chain-days: Acala at
+the close of 2023-02-14 is `free` 1,559,813.6607 + `reserved` 170.0000 = 1,559,983.6607, and the file
+says 1,559,983.66.
+
+### `AccountInfo` has been 80 bytes throughout
+
+Every `System::Account` value read across 2022–2026 on both chains is exactly 80 bytes, so
+`decodeAssetDetails`-style strict decoding never trips. **It would not catch the one layout change in
+the window either**: pre-2023 `AccountData` is `{free, reserved, misc_frozen, fee_frozen}` and current
+`AccountData` is `{free, reserved, frozen, flags}` — four `u128`s both times. The two fields we use,
+`free` and `reserved`, occupy the same offsets in both, so the amounts are right; `frozen` and `flags`
+read out of a 2022 block are `misc_frozen` and `fee_frozen` under the wrong names and must not be
+reported. This series does not report them.
+
+### Block rates are not constant, and Asset Hub's has sped up more than fivefold
+
+Never extrapolate a height from a date here. Measured across the range:
+
+| | Blocks per UTC day | Seconds per block |
+|---|---|---|
+| Relay chain, 2022-05-31 | 14,173 | 6.10 |
+| Relay chain, 2023-01-15 | 14,398 | 6.00 |
+| Relay chain, 2024-03-01 | 14,291 | 6.05 |
+| Asset Hub, 2022-05-31 | 6,905 | 12.51 |
+| Asset Hub, 2023-01-15 | 7,158 | 12.07 |
+| Asset Hub, 2024-03-01 | 6,748 | 12.80 |
+| Asset Hub, 2025-11-04 | 13,154 | 6.57 |
+| Asset Hub, 2026-08-19 | 38,627 | **2.24** |
+
+Asset Hub's rate has moved by a factor of six inside the window this series covers — twelve seconds until the
+Asset Hub Migration, about six and a half seconds on the day of it, roughly two and a fifth today — and none of
+those steps is at a round date. A global average is worse than useless: it sits between the two regimes and is
+wrong in both halves. The day-boundary search therefore measures the rate **locally**, from the two
+samples nearest the target, and verifies every answer against the chain's own timestamps before using
+it.
+
+### The lease-expiry spike is real
+
+On **2023-10-24/25** the sovereign accounts of Acala and Parallel jump by an order of magnitude and
+then decay for months:
+
+| Day | Parallel (para 2012) | Acala (para 2000) | All chains |
+|---|---|---|---|
+| 2023-10-23 | 393,949 | 1,445,754 | 4,125,571 |
+| 2023-10-24 | 407,501 | **12,632,507** | 15,802,282 |
+| 2023-10-25 | **16,357,149** | 10,819,202 | 29,848,746 |
+| 2023-11-05 | 8,016,733 | 8,160,958 | 19,112,003 |
+
+This is not a decode fault. The same storage key at the same block was read from a **second,
+independent public node** (`polkadot.api.onfinality.io/public`) and agrees to the planck:
+16,357,118.7446 DOT for para 2012 at relay #17,883,304, against 16,357,118.7446 from
+`rpc.polkadot.io`. Polkadot's first 96-week leases, won in the December 2021 auctions, expired in
+late October 2023; both chains ran liquid-crowdloan products that had contributed from the chain's own
+account, so the returned contributions land back in the sovereign account and drain out again as
+holders redeem. **Any peak-holding ranking over this range is dominated by that event rather than by
+bridged reserves**, and the shape — a step up followed by a months-long decay — is what says so.
+
+### The cost, measured
+
+`asset-hub/netflows-daily`, filling calendar months into `server/data/store.sqlite` on 2026-08-20:
+
+| | |
+|---|---|
+| one stored day, JSON payload | **1,392 B mean** over all 1,673 days (322 B smallest, 1,925 B largest) |
+| a whole month, over the wire | **15 kB** in January 2022, **65 kB** in July 2026 — it grows with the number of parachains, not with the amounts |
+| the whole 2022-01 → 2026-07 series | **1,673 days, 2.33 MB** of stored payload; 2.5 MB served as 55 month responses |
+| HTTP requests per day | **~2.2 per chain**, both chains in flight at once |
+| time per day | **~1.4 s**, ten days per committed batch |
+| a whole month | **~45 s** |
+| the whole backfill | **~50 minutes**, one drainer, resumable at any point |
+
+Five of the fifty-five months failed once mid-run with `could not be reached` against one endpoint or
+the other and succeeded on the retry — a public RPC drops a connection occasionally and that is
+ordinary weather, not a fault. It matters only because the attempt budget is three: a month that
+loses three attempts becomes `gave-up` and stays there until `node scripts/job.mjs retry <id>`. Check
+`job list gave-up` after any long fill.
+
+The two things that make a day cheap are `state_queryStorageAt` — many keys at one block — and
+**JSON-RPC batching**, which both endpoints accept (an array of calls in one POST returns an array of
+results). Batching across DAYS as well as across keys is what turns a boundary search into two HTTP
+requests per round regardless of how many days are in flight. Responses are matched back by `id`, never
+by position: a server may reorder a batch response, and reading it positionally would attribute one
+block's balances to another day.
+
+---
+
 ## Where we read this from
 
 | What | Endpoint / storage |
@@ -547,6 +706,7 @@ Both look like real phenomena. If you are producing a chart of staked DOT or ref
 | Relay chain RPC | `https://rpc.polkadot.io` (public, no key) — `Paras::ParaLifecycles`, `Registrar::Paras`, relay-side `System::Account` |
 | Parachain enumeration | `Paras::ParaLifecycles` (89), `Registrar::Paras` (123), `Paras::Heads` (90) — all relay-side, all current-state only |
 | Chain clock, for liveness | `Timestamp::Now` (u64 ms), read at the pinned block |
+| Day boundaries, historical | `chain_getBlockHash(height)` + `Timestamp::Now` at that hash, searched and **verified**, never extrapolated from a block time |
 | Native token units | `system_properties` → `{ss58Format: 0, tokenDecimals: 10, tokenSymbol: "DOT"}` on both chains |
 | Runtime version | `state_getRuntimeVersion` → `specName: statemint`, `specVersion: 2003002` on 2026-08-20; relay `polkadot` 2003002. `system_version` is `1.24.1-8ae9775dc43` on both |
 | Aggregate XCM flows | `https://api.data.parity.io/api/xcm-top-routes`, `/api/daily-usdc` |
@@ -558,6 +718,8 @@ This site reads all of the above through one source module, `server/sources/asse
 | `/api/asset-hub/bridged-inventory` | every `ForeignAssets` entry with its location decoded from its own key, split bridged/sibling, grouped by consensus system, plus the two locally-issued stablecoins in a separate block |
 | `/api/asset-hub/bridged-holders` | each bridged supply decomposed across the parachain sovereign accounts, as one flat row per (chain, asset), plus the supply reconciliation above |
 | `/api/asset-hub/sovereign-dot` | DOT in every enumerated chain's `para` and `sibl` accounts, two flat rows per chain, plus the chains the relay's own enumeration does not name |
+| `/api/asset-hub/sovereign-dot-recent` | the same reading for the most recent CLOSED UTC days — the tail a month-bucketed store cannot serve |
+| `/api/asset-hub/netflows-daily` (job) | one stored fact per UTC day, a calendar month at a time: both sovereign legs for every enumerated parachain at that day's last block on each chain. This is what `/netflows/` draws |
 
 Operational detail for these endpoints — rate limits, caching policy, and the known
 quirks of each — lives in [data-sources.md](data-sources.md).

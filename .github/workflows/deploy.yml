@@ -232,9 +232,13 @@ jobs:
           # would have created on its own.
           printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/gha_deploy"
           chmod 600 "$HOME/.ssh/gha_deploy"
-          # Fail fast and readably on a truncated or mangled secret, before gcloud turns it
-          # into an inscrutable auth error three steps later.
-          ssh-keygen -y -f "$HOME/.ssh/gha_deploy" > /dev/null
+          # Derive the public half next to it — this doubles as the fail-fast on a truncated
+          # or mangled secret. gcloud requires BOTH files: with the .pub missing it declares
+          # the pair broken and offers to regenerate it, which `--quiet` rightly aborts
+          # (run 32351410319 failed exactly there). Deriving from the private key cannot
+          # drift from what infra registered.
+          ssh-keygen -y -f "$HOME/.ssh/gha_deploy" > "$HOME/.ssh/gha_deploy.pub"
+          chmod 644 "$HOME/.ssh/gha_deploy.pub"
 
       - name: Restart the service on the pinned image digest
         env:
@@ -267,12 +271,16 @@ jobs:
           # difference between one ephemeral key and a permanent root-equivalent key added to
           # project metadata on every single run.
           #
-          # Once infra enables OS Login and IAP, add `--tunnel-through-iap` to this invocation
-          # and close public SSH on the instance. It is left out rather than commented into the
-          # command, because a half-uncommented continuation line is its own kind of outage.
+          # `--tunnel-through-iap`: public port 22 on this VM is closed to the internet —
+          # run 32351600703 timed out against it — and the service account was granted
+          # roles/iap.tunnelResourceAccessor from day one, so IAP was always the intended
+          # transport. The tunnel carries the same key auth; nothing about the key handling
+          # above changes. (OS Login is still worth asking infra for — see the box — but it
+          # is independent of the tunnel.)
           gcloud compute ssh "$INSTANCE" \
             --zone "$ZONE" \
             --ssh-key-file="$HOME/.ssh/gha_deploy" \
+            --tunnel-through-iap \
             --quiet \
             --command "$REMOTE"
 

@@ -271,12 +271,16 @@ jobs:
           # difference between one ephemeral key and a permanent root-equivalent key added to
           # project metadata on every single run.
           #
-          # Once infra enables OS Login and IAP, add `--tunnel-through-iap` to this invocation
-          # and close public SSH on the instance. It is left out rather than commented into the
-          # command, because a half-uncommented continuation line is its own kind of outage.
+          # `--tunnel-through-iap`: public port 22 on this VM is closed to the internet —
+          # run 32351600703 timed out against it — and the service account was granted
+          # roles/iap.tunnelResourceAccessor from day one, so IAP was always the intended
+          # transport. The tunnel carries the same key auth; nothing about the key handling
+          # above changes. (OS Login is still worth asking infra for — see the box — but it
+          # is independent of the tunnel.)
           gcloud compute ssh "$INSTANCE" \
             --zone "$ZONE" \
             --ssh-key-file="$HOME/.ssh/gha_deploy" \
+            --tunnel-through-iap \
             --quiet \
             --command "$REMOTE"
 

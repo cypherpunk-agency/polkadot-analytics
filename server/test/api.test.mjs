@@ -467,3 +467,17 @@ test('a malformed percent-escape is answered, not thrown out of the handler', as
   assert.equal((await get(app, '/healthz')).body, 'ok')
   assert.equal((await get(app, '/api/syn/pages?days=3')).status, 200)
 })
+
+test('an unknown parameter is rejected even when Object.prototype has that name', async (t) => {
+  const { app, queue } = rig(t, { jobs: { pages: pagedJob() } })
+
+  // `name in schema` was true for every inherited key, so these were silently accepted and
+  // silently ignored — the one outcome the unknown-parameter check exists to prevent.
+  for (const name of ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+    const res = await get(app, `/api/syn/pages?days=3&${name}=x`)
+    assert.equal(res.status, 400, `?${name}= must be refused`)
+    assert.match(res.json().error.message, /Unknown parameter/)
+  }
+  assert.equal(queue.list().length, 0, 'and none of them created a job')
+})
+

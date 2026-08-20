@@ -72,12 +72,17 @@ const MIME = {
 }
 
 /**
- * Set here as well as at the edge. Caddy owns the production headers, but this container is
- * also what runs in `npm run preview` and in any future context where it is not behind Caddy,
- * and a security header that only exists in one deployment is a header you cannot rely on.
+ * Emitted only OUTSIDE production. In production Caddy is the single owner of security
+ * headers — it serves this exact policy (it adopted our stricter directives verbatim,
+ * agent bridge 2026-08-20), and two CSP headers on one response are a trap: browsers
+ * enforce the intersection, so whoever later edits one header gets a policy that silently
+ * under-delivers because the other still constrains. But the header cannot simply go away:
+ * `npm run preview` has no Caddy in front, and this header is the local tripwire for the
+ * silent-CSP-breakage class that already bit us once (see design-system.md). So: one
+ * header, one owner per environment.
  *
- * `connect-src 'self'` is the load-bearing one: the browser may talk to this origin and nothing
- * else, which is the whole reason the upstream calls happen server-side. See
+ * `connect-src 'self'` is the load-bearing directive: the browser may talk to this origin
+ * and nothing else, which is the whole reason the upstream calls happen server-side. See
  * docs/architecture/security.md.
  */
 const CSP = [
@@ -93,9 +98,11 @@ const CSP = [
   "object-src 'none'",
 ].join('; ')
 
+const EMIT_CSP = process.env.NODE_ENV !== 'production'
+
 function send(res, status, body, headers = {}) {
   res.writeHead(status, {
-    'content-security-policy': CSP,
+    ...(EMIT_CSP ? { 'content-security-policy': CSP } : {}),
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'strict-origin-when-cross-origin',
     'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',

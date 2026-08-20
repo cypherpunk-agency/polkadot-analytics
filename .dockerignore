@@ -3,6 +3,13 @@ dist
 .git
 .github
 
+# The local job store. Gitignored too, and the same rule applies here as for the credential
+# patterns below: `COPY . .` reads the working directory, so a multi-GB store.sqlite from a
+# local backfill would otherwise be baked into an image layer (and served, stale, from a
+# read-only filesystem in production). The store's home in production is a mounted volume via
+# ANALYTICS_DATA_DIR, never the image.
+server/data/
+
 # `*.md` is ROOT-LEVEL ONLY — a dockerignore pattern's `*` does not cross a `/`. That matters
 # now: `docs/**/*.md` IS part of the build context and must stay that way, because the build
 # stage renders it into `dist/knowledge/` via `scripts/knowledge-plugin.mjs`. Excluding

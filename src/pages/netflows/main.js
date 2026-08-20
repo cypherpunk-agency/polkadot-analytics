@@ -20,6 +20,8 @@ import { choiceControl, renderPage } from '../../design/page.js'
 import { pageByKey } from '../../sources/pages.js'
 import { append, clear, el, notice, statRow, statTile } from '../../design/dom.js'
 import { multiLine, seriesColor } from '../../design/charts.js'
+import { liveness } from '../../core/liveness.js'
+import { livenessNotes } from '../../design/liveness.js'
 import { compact, percent } from '../../core/format.js'
 import dataset from '../../data/netflows.json'
 
@@ -28,7 +30,41 @@ const NETWORK = new URLSearchParams(location.search).get('network') === 'kusama'
 /** A chain whose daily line understates its true peak by more than this gets marked on the row. */
 const CLIP_THRESHOLD = 0.03
 
-function render(host) {
+/**
+ * The liveness assertion for an archive.
+ *
+ * Every other page on this site asserts liveness about an upstream it just read. This one has no
+ * upstream — the dataset is compiled into the bundle — and the assertion is *more* useful here,
+ * not less, because this is the page where a reader is most likely to mistake old numbers for
+ * current ones. Stating the age in the same vocabulary the live pages use ("frozen", a lag in
+ * days, the window covered) is what makes the two comparable at a glance.
+ *
+ * `frozen` is the correct state and it is arrived at honestly: the head is the last observation
+ * in the file and the lag is measured against now, so this line gets older every day the page is
+ * open, exactly as it should. The note is what stops it reading as a broken indexer — here the
+ * stop is the point, and it will not resolve itself.
+ *
+ * Built from the same `network` object the charts are drawn from, so it cannot describe a
+ * different dataset than the one on screen, and it changes when the network toggle does.
+ */
+function archiveLiveness(network) {
+  return liveness({
+    source: 'netflows',
+    label: 'The archived Polkalytics netflows dataset',
+    // End of the last UTC day in the file. The series is a daily close, so that is the instant
+    // the newest number in it describes — not midnight at the start of that day.
+    headAt: Date.parse(`${network.last}T23:59:59Z`),
+    head: `${network.token} balances at the close of ${network.last}`,
+    covers: { from: network.first, to: network.last },
+    note:
+      'Nothing was read at load time: this dataset ships inside the page. So “frozen” here is the ' +
+      'permanent, intended state of an archive rather than a stalled indexer — it will not catch ' +
+      `up, and no figure on this page has moved since ${network.last}. The file itself was ` +
+      `regenerated on ${String(dataset.generated).slice(0, 10)} from the original CSVs.`,
+  })
+}
+
+function render(host, report) {
   clear(host)
   const network = dataset.networks[NETWORK]
   const { token } = network
@@ -57,7 +93,7 @@ function render(host) {
     rankCard(network, amount, clipped),
     clipped.length ? clipNotice(clipped, token) : null,
     discrepanciesCard(),
-    notes(network),
+    notes(network, report),
   )
 }
 
@@ -256,7 +292,7 @@ function discrepanciesCard() {
   )
 }
 
-function notes(network) {
+function notes(network, report) {
   const { caveats, rows } = dataset.source
   return el(
     'section.meta',
@@ -265,6 +301,12 @@ function notes(network) {
     el('p', {
       text: `Derived from ${compact(rows[NETWORK])} balance observations of ${network.chains.length} sovereign accounts, covering ${network.first} to ${network.last}. Balances are read at ${network.decimals} decimals.`,
     }),
+    // The liveness line, and deliberately NOT `livenessBanner()` above the charts. The banner
+    // exists to warn that a page is drawn from something that has gone wrong; here the stop is
+    // the subject of the page, it already has a purpose-written notice at the top that says far
+    // more than the generic copy could, and a red box shouting on every single visit to a page
+    // whose whole point is that it is an archive is how a reader learns to skip red boxes.
+    livenessNotes(report),
     el(
       'ul',
       null,
@@ -305,8 +347,20 @@ renderPage({
       ],
     }),
   ],
+  // The skeleton is the layout this page actually lands: four tiles, a chart, then a ranking.
+  // Nothing here is fetched, so it is on screen for about a frame — which is the point of naming
+  // the right shapes rather than a generic pair, since a mismatched skeleton makes the page jump
+  // at exactly the moment a reader is looking at it.
+  skeleton: ['stats', 'chart', 'rows'],
+  loadingLabel: 'Reading the archived dataset',
   // Committed dataset, bundled at build time — there is no request to fail. The harness still
-  // wraps it, so a malformed dataset surfaces as an error state rather than a blank page.
-  load: async () => dataset,
+  // wraps it, so a malformed dataset surfaces as an error state rather than a blank page, and
+  // the progress reporter is answered honestly: one thing to read, and it is read.
+  load: async ({ progress }) => {
+    const network = dataset.networks[NETWORK]
+    if (!network) throw Object.assign(new Error(`The archived dataset has no \`${NETWORK}\` network.`), { kind: 'decode' })
+    progress({ stage: `Reading the archived ${network.token} dataset`, done: 1, total: 1 })
+    return archiveLiveness(network)
+  },
   render,
 })

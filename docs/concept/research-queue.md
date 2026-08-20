@@ -66,6 +66,10 @@ Cost is a rough order of magnitude for the *research*, not the build.
 | O27 | **`.rank-row` overflows to 453px at a 390px viewport.** Pre-existing, confirmed against a stashed build. Fixing it changes the row form, so it is a design-system decision rather than a page fix. | Mobile layout on every ranking on the site | ~1h |
 | O28 | **`ParaLifecycles` says `Parathread` for 86 of 89 paras, Asset Hub included** — a registration state under Agile Coretime, not a description. Needs writing into `docs/platform/polkadot.md`; currently it exists only in `/netflows/` page copy. | Anything that prints or filters on lifecycle | minutes |
 
+| O29 | **Do the other five Dotlake list endpoints share the 1,000-row cut?** `daily-summary`, `daily-tps`, `coretime-utilization` and the two heatmaps are all registered, all return rows, and none has been probed. `xcm-transfers` pages *properly* (documented 500/page), so **both behaviours coexist in one API and nothing in the response marks which is which**. `dailyGrid()` in `dotlake.mjs` is reusable as-is. | Any historical use of those five | ~1h |
+| O30 | **`Stableswap::PoolPegs(690)` names two `MMOracle` peg sources** (`0xaafd7586…`, `0x07d05e26…`) that set the vDOT:aDOT rate. Decoding them gives the vDOT redemption rate from the chain instead of from Bifrost, which `arbs-bifrost.mjs` currently depends on. | Removing a cross-chain dependency from `/hydration-peg/` | ~2h |
+| O31 | **Is the Dotlake attribution obligation met on `/xcm/`?** Its OpenAPI states "Attribution required by any public use." The page names Dotlake in transient progress text and code comments; whether a persistent, visible source line renders was not checked. | Compliance with a stated licence term | minutes |
+
 ---
 
 ## Recently closed

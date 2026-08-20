@@ -229,6 +229,29 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   `pallet_assets` appears zero times in its live metadata, verified live 2026-08-20). A
   Substrate-only read of Moonbeam finds GLMR and nothing else — not an empty map, not an error,
   just a chain that appears to hold one token.
+- **DOT is Hydration asset 5, it is in NO Omnipool and NO stableswap pool, and it is still priced.**
+  It reaches the dollar through a **1:1 money-market wrap to `aDOT`** (verified live: across all 282
+  `AAVE`-filled DOT↔aDOT legs in 24 h, deviation from 1:1 was exactly `0`), which *is* in the Omnipool.
+  A pool-membership search therefore enumerates the Omnipool, the 17 stableswap pools and the 290 XYK
+  pools, finds no liquid DOT/stable pair, and concludes DOT is unpriceable — **which was reported on
+  2026-08-20 and is wrong.** DOT traded against USDT 168× and USDC 50× that same day, and
+  `server/sources/hydration-evm.mjs` was already publishing `oraclePrice: 0.826` for it in production.
+  The repo's own canary `[5,'DOT',10]` in `arbs-hydration.mjs` had been asserting this and throwing on
+  disagreement the whole time. Price DOT with `getAssetPrice(0x…0100000005) / 1e8`; see
+  `docs/platform/hydration.md`.
+- **`getAssetPrice(aDOT)` reverts — the oracle prices underlyings, not aTokens.** An aToken's price is
+  its underlying's price. Reading the revert as "no price" and falling back to `0` values the
+  Omnipool's largest DOT position at nothing, and the page still renders.
+- **Hydration block time is a trailing average, never a constant: ~5.71 s recently, ~6.85 s over a
+  year — not 12 s.** Extrapolating a block height from a target date rendered as a perfectly plausible
+  **4.5 % oracle discount** on 2026-08-20 before the sampled blocks were checked. Bisect on
+  `Timestamp::Now`; never multiply an assumed rate. This is the **second** recorded instance —
+  `docs/concept/plan.md` and `docs/concept/research/critique.md` already carry the measurements
+  (6.22 s / 1 k, 5.82 / 20 k, 5.61 / 200 k) and `hydration.mjs` already opens by warning about it.
+  The trap is not that the rate is unknown; it is that the arithmetic is so convenient.
+- **A daily bar is labelled by its OPEN.** A price read on-chain at 00:00 UTC on day D lines up with
+  day D's open, not its close. Comparing against the close leaves a ~1.4 % median offset that reads as
+  genuine oracle drift rather than as an off-by-one-day.
 - **A parachain can answer every call and still be weeks stale.** On 2026-08-20 Moonbeam's
   `Timestamp::Now` read 2026-08-10T11:36:12Z and Interlay's read 2026-07-27T12:13:01Z — 10 and 24
   days behind the wall clock — while both RPCs served state normally, Interlay's GraphQL squid

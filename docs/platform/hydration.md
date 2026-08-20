@@ -17,6 +17,12 @@ unchanged and still the thing you have to understand — see
 [the trade grouping](#operationstack-the-call-stack-and-how-to-deduplicate) and
 [where we read this from](#where-we-read-this-from).
 
+Everything in [pricing in dollars](#pricing-in-dollars) was read on **2026-08-20** at block
+**13,703,473**, across both planes of `rpc.hydradx.cloud` (Substrate `state_*` and EVM `eth_*`) and
+Hydration's own `routedTrades` squid. That section exists because the question *"can DOT be priced
+from this chain?"* was answered **wrongly** that day, and the wrong answer was reached by a route that
+looked thorough.
+
 ---
 
 ## The Omnipool
@@ -77,6 +83,30 @@ a swap in the ordinary sense, and summing it into swap volume inflates the numbe
 
 Stableswap pools can also be *inside* the Omnipool: the pool's share token is listed as an Omnipool
 asset, so Omnipool trades can route through the stableswap curve.
+
+### Reading a pool's reserves: deriving the pool account
+
+`Stableswap::Pools(u32) -> PoolInfo` gives the asset list, the amplification and the fee, but **not the
+reserves**. The reserves are the balances of the pool's own account, and that account is derived, not
+stored:
+
+```
+poolAccount = blake2_256("sts" ‖ u32le(poolId))
+```
+
+Reserves are then `Tokens::Accounts(poolAccount, assetId)` — except for `Erc20`-typed members, whose
+balance lives in EVM storage and needs `balanceOf(poolAccount[0..20])` instead. Half the pools have at
+least one such member, so a Substrate-only read silently returns `null` for them.
+
+**Tested, not assumed** (2026-08-20): the derivation was run against pool 100 (`4-Pool`) alongside two
+plausible alternatives — `blake2_256(u32le(poolId))` and `blake2_256("stableswap" ‖ u32le(poolId))`.
+The `"sts"` form returned a non-zero balance for **4 of 4** pool members; both alternatives returned
+0 of 4. A wrong derivation here does not error — it produces a valid-looking account holding nothing,
+which reads as "this pool is empty".
+
+**17 pools live on 2026-08-20.** The ones that matter for pricing: `2-Pool` (101) USDT/USDC,
+`4-Pool` (100), `3-Pool` (103), `2-Pool-GDOT` (690) vDOT/aDOT, and the HOLLAR pairs `2-Pool-HUSDT`
+(111), `2-Pool-HUSDC` (110), `2-Pool-HUSDS` (112), `2-Pool-HUSDe` (113).
 
 ## The Router
 
@@ -160,6 +190,211 @@ The **HSM (HOLLAR Stability Module)** is the peg mechanism, and it is deliberate
 The asymmetry is the design. A symmetric module is a standing bid that an attacker can drain; an
 asymmetric one supports genuine undervaluation without guaranteeing an exit price. A trade filled by
 the HSM appears with `fillerType: HSM`.
+
+## Pricing in dollars
+
+Every dollar figure this site publishes about Hydration rests on this section. The short version:
+**DOT is asset 5, it is in no Omnipool and no stableswap pool, and it is still priced to four
+significant figures from this chain alone, key-free.**
+
+### Find DOT by location, never by ticker
+
+`AssetRegistry::AssetLocations` holds exactly one entry equal to `{parents: 1, interior: Here}` — the
+relay chain's own token, seen from a parachain. Its raw SCALE value is the two bytes `0x0100`.
+Verified live 2026-08-20, block 13,703,473:
+
+| Id | Name | Symbol | Type | Decimals | Sufficient |
+|---|---|---|---|---|---|
+| 5 | Polkadot | DOT | Token | 10 | yes |
+
+The registry held **1,437 assets** that day, 680 of them with locations. Ticker collisions are not an
+edge case here — **seven distinct assets carry `USDC` or `USDT`** (see
+[the asset registry](#the-asset-registry)). Match on location; the ticker is a label, not a key.
+
+### Where DOT trades, and where it does not
+
+Verified live, 2026-08-20, block 13,703,473:
+
+| Venue | Contains asset 5? |
+|---|---|
+| `Omnipool::Assets` — 19 assets | **No.** It carries `aDOT` (1001) and `vDOT` (15) |
+| `Stableswap::Pools` — 17 pools | **No.** No pool lists asset 5 |
+| `XYK::PoolAssets` — 290 pools | **Yes — 122 of them.** DOT is the single most common XYK asset |
+| Money market — 23 reserves | **Yes.** 5,594,982 DOT supplied, $4.62 M |
+
+**This table is a trap, and it was sprung on 2026-08-20.** An agent enumerated the Omnipool, found no
+DOT; enumerated the stableswap pools, found no DOT; checked the XYK pools, found nothing but dust
+against long-tail tokens; and concluded that DOT cannot be priced from what this repository reads.
+Each enumeration was correct. The conclusion was wrong, and this repository was already publishing
+DOT's price in production while the report was being written.
+
+Two things defeat the pool-membership reasoning:
+
+- The XYK pools are not uniformly dust. The deepest hold real money — 29,587 DOT against `WUD`,
+  20,222 DOT against `MYTH`, 1,565 DOT against `UNQ`. What *is* dust is the only XYK pool pairing DOT
+  with a stablecoin: 6.62 USDC against 8.47 DOT. So there is genuinely no liquid DOT/stable **pool**.
+- There does not need to be one. **DOT traded against USDT 168 times and against USDC 50 times in a
+  single 24-hour window** (300 DOT legs in total). The pair trades constantly; it simply is not a pool.
+
+### The route: how DOT reaches a stablecoin
+
+Traced live, block **13,696,298**, 2026-08-20 — one routed trade, 19.8424 DOT → 15.6708 USDT, six legs:
+
+| # | `fillerType` | Leg |
+|---|---|---|
+| 0 | **`AAVE`** | 19.8424 DOT → 19.8424 aDOT |
+| 1 | `Stableswap` (`2-Pool-GDOT`, 690) | 19.8424 aDOT → 11.9796 vDOT |
+| 2 | `Omnipool` | 11.9796 vDOT → 2.8874 H2O |
+| 3 | `Omnipool` | 2.8856 H2O → 15.6947 HOLLAR |
+| 4 | `Stableswap` (`2-Pool-HUSDT`, 111) | 15.6947 HOLLAR → 15.6708 aUSDT |
+| 5 | **`AAVE`** | 15.6708 aUSDT → 15.6708 USDT |
+
+The first and last legs are money-market wraps, and they are **exactly 1:1**. Across **all 282
+`AAVE`-filled DOT↔aDOT legs in 24 hours the maximum relative deviation from 1:1 was `0`** — not
+approximately equal, identical to the last raw unit (verified live 2026-08-20). The same holds for the
+other wrap pairs: `USDT↔aUSDT`, `USDC↔aUSDC`, `ETH↔aETH`.
+
+So **aDOT's price is DOT's price**, by construction rather than by arbitrage, and the Omnipool's aDOT
+listing is a DOT listing wearing a receipt token.
+
+### The money-market oracle — the direct answer
+
+The Aave fork carries a price oracle, and it prices DOT directly. Discovery is by traversal, never by
+a hardcoded address: `aDOT.POOL()` → `pool.ADDRESSES_PROVIDER()` → `provider.getPriceOracle()`.
+
+| | Verified live 2026-08-20 |
+|---|---|
+| Oracle | `0xad33c0f0c42c5a0eaa65b5895d2bdb20cb6e8760` |
+| Pool | `0x1b02e051683b5cfac5929c25e84adb26ecf87b38` |
+| Addresses provider | `0xf3ba4d1b50f78301bdd7eaea9b67822a15fca691` |
+| `BASE_CURRENCY_UNIT()` | `100000000` (1e8) |
+| `BASE_CURRENCY()` | `0x0` — i.e. USD, not a token |
+| `getAssetPrice(0x…0100000005)` | `82600237` → **$0.82600237** |
+
+DOT's EVM address is the Substrate-asset form `0x` + 31 zeros + `1` + the u32 id big-endian, so asset
+5 is `0x0000000000000000000000000000000100000005`.
+
+**`getAssetPrice(aDOT)` reverts.** The oracle prices *underlyings*, not aTokens; an aToken's price is
+its underlying's price, and there is no separate entry to look up. A caller that treats the revert as
+"aDOT has no price" and falls back to zero will value the Omnipool's largest DOT position at nothing.
+
+Each asset has its own feed contract — DOT's is `0xfbca0a6dc5b74c042df23025d99ef0f1fcac6702`, whose
+`description()` returns `"DOT/USD Oracle"`.
+
+**The feed is stepped, not continuous.** Sampling every 60 blocks over 24 hours returned **18 distinct
+values**, ranging $0.7814–$0.8260. It can therefore lag a fast move by up to about an hour. Say so
+wherever the number is drawn.
+
+**Where the feed ultimately sources its number is `inferred`, not verified.** What *is* verified live
+is that the price is computed at call time rather than stored: storage slots 0–4 of the feed contract
+were byte-identical across a 2,000-block gap while `latestAnswer()` moved. But `debug_traceCall` and
+`trace_call` are both `Method not found` on `rpc.hydradx.cloud`, so the call graph could not be
+followed and no precompile was found at the usual addresses. Do not claim on a page that this price is
+chain-internal and trust-free until someone reads the fork's source.
+
+### The second path: the Omnipool's own implied spot
+
+Independent of the oracle, and useful as a reconciliation rather than as a fallback. For an Omnipool
+asset, price-in-hub is `hub_reserve / reserve`, both in whole units; dividing two of those cancels the
+hub and gives a ratio. HOLLAR is in the Omnipool and is dollar-pegged, so:
+
+```
+usd(asset) = (hub_reserve_asset / reserve_asset) / (hub_reserve_HOLLAR / reserve_HOLLAR)
+```
+
+The catch is `reserve`. `Tokens::Accounts(omnipoolAccount, id)` returns **`null` for 5 of the 19**
+Omnipool assets — HOLLAR, aDOT, GETH, GSOL and one more are `Erc20`-typed and their balances live in
+EVM storage, reachable only by `balanceOf` on the contract. HDX is a third case again, in
+`System::Account`. Three storage paths, one balance sheet; miss one and the asset silently disappears
+rather than erroring.
+
+**Reconciliation, 2026-08-20:**
+
+| Path | DOT/USD |
+|---|---|
+| Money-market oracle | $0.82600237 |
+| Omnipool implied spot for aDOT (this repo's `spotUsd`) | $0.826435 |
+| Off-chain control (a CEX aggregate, run by hand, not shipped) | $0.8283 |
+
+Oracle against Omnipool: **0.05 %**. Oracle against the off-chain control: **−0.28 %**. Three
+independent constructions of the same number.
+
+### `deriveRates` already resolves DOT
+
+`src/core/pricing.js` medians implied rates over observed swap legs and sweeps repeatedly. Fed one real
+day of Hydration trades (4,099 routed trades, 2026-08-20), it returns **`DOT = 0.802309` from 219
+observations** — the third most-observed asset after HDX and H2O. It also resolves `aDOT` (0.8189) and
+`vDOT` (1.3103). Nothing needs adding for DOT to price.
+
+**But it is a day median, not a spot.** DOT moved +9.5 % during that window ($0.754 → $0.826), so the
+median sits 2.9 % below the oracle's closing figure. That is correct for valuing *that day's trades*
+and wrong as "the current price". Do not use `deriveRates` output as a live quote.
+
+### Historical prices, from the archive
+
+`rpc.hydradx.cloud` answers `eth_call` at historical blocks, so the oracle can be read at any past
+block. Binary-searched, verified live 2026-08-20:
+
+> The money-market oracle first answers for DOT at block **6,382,861**, timestamp
+> **2024-11-12T14:28:24Z**, price **$5.25282543**. Block 6,382,860 returns `0x`.
+
+That is roughly 21 months of daily DOT/USD, at one batched `eth_call` per point. Before that date
+there is no on-chain DOT/USD from this source — the market did not exist yet.
+
+Checked against an off-chain daily series over 45 days at 00:00 UTC: **median absolute difference
+0.16 %, p90 0.36 %, worst 0.46 %.** They are the same series.
+
+**⚠ Two traps in that comparison, both of which produce plausible wrong numbers.**
+
+1. **Never extrapolate a block height from a date.** See
+   [block time is a trailing average](#block-time-is-a-trailing-average-not-a-constant) below. A first
+   pass at this reconciliation assumed 12 s blocks and reported a **4.5 % median oracle discount** that
+   was entirely an artefact of sampling the wrong blocks.
+2. **A daily bar's label is its open, not its close.** A read at 00:00 UTC on day *D* corresponds to
+   day *D*'s **open**. Comparing it against day *D*'s close leaves a spurious one-day offset worth
+   about 1.4 % median — small enough to look like genuine oracle drift.
+
+### Block time is a trailing average, not a constant
+
+Measured on 2026-08-20 from `Timestamp::Now` at both ends of each window:
+
+| Window | Average block time |
+|---|---|
+| last 7,200 blocks | **5.730 s** |
+| last 50,400 blocks | 5.710 s |
+| last 216,000 blocks | 5.612 s |
+| last 432,000 blocks | 5.787 s |
+| last 1,296,000 blocks | 6.472 s |
+| last 2,628,000 blocks | **6.845 s** |
+
+Assuming 12 s puts a "365 days ago" label on a block that is actually **208 days** old. This repository
+already knew: `docs/concept/plan.md` and `docs/concept/research/critique.md` record 6.22 s / 1 k,
+5.82 s / 20 k, 5.61 s / 200 k, and `server/sources/hydration.mjs` opens by saying day boundaries come
+from asking the chain, never from multiplying an assumed rate. **It was got wrong anyway, on
+2026-08-20, by an agent that had read neither.** The rule, restated so the next person meets it here:
+
+> To find the block at an instant, **bisect on `Timestamp::Now`**. Seed the search with a measured
+> local rate if you want it fast, but the accept condition is the timestamp, never the arithmetic.
+
+### Page notes
+
+Drafted from the readings above so that whoever builds the next dollar figure does not re-derive the
+caveat. Rule 3 says the number carries its own caveat; these are those caveats.
+
+**For a live DOT price:**
+
+> DOT is priced by Hydration's money-market oracle (an Aave v3 fork), read live. It is a stepped feed
+> — about 18 updates a day, not per block — so it can lag a fast move by up to an hour. Cross-checked
+> against the Omnipool's own implied spot (aDOT priced against HOLLAR), which agreed to 0.05 %. DOT
+> itself is in no Omnipool or stableswap pool: it reaches the dollar through a 1:1 money-market wrap
+> to aDOT, and every DOT↔aDOT conversion observed over 24 hours was exactly 1:1.
+
+**For a historical DOT series:**
+
+> Historical DOT/USD is read from Hydration's money-market oracle at each day's first block after
+> 00:00 UTC. The series begins 2024-11-12, when that oracle was deployed; there is no on-chain DOT/USD
+> before that date. Spot-checked against an off-chain reference over 45 days: median difference
+> 0.16 %, worst 0.46 %.
 
 ## OTC
 
@@ -249,6 +484,21 @@ From source (`pallets/broadcast/src/types.rs`, v50.0.2):
 
 Values observed live: `Omnipool`, `Stableswap`, `XYK`, `AAVE`, `OTC`, `HSM`. `LBP` exists in the enum
 but is not currently in use.
+
+**How much each venue actually fills** — 5,000 legs over ~24 h, squid field `fillerType`, verified live
+2026-08-20:
+
+| Filler | Legs | Share |
+|---|---:|---:|
+| `Omnipool` | 3,381 | 67.6% |
+| `AAVE` | 803 | 16.1% |
+| `Stableswap` | 713 | 14.3% |
+| `XYK` | 103 | 2.1% |
+
+**One leg in six is filled by the money market.** That is not a lending event leaking into the swap
+stream — it is the router wrapping and unwrapping aTokens mid-route, and it is the mechanism that lets
+assets which are in no pool at all still trade against everything else. See
+[pricing in dollars](#pricing-in-dollars).
 
 ### `TradeOperation`
 
@@ -396,6 +646,35 @@ Cross-chain, remember that **asset id 22 means USDC only on Hydration.** On Asse
 is asset 1337, and the only stable identifier across chains is the XCM `Location` — see
 [xcm.md](xcm.md) and [asset-hub.md](asset-hub.md).
 
+### One ticker, seven assets
+
+The collision is not hypothetical and it is not rare. Verified live 2026-08-20, every registry entry
+whose symbol is exactly `USDC` or `USDT`:
+
+| Id | Symbol | Name | Decimals | Location |
+|---|---|---|---:|---|
+| 7 | USDC | USD Coin (Acala Wormhole) | 6 | para 2000, `GeneralKey` |
+| 10 | USDT | Tether | 6 | para 1000, pallet 50, index **1984** |
+| 21 | USDC | USDC (Wormhole) | 6 | local `GeneralKey` `wh`, Ethereum `0xa0b8…eb48` |
+| 22 | USDC | USDC | 6 | para 1000, pallet 50, index **1337** |
+| 23 | USDT | Tether (Wormhole) | 6 | local `GeneralKey` `wh`, Ethereum `0xdac1…1ec7` |
+| 1000766 | USDC | USDC (Ethereum native) | 6 | `GlobalConsensus(Ethereum)` + `0xa0b8…eb48` |
+| 1000767 | USDT | Tether (Ethereum native) | 6 | `GlobalConsensus(Ethereum)` + `0xdac1…1ec7` |
+
+Plus `aUSDC` (1003) and `aUSDT` (1002), the money-market receipts, and `HOLLAR` (222), which is not
+pegged by a reserve but by the HSM.
+
+**Two of these are the same Ethereum token arriving by two different bridges** (21 and 1000766 are both
+Circle's USDC contract, one via Wormhole and one via Snowbridge), which is a real arbitrage and a real
+risk difference. Collapsing them by symbol turns that into a nonsensical USDC→USDC route and hides
+which bridge a holding depends on.
+
+For *rate derivation* specifically, collapsing them is harmless — they are all worth about a dollar,
+which is what `USD_PEGGED` in `src/core/pricing.js` assumes. For anything that counts supply, holders
+or flows, it is a factual error. `server/sources/hydration.mjs` splits the two cases deliberately:
+`symbolOf` (bare ticker) feeds `deriveRates`, `labelOf` (ticker + registry id, applied only when a
+ticker is shared) feeds anything a reader sees.
+
 ## Balances
 
 Hydration uses `orml-tokens`, not `pallet-balances`, for everything except HDX:
@@ -431,7 +710,9 @@ reserve invariant in [xcm.md](xcm.md). They agreed to within 425 USDC on 2026-08
 | Money market | `EVM` storage plus the `Erc20`-typed entries in `AssetRegistry`; `Liquidation` pallet events |
 | HOLLAR supply | `eth_call totalSupply()` at `0x531a654d1696ed52e7275a8cede955e82620f99a`; cross-checked against the squid's `aaveFacilitators` bucket levels. **Not** `Tokens::TotalIssuance(222)` |
 | HOLLAR peg mechanism | `HSM` pallet storage |
-| Prices | `EmaOracle` — exponential moving-average oracle used by the runtime itself |
+| Prices, runtime-internal | `EmaOracle` — exponential moving-average oracle used by the runtime itself |
+| **Prices, USD** | `getAssetPrice(address)` on the money-market oracle `0xad33c0f0c42c5a0eaa65b5895d2bdb20cb6e8760`, divided by `BASE_CURRENCY_UNIT()` = 1e8. Discovered by traversal from `aDOT.POOL()`, never hardcoded. Answers at historical blocks back to 6,382,861 (2024-11-12). See [pricing in dollars](#pricing-in-dollars) |
+| Omnipool implied spot | `Omnipool::Assets` `hub_reserve` ÷ the reserve, ratioed against HOLLAR's. Reserves come from **three** storage paths — `Tokens::Accounts`, `System::Account` (HDX), and EVM `balanceOf` (`Erc20` assets) |
 | XCM in/out | `PolkadotXcm`, `XTokens` extrinsics; `MessageQueue` events |
 
 **Archive query hygiene.** `https://explorer.hydradx.cloud/graphql` will return

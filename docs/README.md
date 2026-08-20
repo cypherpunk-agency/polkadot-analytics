@@ -44,6 +44,7 @@ written account of what it is querying.
 | [0005](decisions/0005-public-no-gate.md) | published publicly, with no authentication gate |
 | [0006](decisions/0006-demand-driven-store.md) | a demand-driven store and a job queue, not a scheduled pipeline |
 | [0007](decisions/0007-bulletin-client-direct.md) | Bulletin is watched by the client, never stored server-side |
+| [0008](decisions/0008-no-off-chain-price-oracle.md) | prices come from chains, not from Yahoo Finance |
 
 ## `concept/` — working notes, deliberately not published
 

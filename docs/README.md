@@ -45,6 +45,8 @@ written account of what it is querying.
 | [0006](decisions/0006-demand-driven-store.md) | a demand-driven store and a job queue, not a scheduled pipeline |
 | [0007](decisions/0007-bulletin-client-direct.md) | Bulletin is watched by the client, never stored server-side |
 | [0008](decisions/0008-no-off-chain-price-oracle.md) | prices come from chains, not from Yahoo Finance |
+| [0009](decisions/0009-pricing-is-a-composed-source.md) | pricing is a source others compose, not a library others import |
+| [0010](decisions/0010-unreachable-is-data.md) | an unreachable upstream returns a payload, it does not throw |
 
 ## `concept/` — working notes, deliberately not published
 

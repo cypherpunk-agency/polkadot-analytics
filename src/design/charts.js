@@ -276,10 +276,12 @@ export function stackedBars(host, { days, series, format = money, colors = null 
  *
  * @param {HTMLElement} host
  * @param {object} data
- * @param {Array<{label:string, sublabel?:string, total:number, segments:number[], note?:string}>} data.rows
+ * @param {Array<{label:string, sublabel?:string, total:number, segments:number[], note?:string, format?:(n:number)=>string}>} data.rows
+ *        A row may carry its own `format`. Under `scale: 'row'` the rows are by definition not
+ *        in one unit, so one formatter for all of them is the wrong default — a token count and
+ *        an 18-decimal raw integer do not read the same way.
  * @param {Array<{label:string}>} data.series          fixed order; `segments[i]` belongs to `series[i]`
  * @param {(n:number)=>string} [data.format]
- * @param {string} [data.unit]                          what the numbers are, for the legend heading
  * @param {string} [data.residualLabel]                 what an unfilled remainder means here
  * @param {'shared'|'row'} [data.scale]                 see the scaling warning above
  * @returns {{reconciled:number, short:number, over:number, faint:number}} counts, for the data notes
@@ -311,7 +313,11 @@ export function segmentedRows(host, { rows, series, format = money, residualLabe
     // the COMPOSITION is encoded. `shared` denominates every bar by the largest total, so bar
     // lengths are comparable between rows — which is only true if the rows share a unit.
     const denom = scale === 'row' ? Math.max(total, accounted, Number.MIN_VALUE) : sharedMax
-    if (scale === 'shared' && total / sharedMax < 0.02) tally.faint++
+    // Counted under BOTH modes, deliberately. `faint` answers "would these rows be comparable
+    // if I denominated them together?" — which is exactly the question you have when you chose
+    // `row` because you suspected they were not. Only counting it under `shared` made the
+    // diagnostic unavailable in the one mode that needs it.
+    if (total / sharedMax < 0.02) tally.faint++
 
     const track = el('div.track.segmented')
     for (const part of parts) {
@@ -322,13 +328,14 @@ export function segmentedRows(host, { rows, series, format = money, residualLabe
       append(track, el('div.seg', { class: 'residual', style: `width:${(residual / denom) * 100}%` }))
     }
 
+    const fmt = row.format ?? format
     const lines = [
       `${row.label}${row.sublabel ? ` · ${row.sublabel}` : ''}`,
-      `total ${format(total)}`,
-      ...parts.sort((a, b) => b.value - a.value).map((part) => `${part.label}: ${format(part.value)}`),
+      `total ${fmt(total)}`,
+      ...parts.sort((a, b) => b.value - a.value).map((part) => `${part.label}: ${fmt(part.value)}`),
     ]
-    if (state === 'short') lines.push(`${residualLabel}: ${format(residual)}`)
-    if (state === 'over') lines.push(`⚠ segments exceed the total by ${format(-residual)} — sources disagree`)
+    if (state === 'short') lines.push(`${residualLabel}: ${fmt(residual)}`)
+    if (state === 'over') lines.push(`⚠ segments exceed the total by ${fmt(-residual)} — sources disagree`)
     if (row.note) lines.push(row.note)
 
     append(
@@ -339,7 +346,7 @@ export function segmentedRows(host, { rows, series, format = money, residualLabe
         el('div.name', { text: row.label }),
         el('div.sub', { text: row.sublabel ?? '' }),
         track,
-        el('div.amt', { text: format(total) }),
+        el('div.amt', { text: fmt(total) }),
       ),
     )
   }
@@ -351,17 +358,22 @@ export function segmentedRows(host, { rows, series, format = money, residualLabe
 const sum = (values) => (values ?? []).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
 
 /**
- * The legend for `segmentedRows`, carrying the value and not just the name — the same relief
- * every chart here owes the three light-mode hues that sit under 3:1 contrast.
+ * The legend for `segmentedRows`, carrying a value and not just a name — the same relief every
+ * chart here owes the three light-mode hues that sit under 3:1 contrast.
+ *
+ * ⚠️ `values[i]` is whatever is TRUE ACROSS ALL ROWS for series `i`. Under `scale: 'shared'`
+ * that is a sum, because the rows share a unit. Under `scale: 'row'` a sum is meaningless — it
+ * would add BTC to memecoins — so pass a **count** (how many rows that series appears in) and a
+ * count formatter. Summing anyway produces a large, confident, meaningless number.
  */
-export function segmentedLegend(series, totals, format = money) {
+export function segmentedLegend(series, values, format = money) {
   const items = series.map((entry, i) =>
     el(
       'li',
       null,
       el('span.swatch', { style: `background:${seriesColor(i)}` }),
       document.createTextNode(entry.label),
-      el('span.amt', { text: format(totals?.[i] ?? 0) }),
+      el('span.amt', { text: format(values?.[i] ?? 0) }),
     ),
   )
   return el('ul.legend', null, ...items)

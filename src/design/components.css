@@ -518,11 +518,95 @@
   );
 }
 
-/* Segments that add up to MORE than the stated total cannot be drawn honestly — the bar would
-   clip and look fine. Mark the row instead and let the page say which two sources disagree. */
+/* ── when the bar cannot carry the finding ────────────────────────────────────────────────
+ *
+ * Both of these mark the ROW, not the bar, and that is the point. Whether a row reconciles is a
+ * BOOLEAN fact; the size of the gap is a magnitude and lives in the table. Encoding a boolean as
+ * a width fails silently as soon as the gap is small — on `/bridged/` the real shortfalls run
+ * 0.0000021%–0.0037% of supply, which is comfortably sub-pixel, so an unmarked short row is
+ * pixel-identical to a full one and the form's whole claim quietly evaporates.
+ *
+ * Widening a sub-pixel remainder to make it visible would be the other failure: a lie about
+ * magnitude in a chart whose only job is to be exact. So the width stays true and the row says
+ * so in a second channel. */
+
+.seg-row[data-state='short'] .track.segmented {
+  outline: 1px solid var(--warning);
+  outline-offset: 1px;
+}
+
+/* Segments that add up to MORE than the stated total cannot be drawn honestly at all — the bar
+   would clip and look fine. Two sources disagree, and the page must say which. */
 .seg-row[data-state='over'] .track.segmented {
   outline: 1px solid var(--critical);
   outline-offset: 1px;
+}
+
+/* A word, not just a colour: three of the light-mode hues sit under 3:1 contrast and an outline
+   is thinner than any of them. `::after` on the amount rather than a DOM node, so the row's
+   markup stays four cells. */
+.seg-row[data-state='short'] .amt::after,
+.seg-row[data-state='over'] .amt::after {
+  content: '⚠';
+  margin-inline-start: var(--s1);
+  font-size: 0.85em;
+}
+
+.seg-row[data-state='short'] .amt::after {
+  color: var(--warning);
+}
+
+.seg-row[data-state='over'] .amt::after {
+  color: var(--critical);
+}
+
+/* ── narrow: the bar gets its own line ────────────────────────────────────────────────────
+ *
+ * Measured on /bridged/ before this existed: the track resolved to 810px at 1280, 84px at 520
+ * and **0px at 390** — the chart was invisible on a phone and the page degraded to a list of
+ * labels with no bars at all. Two of the four columns are content-sized, so on a narrow
+ * viewport they consume the row and `2fr` of nothing is nothing.
+ *
+ * `amt` spans both text rows so the number stays beside the name it belongs to. */
+@media (max-width: 36rem) {
+  .seg-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name amt'
+      'sub  amt'
+      'track track';
+    row-gap: 2px;
+  }
+
+  .seg-row .name {
+    grid-area: name;
+  }
+
+  .seg-row .sub {
+    grid-area: sub;
+  }
+
+  .seg-row .track {
+    grid-area: track;
+  }
+
+  .seg-row .amt {
+    grid-area: amt;
+    align-self: center;
+  }
+}
+
+/* A payload note can carry a 54-character storage key or a 42-character address, and prose
+   containers must not be widened by one. Tables are excluded on purpose: a hash broken across
+   lines in a data column is harder to read, and the table already scrolls. */
+.notice p,
+.notice strong,
+.note {
+  overflow-wrap: anywhere;
+}
+
+.meta ul + p {
+  margin-block-start: var(--s3);
 }
 
 .rank-row .rank {

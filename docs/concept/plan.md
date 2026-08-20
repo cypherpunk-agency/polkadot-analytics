@@ -216,7 +216,7 @@ Waves A and B need no decisions and no store. Wave C is the store. They overlap.
 
 | # | Item | Note |
 |---|---|---|
-| **B1** | **Repoint Hydration at `orca.routedTrades`** | Highest value in the plan. Correct by construction, ~80× cheaper, **removes the 7-day window cap immediately**. |
+| **B1** | **Repoint Hydration at `orca.routedTrades`** | Highest value in the plan. Correct by construction, ~80× cheaper. ~~Removes the 7-day window cap immediately~~ — **corrected 2026-08-20: the repoint shipped, but the cap was DOUBLED, not removed.** `hydration.mjs:419` sets `max: 14`, a deliberate cost decision argued at `hydration.mjs:411-418`. Removing it needs the store (C7). |
 | B2 | Money-market board (23 reserves, APY, utilisation, LTV, e-mode) | 121 `eth_call`s in **5 requests / 39 KiB / 1.31 s**. Aave v3 in EVM contracts, not a pallet. |
 | B3 | HOLLAR: real supply, facilitators, peg, HSM band | Fixes a live error — see §5.1. |
 | B4 | Liquidations, Omnipool TVL history, protocol revenue | Pre-computed by orca. |
@@ -548,3 +548,125 @@ back on the critical path — but the ordering insight survives, because §8.1 m
 is the same machine, and shaping its payload correctly today is what makes the store cheap to add.
 
 Build the snapshots. Shape them for the store. Then build the store.
+
+---
+
+## 9. Audited: what is actually built — 2026-08-20
+
+A full pass over every item in §4 and §7.7, judging each against a strict definition: **SHIPPED**
+means the code exists, is *wired up* (a source registered in `server/sources/index.mjs`; a page in
+`src/sources/pages.js` with a real directory), and a user or API caller can reach it.
+
+**Of 33 items: 14 SHIPPED, 9 PARTIAL, 10 NOT BUILT, 0 SUPERSEDED.**
+
+### 9.1 The result that matters: Wave C is finished and unreachable
+
+Wave B — the one this plan called "parallel, no state, no decisions" — is the success: 9 of 12
+shipped. **Wave C is the failure, and not for the reason anyone would guess.** C1–C4 were built to
+a high standard and then stranded:
+
+| file | lines | consumers |
+|---|---|---|
+| `server/lib/store.mjs` | 328 | 0 |
+| `server/lib/jobs.mjs` | 524 | 0 |
+| `server/lib/job-worker.mjs` | 306 | 0 |
+| `server/lib/demand.mjs` | 364 | 0 |
+| `scripts/job.mjs` | 174 | runs; nothing to run |
+| `server/test/{store,jobs}.test.mjs` | 585 | 43 tests, all pass |
+| mode-A path in `server/index.mjs` | ~150 | dead branch |
+| **total** | **~2,430** | **zero** |
+
+Verified at runtime rather than inferred: 8 sources / 27 operations, **`jobs: NONE` on every one**;
+`store.sqlite` holds `facts 0, jobs 0`; and an end-to-end CLI run returns
+`gave-up: "Source `hydration` has no job `swaps`."` The attempt budget, the persisted gave-up
+marker and the resumable lease all work correctly — against nothing.
+
+**§2.5 costed the engine in detail and never named the per-source handler contract as a work
+item.** The contract is documented at `server/sources/index.mjs:40-52`. It has no implementations.
+That omission, not the queue, was the expensive thing.
+
+### 9.2 The sequencing claim in §4 is contradicted; §8.5's revision is supported
+
+§4 said "C1–C4 are the expensive thing. Everything after them is cheap." C1–C4 were built and
+**nothing after them got cheaper**, because the cost was never the queue. Meanwhile **E1 shipped
+1,626 lines in one commit with no store, no job and no disk** and produced the most substantive
+payload on the site.
+
+§8.5 — *build the snapshots, shape them for the store, then build the store* — is confirmed:
+`sovereign-dot` and `bridged-holders` already emit one row per `(chain, asset)` with a block stamp,
+which is §8.1's target shape. The preparation was free, as predicted.
+
+**One correction to §8.5.** The store is not "back on the critical path" — it is **already sunk and
+stranded**, held out of production by a deployment policy (`docs/architecture/deployment.md:65`:
+"No volumes… and CI asserts that it does") that predates the decision to build it and that nobody
+revisited. §4 deferred the disk conversation until "C1 exists and we can measure real fill rates."
+C1 exists; the fill rate is zero because there is nowhere to put rows and nothing to write them.
+**That conversation is overdue and is the single blocker in front of ~2,430 lines of finished work.**
+
+### 9.3 The smallest step that unstrands it
+
+**One `jobs.swaps` handler on `hydration.mjs`**, unit = one closed UTC day. The immutability
+predicate is trivial (a UTC day whose last block is below `head − k`), orca is already
+cursor-paginated with a stable `Broadcast::IncrementalId` for idempotent inserts, and day-chunking
+is exactly what §2.1 asked for.
+
+That single handler closes **C1, C2, C3, C7 and B1's unmet cap promise at once** — and converts the
+disk ask from an abstract request into a measured number, which is what §4 said to wait for.
+
+### 9.4 Orphans: 16 of 27 registered operations have no page
+
+`/api` describes them, so they are public; nothing renders them. `dotlake` alone has 12, of which
+**9 are not mentioned anywhere in this plan**: `daily-summary`, `daily-tps`,
+`coretime-utilization`, `coretime-sale-metrics`, `contracts-deployed-heatmap`,
+`contract-calls-heatmap`, `monthly-opengov-participation`, `monthly-treasury-balances`,
+`monthly-percent-staked`. `arbs-bifrost` is a registered source no page calls — its data reaches
+`/hydration-peg/` by a server-side import instead. Neither is a bug; both are undecided.
+
+### 9.5 Built, and never planned
+
+The nav grouping; `segmentedRows`; `docs/platform/moonbeam.md`; `docs/platform/bridges.md`; the
+`research-and-build` skill and `docs/concept/research-queue.md`. That last pair is currently the
+most accurate description of what is actually blocked — more so than this file was before today.
+
+### 9.6 What to pick up next, in order
+
+| # | Item | Why it is next | Effort |
+|---|---|---|---|
+| 1 | **E3 — netflows live** | Biggest visitor-visible delta open. Page code only: `sovereign-dot` already returns 127 chains, 254 holdings and a `missing[]` with a per-chain `why` | ~0.5 day |
+| 2 | **Liveness on the 5 sources and 7 pages missing it** | The site's premise is saying what is wrong with a number, and staleness is the commonest thing wrong. Two chains were caught today answering RPC while 10 and 24 days behind | 2–4 h |
+| 3 | **`jobs.swaps` on `hydration.mjs`** | §9.3 — unstrands ~2,430 lines and produces the disk number | ~1 day |
+| 4 | **`interlay.mjs`** | One `state_getStorage`. Unblocked: the canary band is settled (reject thousands of BTC; actual issuance 2.118) | hours |
+| 5 | **The disk conversation** | §9.2. Blocks nothing else, blocks everything after | decision |
+| 6 | **E4 `moonbeam.mjs`** | Blocked on research-queue **B5** — whether a deregistered chain gets a band at all | decision first |
+
+---
+
+## 10. Anomalies as a product, not just a check — direction, 2026-08-20
+
+The reconciliation machinery already produces an anomaly feed; it is simply framed as a caveat.
+`bridged-holders` returns `reconciliation: { assets: 34, exact: 28, mismatched: [...] }`. Turning
+that around — from "here is a caveat about our number" to "here is something odd about the chain" —
+costs almost nothing and is a genuinely different product.
+
+**The investigative loop is already proven, manually.** Faced with "USDT is short by 15.000000", the
+procedure that worked was: sample the residual back through history → observe it moves in **steps,
+not dust** → bisect to a single block (#14,915,236) → confirm every holder balance and the account
+count were unchanged → identify the only candidate extrinsic (`set_validation_data`, inbound XCM).
+Detect → sample → step-or-drift → bisect → name the extrinsic. That is systematisable as a standing
+research agent rather than a one-off.
+
+Two things to get right before building it:
+
+- **An anomaly needs a baseline, and baselines need history.** "Large change" and "unusual volume"
+  are meaningless against a single snapshot — same store dependency as everything in §8. The
+  reconciliation residuals are the exception, because they are anomalous against an **invariant**
+  rather than a trend, which is exactly why they work today with no history at all. **Start there.**
+- **"Exploit" is a claim, not an observation** — the same line §8.3 draws for the address registry.
+  The defensible output is *"supply rose with no account credited, at this block, in this
+  extrinsic"*. Naming it an exploit is a different kind of statement with different stakes, and it
+  belongs to a human.
+
+Invariants already available to watch, with no new machinery: `Σ ForeignAssets::Account` vs
+`supply`; a parachain's sovereign balance on Asset Hub vs its local mirror's issuance; `Σ` sovereign
+holdings vs total issuance; and a chain's `Timestamp::Now` against the wall clock — which today
+would have caught Moonbeam, Interlay, and Equilibrium's thirteen-month absence.

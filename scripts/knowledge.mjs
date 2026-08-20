@@ -321,6 +321,10 @@ export function lastCommitDates(root) {
  *   · THE ACTIVE NAV STATE is baked in. These pages know statically that they are the
  *     knowledge section, so `aria-current="page"` is written into the markup and cannot
  *     disagree with the URL.
+ *   · THE NAV GROUPS are `<details>` elements, which is what makes this possible at all: a
+ *     grouped nav that needed script to open would be a grouped nav these pages could not
+ *     have. The shape comes from `NAV` in src/sources/pages.js, the same value shell.js
+ *     builds its bar from, so the two headers list the same pages under the same groups.
  *   · THE THEME cannot be static — it lives in localStorage, and applying it needs JS. So the
  *     pages load ONE small module (`src/pages/knowledge/main.js`) whose only job is to apply
  *     the stored theme and wire the button that is already in the markup. Dropping the toggle
@@ -332,12 +336,24 @@ export function lastCommitDates(root) {
  * header rather than silently.
  */
 function chrome(navItems, buildStamp) {
-  const nav = navItems
-    .map((item) => {
-      const current = item.key === 'knowledge' ? ' aria-current="page"' : ''
-      return `<a href="${escapeHtml(item.href)}"${current}>${escapeHtml(item.nav)}</a>`
-    })
-    .join('')
+  const link = (item) => {
+    const current = item.key === 'knowledge' ? ' aria-current="page"' : ''
+    return `<a href="${escapeHtml(item.href)}"${current}>${escapeHtml(item.nav)}</a>`
+  }
+
+  // A nav group is a `<details>` here for the reason it is one in shell.js, and the reason
+  // bites hardest on this page: these documents work with scripting off, and a `<details>`
+  // opens, closes and answers the keyboard with no script. No `aria-current` on the summary —
+  // the knowledge base is not in any group, so on these pages no group holds the current page.
+  const group = (item) =>
+    `<details class="nav-group" data-group="${escapeHtml(item.key)}">` +
+    `<summary>${escapeHtml(item.nav)}</summary>` +
+    '<div class="nav-panel">' +
+    (item.blurb ? `<p class="nav-panel-note">${escapeHtml(item.blurb)}</p>` : '') +
+    item.items.map(link).join('') +
+    '</div></details>'
+
+  const nav = navItems.map((item) => (item.kind === 'group' ? group(item) : link(item))).join('')
 
   return {
     header:

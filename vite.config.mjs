@@ -4,7 +4,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { knowledgePlugin } from './scripts/knowledge-plugin.mjs'
-import { PAGES } from './src/sources/pages.js'
+import { NAV } from './src/sources/pages.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -52,12 +52,13 @@ export default defineConfig({
   // The knowledge base is rendered to static HTML at build time — no markdown parser reaches
   // the browser and no dependency is added. `navItems` is passed in rather than imported
   // inside the plugin so the emitted header is built from the same site map every other page
-  // uses. See docs/architecture/design-system.md.
+  // uses: `NAV` is already the finished bar, groups and all, and is plain data by design.
+  // See docs/architecture/design-system.md.
   plugins: [
     knowledgePlugin({
       root: here,
       buildStamp,
-      navItems: PAGES.filter((page) => !page.hidden).map(({ key, href, nav }) => ({ key, href, nav })),
+      navItems: NAV,
     }),
   ],
   build: {

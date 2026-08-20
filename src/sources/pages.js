@@ -11,7 +11,32 @@
 // `kind` separates the two things this list now holds. Everything here belongs in the header
 // nav, but only a `dashboard` belongs in the home page's deck of dashboards — the knowledge
 // base is a section of the site, not a chart, and a tile promising "live data" for it would be
-// a small lie. Read the nav from `PAGES` and the deck from `DASHBOARDS`.
+// a small lie. Read the nav from `NAV` and the deck from `DASHBOARDS`.
+//
+// `group` folds a page into a nav group. `nav` is then the label INSIDE that group, so it says
+// what the page is rather than repeating which chain it is about — see `GROUPS`.
+
+/**
+ * The nav groups, in the order their first member appears.
+ *
+ * Half the dashboards on this site are Hydration. Flat, that meant "Money market", "Wrap map"
+ * and "Pegs & OTC" sat on the bar next to "XCM" and "Bulletin" as if they were peers — three
+ * labels that name a subject without naming the chain, so the bar read as eight unrelated
+ * things. Grouping is not tidiness: it is the only place that says those four pages are one
+ * subject, and it puts the top level back down to a length a reader can take in.
+ *
+ * A group is never hand-listed. It collects whichever pages name it in `group`, so a group
+ * cannot list a page that was never built, and a page cannot quietly fall out of one.
+ */
+export const GROUPS = [
+  {
+    key: 'hydration',
+    nav: 'Hydration',
+    // Shown at the top of the open panel. Not decoration: it is the only chance to say what
+    // the four pages have in common before the reader has to guess from four short labels.
+    blurb: 'Swaps, the lending market, and the machinery that holds the pegs.',
+  },
+]
 
 export const PAGES = [
   {
@@ -28,8 +53,12 @@ export const PAGES = [
   {
     key: 'hydration',
     kind: 'dashboard',
+    group: 'hydration',
     href: '/hydration/',
-    nav: 'Hydration',
+    // "DEX activity", not "Hydration": inside the Hydration group the chain name is already
+    // said by the thing that opened, and a panel reading "Hydration › Hydration" tells the
+    // reader nothing about which of the four pages this is.
+    nav: 'DEX activity',
     title: 'Hydration DEX activity',
     blurb:
       'Swaps on the Omnipool: the per-leg chain events as the trades people actually made, valued in dollars, over a window the page states in days and in blocks.',
@@ -39,6 +68,7 @@ export const PAGES = [
   {
     key: 'hydration-market',
     kind: 'dashboard',
+    group: 'hydration',
     href: '/hydration-market/',
     nav: 'Money market',
     title: 'Hydration money market',
@@ -50,6 +80,7 @@ export const PAGES = [
   {
     key: 'hydration-wraps',
     kind: 'dashboard',
+    group: 'hydration',
     href: '/hydration-wraps/',
     nav: 'Wrap map',
     title: 'Hydration’s wrap map',
@@ -61,6 +92,7 @@ export const PAGES = [
   {
     key: 'hydration-peg',
     kind: 'dashboard',
+    group: 'hydration',
     href: '/hydration-peg/',
     nav: 'Pegs & OTC',
     title: 'Hydration pegs, the HSM, and the OTC book',
@@ -117,5 +149,54 @@ export const PAGES = [
 
 /** The dashboards, in order. The home page's deck is this, not `PAGES`. */
 export const DASHBOARDS = PAGES.filter((page) => page.kind === 'dashboard')
+
+/**
+ * The header nav: the same pages, with the grouped ones folded into their group.
+ *
+ * Derived from `PAGES` in `PAGES` order — a group is emitted where its first member sits and
+ * collects every member wherever it sits. So the bar is reordered by reordering this file, and
+ * a page cannot drop out of the nav by being moved.
+ *
+ * Two shapes come out, and both are PLAIN DATA on purpose:
+ *
+ *   { kind: 'link',  key, href, nav }
+ *   { kind: 'group', key, nav, blurb, items: [ { kind: 'link', … }, … ] }
+ *
+ * `vite.config.mjs` hands this straight to the knowledge-base plugin, which renders the same
+ * bar as static HTML at build time. Putting page objects in here would mean the two headers
+ * were built from different things, which is exactly the drift this list exists to prevent.
+ */
+export const NAV = buildNav()
+
+function buildNav() {
+  const link = ({ key, href, nav }) => ({ kind: 'link', key, href, nav })
+  const items = []
+  const started = new Map()
+
+  for (const page of PAGES) {
+    if (page.hidden) continue
+    if (!page.group) {
+      items.push(link(page))
+      continue
+    }
+
+    let group = started.get(page.group)
+    if (!group) {
+      const spec = GROUPS.find((candidate) => candidate.key === page.group)
+      // Thrown at import, which means the dev server and the build both refuse to start. A
+      // page quietly vanishing from the nav is the failure worth preventing here; this module
+      // is imported by every page and by vite.config.mjs, so there is nowhere for it to hide.
+      if (!spec) {
+        throw new Error(`pages.js: "${page.key}" is in group "${page.group}", which is not in GROUPS.`)
+      }
+      group = { kind: 'group', key: spec.key, nav: spec.nav, blurb: spec.blurb, items: [] }
+      started.set(spec.key, group)
+      items.push(group)
+    }
+    group.items.push(link(page))
+  }
+
+  return items
+}
 
 export const pageByKey = (key) => PAGES.find((page) => page.key === key)

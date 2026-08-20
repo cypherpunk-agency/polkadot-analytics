@@ -25,7 +25,7 @@ It never calls anything else — see [security.md](security.md).
 |---|---|
 | `<name>/index.html` | one directory per page; the directory **is** the URL. Vite discovers them. |
 | `src/pages/<name>/main.js` | the page. Usually about twenty lines: fetch, hand the payload to a renderer. |
-| `src/sources/pages.js` | the site map. Header nav and home index both read it. |
+| `src/sources/pages.js` | the site map. Header nav and home index both read it; `NAV` is the same list with the grouped pages folded in. |
 | `src/design/` | tokens, components, DOM helpers, the page harness, the chart kit. |
 | `src/core/` | pure modules shared by browser and server: codecs, pricing, the swap model, the API client. |
 | `src/data/` | committed derived datasets. |

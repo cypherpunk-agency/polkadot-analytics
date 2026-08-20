@@ -3,9 +3,14 @@
 // Every page calls `mountShell()` and gets the same chrome. The navigation is defined once,
 // here, from the same list the home page renders its index from — so a page that exists is
 // always in the nav, and a nav entry that goes nowhere cannot happen.
+//
+// It reads `NAV`, not `PAGES`: pages that share a subject are folded into a group there, and
+// the bar renders whatever shape it is handed. The same `NAV` is rendered as static HTML by
+// `chrome()` in scripts/knowledge.mjs — the two must stay in step, and a divergence shows up
+// as a visibly different header rather than silently.
 
 import { el, append } from './dom.js'
-import { PAGES } from '../sources/pages.js'
+import { NAV } from '../sources/pages.js'
 
 const STORAGE_KEY = 'pa-theme'
 
@@ -55,6 +60,96 @@ function themeButton() {
   return wireTheme(el('button.theme-btn', { type: 'button', 'aria-label': 'Change colour theme' }))
 }
 
+/* ------------------------------------------------------------------------------- the nav ---- */
+
+/**
+ * One entry on the bar: either a page, or a group of pages that share a subject.
+ *
+ * A GROUP IS A `<details>`, and that is the whole design decision. It opens, it closes, it
+ * answers the keyboard and it announces its own expanded state with no script at all — which
+ * this site actually needs, because the knowledge base ships its chrome as static HTML and is
+ * meant to read correctly with scripting off. A scripted menu would have to be reimplemented
+ * there, in a second language, and the two would drift. `wireNavGroups()` below adds the menu
+ * manners on top; none of them are load-bearing.
+ *
+ * The group's own label is NOT a link. `/hydration/` is a real page, so making the summary
+ * point at it would be tempting and wrong: on a touch device the tap that should open the
+ * panel would navigate instead, and the other three pages would be unreachable from the bar.
+ * The DEX page is the first entry inside the panel instead, where it can be reached.
+ */
+function navItem(item, active) {
+  // `aria-current` rather than a class: the styling hangs off the attribute, so the accessible
+  // state and the visible state cannot disagree.
+  const link = (entry) =>
+    el('a', { href: entry.href, text: entry.nav, 'aria-current': entry.key === active ? 'page' : null })
+
+  if (item.kind !== 'group') return link(item)
+
+  return el(
+    'details.nav-group',
+    { data: { group: item.key } },
+    // `aria-current="true"`, not `"page"`: the reader is on a page IN this group, not on the
+    // group. Two different facts, and the stylesheet marks them differently too.
+    el('summary', {
+      text: item.nav,
+      'aria-current': item.items.some((entry) => entry.key === active) ? 'true' : null,
+    }),
+    el(
+      'div.nav-panel',
+      null,
+      item.blurb ? el('p.nav-panel-note', { text: item.blurb }) : null,
+      ...item.items.map(link),
+    ),
+  )
+}
+
+/**
+ * The three manners a bare `<details>` does not have, and nothing beyond them.
+ *
+ * Opening one group closes the others; Escape closes the open one and puts focus back on its
+ * summary; a press outside, or the focus leaving by tab, closes it. Each is an enhancement: with
+ * this function never called the nav still works, it just leaves panels open behind you.
+ *
+ * Called by both `mountShell()` and `mountShellBehaviour()`, so the built chrome and the static
+ * knowledge-base chrome behave identically.
+ */
+export function wireNavGroups(root = document) {
+  const groups = [...root.querySelectorAll('.nav-group')]
+  if (groups.length === 0) return
+
+  for (const group of groups) {
+    group.addEventListener('toggle', () => {
+      if (!group.open) return
+      for (const other of groups) if (other !== group) other.open = false
+    })
+
+    // Tabbing past the last entry is a dismissal. A `relatedTarget` of null is not: that is a
+    // press on something unfocusable, which the outside-press handler below already owns —
+    // closing here too would shut the panel while the reader is still pointing at it.
+    group.addEventListener('focusout', (event) => {
+      if (event.relatedTarget && !group.contains(event.relatedTarget)) group.open = false
+    })
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    const open = groups.find((group) => group.open)
+    if (!open) return
+    open.open = false
+    // Focus goes back where it came from. Leaving it on a panel that no longer exists drops a
+    // keyboard reader at the top of the document.
+    open.querySelector('summary')?.focus()
+  })
+
+  // `pointerdown`, not `click`: one listener covers mouse, touch and pen, and the panel shuts
+  // on the press rather than a frame later on release. A press inside the group is left alone
+  // — including on a link, whose navigation is not this function's business.
+  document.addEventListener('pointerdown', (event) => {
+    if (groups.some((group) => group.contains(event.target))) return
+    for (const group of groups) group.open = false
+  })
+}
+
 /**
  * For pages whose chrome is STATIC MARKUP rather than built here: the knowledge base, which is
  * rendered to HTML at build time and ships no page module beyond this one call.
@@ -68,6 +163,7 @@ export function mountShellBehaviour(root = document) {
   applyTheme(readTheme())
   const button = root.querySelector('.theme-btn')
   if (button) wireTheme(button)
+  wireNavGroups(root)
 }
 
 /**
@@ -80,19 +176,7 @@ export function mountShell({ active } = {}) {
   // "Site sections", not "Dashboards": the nav carries the knowledge base too, and a label
   // that only a screen reader hears is exactly the one that goes stale unnoticed.
   const nav = el('nav.site-nav', { 'aria-label': 'Site sections' })
-  for (const page of PAGES) {
-    if (page.hidden) continue
-    append(
-      nav,
-      el('a', {
-        href: page.href,
-        text: page.nav,
-        // `aria-current` rather than a class: the styling hangs off the attribute, so the
-        // accessible state and the visible state cannot disagree.
-        'aria-current': page.key === active ? 'page' : null,
-      }),
-    )
-  }
+  for (const item of NAV) append(nav, navItem(item, active))
 
   const header = el(
     'header.site-head',
@@ -121,4 +205,6 @@ export function mountShell({ active } = {}) {
 
   document.body.prepend(header)
   document.body.append(footer)
+
+  wireNavGroups(header)
 }

@@ -106,6 +106,42 @@ Mark rules:
 - **One y-axis.** There is deliberately no dual-axis variant.
 - Crosshair and tooltip on every plot; a table view under or beside every chart.
 
+## The nav is grouped, and the group is a `<details>`
+
+The header bar reads `NAV` from `src/sources/pages.js`, not `PAGES`. `NAV` is derived: a page
+naming a `group` is folded into that group, which is emitted where its first member sits. So the
+bar is reordered by reordering the site map, a group cannot list a page that was never built,
+and a page cannot fall out of the nav by being moved.
+
+Grouping exists because half the dashboards here are Hydration. Flat, that put "Money market",
+"Wrap map" and "Pegs & OTC" on the bar as peers of XCM and Bulletin — three labels that name a
+subject without naming the chain, so nine entries read as nine unrelated things.
+
+**The group is a `<details>` element, and that is load-bearing rather than lazy.** It opens,
+closes, answers the keyboard and announces its own expanded state with no script at all. The
+knowledge base emits its chrome as static HTML and is meant to read with scripting off, so a
+scripted menu would have had to exist twice — once in `shell.js` and once in
+`scripts/knowledge.mjs` — in two languages, and the two would drift. `wireNavGroups()` adds
+three manners on top (opening one closes the others, Escape closes and restores focus, a press
+outside closes) and none of them are load-bearing: with it never called the nav still works.
+
+Two consequences worth not rediscovering:
+
+- **The group's label is not a link.** `/hydration/` is a real page, so pointing the summary at
+  it is tempting and wrong: on a touch device the tap that should open the panel navigates
+  instead, and the other three pages become unreachable from the bar. The DEX page is the first
+  entry *inside* the panel.
+- **`display` is never set on the `<summary>`.** A summary is a `list-item`, and changing that
+  has a history of breaking the disclosure itself in WebKit — marker and click both. The marker
+  is removed with `list-style: none` plus the `::-webkit-details-marker` rule, which leaves the
+  box alone. The caret is drawn from two borders rather than typed as `▾`, because that glyph is
+  a lottery across the system font stacks and the way it loses is a tofu box in the header of
+  every page.
+
+A page in the group marks its summary `aria-current="true"` and its panel link
+`aria-current="page"` — being *in* a section and *being* the page are different facts, and the
+stylesheet marks them differently.
+
 ## The four-state page
 
 `renderPage()` owns the states a data page actually has, which is the thing pages get wrong when

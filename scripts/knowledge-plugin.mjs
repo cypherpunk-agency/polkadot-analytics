@@ -74,7 +74,7 @@ function findAssets(bundle) {
  * @param {object} options
  * @param {string} options.root        repo root
  * @param {string} options.buildStamp  the same stamp the bundle is built with
- * @param {Array<{key:string,href:string,nav:string}>} options.navItems  the site map, from src/sources/pages.js
+ * @param {Array<object>} options.navItems  the finished header bar — `NAV` from src/sources/pages.js
  */
 export function knowledgePlugin({ root, buildStamp, navItems }) {
   return {

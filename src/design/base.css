@@ -175,6 +175,120 @@ kbd {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* ── a nav group ──────────────────────────────────────────────────────────────────────────
+ *
+ * Several pages about one subject, under one label. Half the dashboards here are Hydration,
+ * and flat they read as unrelated peers of XCM and Bulletin.
+ *
+ * It is a `<details>`, and that is load-bearing rather than lazy: it opens, closes, answers the
+ * keyboard and announces its expanded state with NO SCRIPT. The knowledge base emits its header
+ * as static HTML and is meant to read with scripting off, so a scripted menu would have had to
+ * exist twice, in two languages, and drift. shell.js only adds manners on top.
+ */
+
+.nav-group {
+  position: relative;
+}
+
+.nav-group > summary {
+  /* `display` is deliberately NOT set. A summary is a `list-item`, and changing that has a
+     history of breaking the disclosure itself in WebKit — the marker goes away and so does the
+     click. `list-style: none` removes the marker without touching the box, and the ::-webkit-
+     rule below covers the Safari versions that predate it. */
+  list-style: none;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+  color: var(--ink-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The caret is DRAWN, not typed. A "▾" glyph is a lottery across the system font stacks — and
+   the way it loses is a tofu box in the header, on every page. */
+.nav-group > summary::after {
+  content: '';
+  display: inline-block;
+  width: 0.34em;
+  height: 0.34em;
+  margin-inline-start: 0.45em;
+  vertical-align: 0.18em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+/* Rotated the other way the ink sits at the top of the box, so the alignment has to move with
+   it — otherwise the caret visibly hops when the panel opens. */
+.nav-group[open] > summary::after {
+  vertical-align: 0.05em;
+  transform: rotate(225deg);
+}
+
+.nav-group > summary:hover,
+.nav-group[open] > summary {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+/* The reader is on a page IN this group, not on the group. So it gets the accent rule that
+   marks the current section and NOT the filled background that marks the current page — two
+   different facts, two different marks, and the open panel shows which page it is. */
+.nav-group > summary[aria-current] {
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.nav-panel {
+  position: absolute;
+  inset-block-start: calc(100% + var(--s2));
+  inset-inline-start: 0;
+  /* Above the rest of the header, which is itself the z-index: 10 stacking context. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: max(100%, 17rem);
+  padding: var(--s2);
+  background: var(--surface);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  /* Opaque, bordered AND shadowed: this genuinely floats over page content, and the header's
+     backdrop blur does not extend to it. See --shadow-overlay. */
+  box-shadow: var(--shadow-overlay);
+}
+
+.nav-panel-note {
+  margin: 0 0 var(--s1);
+  padding: 0 var(--s2);
+  font-size: var(--step--1);
+  line-height: 1.35;
+  color: var(--ink-muted);
+  white-space: normal;
+}
+
+/* Narrow: the panel stops hanging off the group and spans the nav instead. Anchored to the
+   group it can start most of the way across a phone screen and run off the right edge — and an
+   overflowing header scrolls the whole page sideways. */
+@media (max-width: 44rem) {
+  .site-nav {
+    position: relative;
+  }
+
+  .nav-group {
+    position: static;
+  }
+
+  .nav-panel {
+    inset-inline: 0;
+    min-width: 0;
+  }
+}
+
 .theme-btn {
   font: inherit;
   font-family: var(--font-mono);

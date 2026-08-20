@@ -103,6 +103,11 @@
 
   /* Flat, not floaty. A drop shadow on a data card implies depth that the data does not have. */
   --border: 1px solid var(--rule);
+
+  /* The one exception, and only for things that genuinely ARE above the page: the chart
+     tooltip and the nav group's panel. Both overlay content they are not part of, and without
+     separation the reader has to work out which text belongs to which layer. */
+  --shadow-overlay: 0 6px 20px -8px rgb(0 0 0 / 0.35);
 }
 
 @media (prefers-color-scheme: dark) {

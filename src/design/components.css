@@ -687,7 +687,7 @@ details.data-table[open] > summary {
   border: var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 6px 20px -8px rgb(0 0 0 / 0.35);
+  box-shadow: var(--shadow-overlay);
   font-size: var(--step--1);
 }
 

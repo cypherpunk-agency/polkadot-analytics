@@ -20,6 +20,8 @@ Two kinds, and they route differently:
 
 Cost is a rough order of magnitude for the *research*, not the build.
 
+**`B<n>` here is not `B<n>` in the plan.** This file's B-series is *blocking questions*; `docs/concept/plan.md`'s B-series is *Wave B build items*. They are independent and they collide. Always write "research queue B5" rather than bare "B5" when crossing between the two documents — the existing cross-references do, and a bare label has already caused one round of confusion.
+
 ---
 
 ## Blocking

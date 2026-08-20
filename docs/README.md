@@ -8,6 +8,7 @@ Three kinds of document, kept apart on purpose.
 |---|---|
 | [overview.md](architecture/overview.md) | the map: request path, directories, where to start for a given task |
 | [middleware.md](architecture/middleware.md) | the shared data layer — the source registry, transports, caching, the failure taxonomy, the canonical swap model |
+| [jobs.md](architecture/jobs.md) | the store and the job system — facts, segments, job identity, leases, the politeness gate, and the handler contract |
 | [design-system.md](architecture/design-system.md) | tokens, the validated palette, chart rules, the four-state page, and the CSP trap that already cost us a silent bug |
 | [security.md](architecture/security.md) | public exposure, the CSP, why this is not an open proxy, resource limits, being a good citizen upstream |
 | [deployment.md](architecture/deployment.md) | image, health endpoints, push-to-deploy, what infra still owes |

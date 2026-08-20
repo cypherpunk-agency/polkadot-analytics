@@ -509,16 +509,18 @@ function checkDocs() {
       report(doc.file, `${doc.file} renders an unhandled link: ${match[0]}`, 'The renderer supports `[text](target)` and `[text](target "title")` only.')
     }
 
+    // Deliberately NOT routed through `report`: a local path fails the build wherever it is,
+    // published or not. The rule is that these do not exist in this repository at all. An
+    // unpublished document becomes a published one by a one-line edit to PUBLISHED_SECTIONS,
+    // and that is precisely the moment nobody re-reads the file — so a yellow note here would
+    // be a leak scheduled for later. It is also the one finding that costs nothing to fix.
     for (const { line, text } of localPaths(doc.source)) {
-      const where = `${doc.file}:${line} contains a local filesystem path: ${text}`
-      if (doc.published) {
-        fail('docs', where,
-          'This document is published at a world-readable URL. A path from somebody\'s machine says who they are and how they work, and it is meaningless to a reader. Replace it with the repository name or a relative path.')
-      } else {
-        // Not published, so not a disclosure — but it will become one the day the directory is
-        // added to PUBLISHED_SECTIONS, which is exactly when nobody will re-read the file.
-        note(`${where} — not published today, so this is not a leak; clean it before ever publishing \`${doc.section}/\`.`)
-      }
+      fail('docs', `${doc.file}:${line} contains a local filesystem path: ${text}`,
+        `A path from somebody's machine says who they are and how they work, and it is meaningless to every reader. ` +
+        (doc.published
+          ? 'This document is published at a world-readable URL.'
+          : `\`${doc.section}/\` is not published today, but publishing it is a one-line change and this would go out with it.`) +
+        ' Replace it with the repository name or a path relative to the repository root.')
     }
   }
 
@@ -553,6 +555,10 @@ function checkDocs() {
  * A local path on a public page is a small privacy leak (whose machine, what else is on it,
  * what the directory is called) and is useless to every reader. It gets in because these
  * documents are partly written by agents working across several checkouts.
+ *
+ * This FAILS anywhere in `docs/`, including the directories that are withheld from the site.
+ * Unlike a mangled construct or a dead link, a drive letter is not an intermediate state of a
+ * document being written — it is never right, and it never becomes right by being edited.
  *
  * The lookarounds are what keep this from firing on every URL in the repo: `https://` matches
  * a naive `[A-Za-z]:/` at the `s:/`. A drive letter is preceded by a non-letter and followed by

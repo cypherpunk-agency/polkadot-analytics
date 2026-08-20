@@ -26,6 +26,23 @@ registry.
 Polkadot, the People Chain, Hydration, Hyperbridge and the Bulletin chain — kept next to the code
 that queries them so the two stay honest about each other.
 
+## The three rules
+
+**1. No secrets, ever.** No API key, no token, no service-account file, no `.env` — not stored
+carefully, absent. Every upstream is anonymous public HTTP. Wanting a credential is a design
+conversation, not a config line, and the build fails on anything credential-shaped.
+
+**2. The browser talks only to this origin.** Every upstream call happens server-side, and the
+build fails if an absolute URL appears outside the source registry. Two reasons: the production
+CSP allows this origin and nothing else, so a direct fetch would fail *silently* — page renders,
+200 everywhere, chart empty — and these pages are heavy clients that would otherwise flatten a
+volunteer-run node once per visitor.
+
+**3. Say what is wrong with the number.** Every page carries a data-notes section generated from
+the same payload the charts are drawn from. An unpriced asset, an interpolated timestamp, a
+pallet account sitting in a "top traders" list, a dollar figure that is really a floor — these get
+stated on the page. A number without its caveat is worse than no number.
+
 ## Running it
 
 Requires Node 22+.
@@ -58,9 +75,19 @@ runtime image installs nothing.
 - `src/design/` — the design system. Every page is built from it and adds no CSS of its own.
 - `src/pages/` — one entry per dashboard, most about twenty lines.
 
-Start with [`CLAUDE.md`](CLAUDE.md) for the working agreements, or
-[`docs/architecture/middleware.md`](docs/architecture/middleware.md) for how the data layer fits
-together and why the browser never talks to a third party.
+## Documentation
+
+[`docs/`](docs/README.md) is three kinds of document, kept apart on purpose:
+`architecture/` is how this repo works, `platform/` is how Polkadot works, and `decisions/` is
+why we chose what we chose — argued, with what was rejected and what it costs.
+
+Good places to start: [`docs/architecture/overview.md`](docs/architecture/overview.md) for the
+map, [`docs/architecture/middleware.md`](docs/architecture/middleware.md) for the data layer and
+why the browser never talks to a third party, and [`CLAUDE.md`](CLAUDE.md) for the working
+agreements, several of which exist because something failed silently once.
+
+Most of `docs/` is also published, rendered from the same source, at
+[analytics.cypherpunk.agency/knowledge/](https://analytics.cypherpunk.agency/knowledge/).
 
 ## Deployment
 

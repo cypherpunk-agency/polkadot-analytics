@@ -53,6 +53,7 @@
 // values — each one is honestly a different identity, so dedup cannot help. That is what
 // MAX_LIVE_JOBS_PER_OPERATION below is for.
 
+import { JOB_PRIORITY } from './jobs.mjs'
 import { canonicalParams } from './store.mjs'
 
 /**
@@ -123,7 +124,18 @@ export async function serveFromStore({ store, queue, sourceId, operationId, para
     // A `partial` job is parked — cancelled, or interrupted with its cursor intact — and a
     // fresh reader IS the demand it was waiting for. `enqueue` re-queues it in place (same id,
     // cursor kept) rather than minting a second identity, so this stays idempotent.
-    const job = identity.live.state === 'partial' ? queue.enqueue(sourceId, operationId, params) : identity.live
+    //
+    // Either way the job is moved to READER priority, and this is the branch where that matters
+    // most. Boot warming enqueues the whole series before anybody visits, so the overwhelmingly
+    // common case for a page is not "create a job" — it is THIS one, joining a warm job already
+    // sitting in a queue of a hundred-odd siblings. Find-or-create means a second job is not an
+    // option (nor should it be: it would refetch what this one is already fetching), so the only
+    // lever a reader has is the position of the row they joined. Raise-only, so joining can move
+    // a job up and never down.
+    const job =
+      identity.live.state === 'partial'
+        ? queue.enqueue(sourceId, operationId, params, { priority: JOB_PRIORITY.reader })
+        : (queue.raisePriority(identity.live.id, JOB_PRIORITY.reader) ?? identity.live)
     // Unconditionally, because the gate that matters is `hasRunnable()` inside startWorker and
     // that is the SAME predicate `claim()` uses. Naming the states here instead was wrong in
     // exactly one case, and it is the case that matters: a job left `running` by a worker that
@@ -227,7 +239,7 @@ export async function serveFromStore({ store, queue, sourceId, operationId, para
     }
   }
 
-  const job = queue.enqueue(sourceId, operationId, params)
+  const job = queue.enqueue(sourceId, operationId, params, { priority: JOB_PRIORITY.reader })
   // Only now. An idle queue must spawn nothing — the worker costs 17 MB and exists to drain
   // work that exists.
   startWorker?.()
@@ -259,6 +271,11 @@ export function describeJob(store, job) {
     operation: job.operation,
     params: job.params,
     state: job.state,
+    // Where this job sits in the claim order (jobs.mjs, JOB_PRIORITY). Published for the same
+    // reason `error` is: a reader watching a coverage bar that is not moving deserves to be able
+    // to tell "queued behind a backfill nobody asked for" from "queued behind other readers",
+    // and it is not a secret — every field of a job row arrived from a public URL.
+    priority: job.priority,
     progress: progressOf(job),
     coverage: { segments: stored.segments, ...pickRange(stored) },
     attempts: job.attempts,

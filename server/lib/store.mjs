@@ -41,6 +41,9 @@ export function defaultDataDir() {
  * `schema_version` records how far this file has come. There is deliberately no "down" — a
  * store of facts fetched from upstreams that may since have died is not something to roll
  * back; a wrong migration gets a correcting migration.
+ *
+ * An entry is SQL, or a `(db) => void` for the cases SQL cannot express idempotently — see
+ * migration 3, and `migrate()` at the bottom of this file.
  */
 const MIGRATIONS = [
   // 1 — facts, jobs.
@@ -162,6 +165,39 @@ const MIGRATIONS = [
      AND params NOT LIKE '%network%'
      AND params LIKE '{"month":"____-__"}';
   `,
+
+  // 3 — jobs gain a `priority`, so a reader's request is claimed before a warm-enqueued one.
+  //
+  // Boot warming (decision 0014) put 135 identities in the queue at once on a cold store, and
+  // `claim()` was `ORDER BY id LIMIT 1` — FIFO by insertion. So the page that triggered a fetch
+  // waited behind every month nobody had asked for: measured in production on 2026-08-21, a
+  // reader asking for `netflows-daily?month=2026-07&network=polkadot` was job 74 of 135, about
+  // two hours behind, for a month that takes ~45 s on its own. Warming inverted the pre-warm
+  // situation, where a reader's request was the only job in the queue.
+  //
+  // A FUNCTION, not a string, and that is the whole reason `migrate` accepts one. `ALTER TABLE
+  // … ADD COLUMN` is the one statement here with no `IF NOT EXISTS` form, so replayed over a
+  // store that already has the column it fails with `duplicate column name` — which, inside
+  // `migrate`, means the store does not open AT ALL. Every other migration in this list is
+  // harmless twice by construction (migration 2's guards are in its own WHERE clauses) and this
+  // one has to meet the same standard, because `schema_version` is not the only thing that
+  // decides whether a step is replayed: a store half-converted by hand is a real state, and
+  // `server/test/store.test.mjs` deliberately rewinds the bookkeeping to prove it.
+  //
+  // DEFAULT 0 is `JOB_PRIORITY.warm` (jobs.mjs), so every row that already exists becomes a
+  // warm-priority row. That is the direction that behaves correctly on the deploy that ships
+  // this: a backlog mid-drain is exactly the warm work this exists to get out of a reader's
+  // way, and the first reader to ask for one of those identities raises it.
+  (db) => {
+    const columns = db.prepare('PRAGMA table_info(jobs)').all()
+    if (!columns.some((column) => column.name === 'priority')) {
+      db.exec('ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0')
+    }
+    // Claim order is (priority DESC, id ASC) over the runnable set. The table is small — a few
+    // hundred rows at most — so this index is about keeping the claim a lookup rather than a
+    // sort as the `done` rows accumulate, not about rescuing a slow query.
+    db.exec('CREATE INDEX IF NOT EXISTS jobs_priority ON jobs (priority DESC, id)')
+  },
 ]
 
 /** How far a fully-migrated store has come. Exported so a test can assert "every migration ran,
@@ -270,6 +306,36 @@ export class Store {
     }
   }
 
+  /**
+   * How many facts this (source, operation) holds whose segment sorts BEFORE `bound`, across
+   * every identity of the operation.
+   *
+   * Across identities, deliberately, and that is the point of the pair of methods rather than a
+   * per-params one: the question they exist for is "what does this store hold that its upstream
+   * can no longer produce" (server/lib/canary.mjs), and an upstream's retention floor is a fact
+   * about the operation, not about whichever month bucket a reader happened to ask for.
+   *
+   * Segments sort as strings (see the handler contract in job-worker.mjs), so `bound` is compared
+   * as one — for an ISO-dated segment that is its real order.
+   */
+  countFactsBefore(source, operation, bound) {
+    const row = this.#countBefore.get(source, operation, String(bound))
+    return Number(row?.n ?? 0)
+  }
+
+  /**
+   * The same rows, hydrated. Separate from the count on purpose: the count is a cheap index
+   * probe and the caller uses it to decide whether loading payloads is worth doing at all —
+   * in the healthy case the answer is zero and no payload is ever read.
+   */
+  readFactsBefore(source, operation, bound) {
+    // Fresh statement for the same reason as readFacts: draining reads must not share.
+    const statement = this.db.prepare(
+      'SELECT * FROM facts WHERE source = ? AND operation = ? AND segment < ? ORDER BY segment',
+    )
+    return this.#drain(statement.iterate(source, operation, String(bound)), hydrate)
+  }
+
   /** Segment ids only — for "which days are missing" set arithmetic. Can be large, so drained. */
   listSegments(source, operation, params) {
     // Fresh statement for the same reason as readFacts: draining reads must not share.
@@ -327,6 +393,9 @@ export class Store {
       `SELECT COUNT(*) AS segments, MIN(segment) AS earliest, MAX(segment) AS latest
        FROM facts WHERE source = ? AND operation = ? AND params = ?`,
     )
+  }
+  get #countBefore() {
+    return this.#prepare('SELECT COUNT(*) AS n FROM facts WHERE source = ? AND operation = ? AND segment < ?')
   }
 }
 
@@ -466,7 +535,12 @@ function migrate(db) {
   for (let next = current; next < MIGRATIONS.length; next += 1) {
     db.exec('BEGIN IMMEDIATE')
     try {
-      db.exec(MIGRATIONS[next])
+      // A step is SQL, or a function for the statements SQL has no idempotent form of. Both run
+      // inside the transaction opened above, so a function that throws halfway rolls back the
+      // same way a bad statement does.
+      const step = MIGRATIONS[next]
+      if (typeof step === 'function') step(db)
+      else db.exec(step)
       db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(next + 1)
       db.exec('COMMIT')
     } catch (problem) {

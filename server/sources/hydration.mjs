@@ -3369,6 +3369,116 @@ export default {
         return out
       },
 
+      /**
+       * THE DURABILITY CANARY — see server/lib/canary.mjs for what a canary is and is not.
+       *
+       * This repo's disaster-recovery position is "the store is a cache, it has no backup, it
+       * refills itself" (decision 0006). For this handler that is true only while orca still
+       * holds every day we hold. orca publishes a floor — the oldest block it has grouped swap
+       * legs into routed trades from — and the day that floor moves FORWARD past days already in
+       * the store, those days stop being re-derivable and the volume silently becomes their only
+       * copy. Every request keeps answering, every chart keeps drawing, the coverage bar still
+       * reads complete, and a refill onto a fresh volume comes back short at its OLDEST end.
+       *
+       * ── the comparison is against the STORE, not against a date ──────────────────────────────
+       * A hardcoded floor here would be the trap this repo keeps writing down: right until the
+       * thing it transcribes moves. And "the floor moved" is not on its own worth waking anybody
+       * — it only matters if we are HOLDING days below it. So both halves are read fresh: the
+       * floor from orca (the same one-request `HEAD_AND_FLOOR` `connect()` and every ingest
+       * already open with) and the days from the store.
+       *
+       * ── the discriminator, and why the obvious count is wrong ────────────────────────────────
+       * "Stored days below the floor" is NOT the answer: the healthy store deliberately holds
+       * 2025-01-01 … 2025-01-24 as `coverage: 'before-source-floor'` — days that were always
+       * below the floor, hold nothing, and re-derive to the same nothing. Counting those would
+       * make the canary fire on day one and be ignored ever after.
+       *
+       * A day is at risk exactly when the store holds REAL INDEXED CONTENT for it and it now
+       * sits below the floor. `ingestDay` records which of the two it is on the payload, so the
+       * payload is the discriminator: anything that is not `before-source-floor` was summarised
+       * from orca's index and cannot be got back. The `partial-source-floor` day — the one the
+       * floor falls inside — is naturally excluded while the floor is still inside it, because
+       * its own date IS the floor's date and the comparison is strict.
+       *
+       * ── cost ─────────────────────────────────────────────────────────────────────────────────
+       * A COUNT first, and payloads only if that count is non-zero: in the healthy state the
+       * candidates are the ~24 `before-source-floor` days of the floor's own month at 544 B each,
+       * and if the store's oldest month is above the floor it is zero rows and no payload read at
+       * all. The read only grows in the state that is already an alarm.
+       *
+       * `connect` is injectable ONLY so the arithmetic can be tested without an upstream, the
+       * same way `warm` takes it; `runCanaries` calls this with the store alone.
+       */
+      canary: async ({ store, sourceId = 'hydration', operationId = 'swaps-daily', connect: connectTo = connect } = {}) => {
+        if (!store) return null
+
+        const { floor } = await connectTo()
+        const floorAt = floor?.block?.timestamp ?? null
+        const floorMs = Date.parse(floorAt ?? '')
+        const floorBlock = floor?.paraBlockHeight ?? null
+        if (!Number.isFinite(floorMs)) {
+          // Not `ok`. orca answered with something we cannot read a floor out of, so whether the
+          // store still matches it is unknown — and `unknown` is the honest state for that.
+          throw new UpstreamError(
+            `orca reported its first routed trade at ${JSON.stringify(floorAt)}, which is not a timestamp ` +
+              'this site can parse, so where its floor sits cannot be established.',
+            { kind: 'decode', source: ORCA },
+          )
+        }
+        const floorDay = new Date(floorMs).toISOString().slice(0, 10)
+        const subject = 'orca routed-trade floor'
+
+        // Segments sort as ISO dates, so "before the floor's day" is a string comparison — the
+        // same ordering `readFacts`, `listSegments` and the coverage bar already use.
+        const below = store.countFactsBefore(sourceId, operationId, floorDay)
+        const atRisk =
+          below === 0
+            ? []
+            : (await store.readFactsBefore(sourceId, operationId, floorDay)).filter(
+                (fact) => fact.payload?.coverage !== 'before-source-floor',
+              )
+
+        const detail = {
+          floorBlock,
+          floorAt,
+          floorDay,
+          storedDaysBelowFloor: below,
+          daysNoLongerDerivable: atRisk.length,
+          earliestAtRisk: atRisk[0]?.segment ?? null,
+          latestAtRisk: atRisk[atRisk.length - 1]?.segment ?? null,
+        }
+
+        if (atRisk.length === 0) {
+          return {
+            subject,
+            state: 'ok',
+            message:
+              `orca's floor is para block ${floorBlock} at ${floorAt} (${floorDay}), and every stored day ` +
+              `with indexed content sits at or above it` +
+              (below === 0
+                ? ', with nothing stored below the floor at all'
+                : ` — the ${below} stored ${below === 1 ? 'day' : 'days'} below the floor ` +
+                  `${below === 1 ? 'holds' : 'hold'} nothing, which is what a pre-floor day is`) +
+              `. The store is still a cache: everything in it can be fetched again.`,
+            detail,
+          }
+        }
+
+        return {
+          subject,
+          state: 'at-risk',
+          message:
+            `orca's floor has moved past ${atRisk.length} stored ` +
+            `${atRisk.length === 1 ? 'day' : 'days'} of indexed trades (${detail.earliestAtRisk}` +
+            `${detail.earliestAtRisk === detail.latestAtRisk ? '' : ` to ${detail.latestAtRisk}`}): its first ` +
+            `routed trade is now para block ${floorBlock} at ${floorAt}. Those days CAN NO LONGER BE ` +
+            `RE-DERIVED — refetching them returns \`before-source-floor\`, i.e. nothing — so this volume ` +
+            `is their only copy and losing it loses them. The store has stopped being a pure cache for ` +
+            `this operation, which is the assumption its no-backup position rests on (decision 0006).`,
+          detail,
+        }
+      },
+
       // Knowable without asking anybody: a month has the number of days a month has. The engine
       // records it before the first batch so the coverage bar has a denominator from the start.
       plan: async ({ params }) => ({ totalUnits: daysOfMonth(params?.month ?? '').length || null }),

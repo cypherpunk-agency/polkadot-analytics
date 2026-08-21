@@ -44,6 +44,7 @@
 // identity — so the backfill would run twice, both copies would be correct, and the page would
 // still start empty. Normalising both through one validator is what makes them the same row.
 
+import { JOB_PRIORITY } from './jobs.mjs'
 import { readParams } from './params.mjs'
 
 /**
@@ -165,7 +166,10 @@ export async function warmStore({ store, queue, sources, log = (line) => console
           // re-queues it in place (same id, same cursor) rather than minting a second identity.
         }
 
-        jobs.push(queue.enqueue(source.id, operationId, params).id)
+        // WARM priority — the point of decision 0014's follow-up. Warming fills the store; it
+        // must never be in front of somebody. `enqueue` raises but never lowers, so re-queueing a
+        // `partial` job that a reader had already lifted (the branch just above) leaves it lifted.
+        jobs.push(queue.enqueue(source.id, operationId, params, { priority: JOB_PRIORITY.warm }).id)
       }
     }
   }

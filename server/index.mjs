@@ -49,6 +49,7 @@ import { JobQueue } from './lib/jobs.mjs'
 import { ensureWorker as spawnWorker } from './lib/job-worker.mjs'
 import { describeJob, serveFromStore } from './lib/demand.mjs'
 import { warmStore } from './lib/warm.mjs'
+import { runCanaries } from './lib/canary.mjs'
 import { describe, resolve as resolveOperation, resolveJob } from './sources/index.mjs'
 
 const ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)))
@@ -100,6 +101,20 @@ const CSP = [
 ].join('; ')
 
 const EMIT_CSP = process.env.NODE_ENV !== 'production'
+
+/**
+ * How often the durability canaries re-ask their upstreams (server/lib/canary.mjs).
+ *
+ * Fifteen minutes, on the same one-minute tick as the re-warm but its own clock. The thing being
+ * watched is a RETENTION POLICY — orca's routed-trade floor — and a retention policy moves at
+ * most a handful of times in the life of an indexer, so a minute-by-minute check would be one
+ * extra GraphQL request a minute, forever, to learn something that changes once. Fifteen minutes
+ * is still four orders of magnitude finer than the event, and it means the answer `/api/health`
+ * publishes is never more than a quarter of an hour old.
+ *
+ * It also runs once at boot, unconditionally, which is the reading a human sees in the deploy log.
+ */
+const CANARY_INTERVAL_MS = 15 * 60_000
 
 function send(res, status, body, headers = {}) {
   res.writeHead(status, {
@@ -179,6 +194,21 @@ async function serveApi(ctx, res, segments, query) {
         // directory serves mode B perfectly and mode A not at all, and that is a difference
         // worth being able to ask about rather than infer from a 503.
         store: { available: ctx.store !== null },
+        // THE DURABILITY CANARIES — server/lib/canary.mjs. Reported here rather than computed
+        // here: the checks talk to upstreams and this endpoint must not, so a background tick
+        // runs them and this publishes the last answer with the time it was taken.
+        //
+        // A sibling of `store` rather than a field inside it, deliberately. `store` answers "is
+        // mode A wired", the question a 503 makes you ask, and infra's own runbook greps this
+        // response for the literal `"store":{...}` — a nested array would quietly change what
+        // that matches. Two questions, two keys.
+        //
+        // `canaries.ok` is the one field an alert needs: false when anything is at risk OR could
+        // not be checked, null when nothing has been checked yet — which is NOT the same as true
+        // and must not be read as it. It deliberately does NOT move the `ok` above: a store that
+        // has stopped being re-derivable is a thing to tell somebody about, not a reason to
+        // restart a container or take a healthy site out of a load balancer.
+        canaries: ctx.canaries,
       },
       { 'cache-control': 'no-store' },
     )
@@ -378,7 +408,17 @@ export function createApp({
 
   // `store` and `queue` live on ctx rather than in closed-over consts because they may be
   // attached AFTER the request handler exists — see `openStoreNow` and the entry point.
-  const ctx = { cache, store: null, queue: null, registry, startWorker, startedAt: Date.now() }
+  const ctx = {
+    cache,
+    store: null,
+    queue: null,
+    registry,
+    startWorker,
+    startedAt: Date.now(),
+    // Never checked yet. `ok: null` is not `ok: false` and is certainly not `true` — see
+    // server/lib/canary.mjs, and CLAUDE.md on null never standing in for a value.
+    canaries: { ok: null, checkedAt: null, reports: [] },
+  }
 
   function startWorker() {
     // The worker exists to drain work that exists. `hasRunnable` is the gate: an idle queue
@@ -388,6 +428,29 @@ export function createApp({
     // handle. Derived from the store we actually opened rather than from `dataDir`, which a
     // test passing a ready-made store never sets.
     if (ctx.queue?.hasRunnable()) ensureWorker({ dir: ctx.store ? dirOf(ctx.store.path) : dataDir })
+  }
+
+  /**
+   * Run the durability canaries and keep the answer for `/api/health` to publish. Guarded
+   * against overlap for the same reason the re-warm is: each canary talks to an upstream, and two
+   * passes in flight would double a request that exists to be cheap.
+   *
+   * It cannot throw. `runCanaries` turns a handler's failure into an `unknown` report rather than
+   * propagating it, and the catch here is for the case that surprises even that — a canary must
+   * never be able to take down a server that is serving perfectly well.
+   */
+  let checking = false
+  async function checkCanaries(options = {}) {
+    if (!ctx.store || checking) return ctx.canaries
+    checking = true
+    try {
+      ctx.canaries = await runCanaries({ store: ctx.store, ...options })
+    } catch (problem) {
+      console.error('[canary] check failed:', problem?.message ?? problem)
+    } finally {
+      checking = false
+    }
+    return ctx.canaries
   }
 
   function attach(store) {
@@ -506,8 +569,8 @@ export function createApp({
      * Never throws: a warm-up that fails must not be able to take down a server that is
      * already serving.
      */
-    async startBackgroundWork({ pollMs = 60_000, ...options } = {}) {
-      if (!ctx.store) return { warmed: null, resumed: false }
+    async startBackgroundWork({ pollMs = 60_000, canaryMs = CANARY_INTERVAL_MS, ...options } = {}) {
+      if (!ctx.store) return { warmed: null, resumed: false, canaries: ctx.canaries }
       let warmed = null
       try {
         warmed = await warmStore({ store: ctx.store, queue: ctx.queue, ...options })
@@ -516,6 +579,7 @@ export function createApp({
       }
       const resumed = Boolean(ctx.queue?.hasRunnable())
       startWorker()
+      await checkCanaries(options)
 
       if (pollMs > 0 && !poller) {
         // The tick re-warms as well as starting the worker, and the re-warm is the half that is
@@ -545,6 +609,10 @@ export function createApp({
                   rewarming = false
                 })
             }
+            // On the SAME tick but a much slower clock — see CANARY_INTERVAL_MS. Not awaited,
+            // and it cannot throw out of here: checkCanaries swallows its own failures into an
+            // `unknown` report, which is the answer a check that could not run should give.
+            if (canaryMs > 0 && Date.now() - (ctx.canaries.checkedAt ?? 0) >= canaryMs) void checkCanaries(options)
           } catch (problem) {
             // A poll that throws must not become an unhandled rejection that kills the process.
             console.error('[warm] poll failed:', problem?.message ?? problem)
@@ -552,7 +620,7 @@ export function createApp({
         }, pollMs)
         poller.unref?.()
       }
-      return { warmed, resumed }
+      return { warmed, resumed, canaries: ctx.canaries }
     },
 
     close() {
@@ -611,7 +679,7 @@ if (invokedDirectly) {
     // Deliberately not awaited. Warming enqueues rows and spawns the drain worker; the worker
     // is a thread doing hours of polite serial fetching, and the HTTP server has no business
     // waiting on any of it.
-    app.startBackgroundWork().then(({ warmed, resumed }) => {
+    app.startBackgroundWork().then(({ warmed, resumed, canaries }) => {
       // Silent when there is nothing to say. A line on every boot of an instance that warms
       // nothing is a line nobody reads, and this one has to be read when it appears.
       if (warmed?.considered) {
@@ -624,6 +692,12 @@ if (invokedDirectly) {
         )
       }
       if (resumed) console.log('[warm] the queue had runnable work; the drain worker was started')
+      // Only when there is something to say. `runCanaries` already logged each non-ok report in
+      // full; this is the one line that says the boot check happened and found nothing, and it is
+      // printed only when a check actually ran — silence must not read as "all clear".
+      if (canaries?.ok === true) {
+        console.log(`[canary] ${canaries.reports.length} durability check(s) passed; the store is still re-derivable`)
+      }
     })
   })
 

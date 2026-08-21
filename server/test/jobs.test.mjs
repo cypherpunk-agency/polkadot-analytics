@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { openStore } from '../lib/store.mjs'
-import { JobQueue, LeaseLostError } from '../lib/jobs.mjs'
+import { JobQueue, JOB_PRIORITY, LeaseLostError } from '../lib/jobs.mjs'
+import { serveFromStore } from '../lib/demand.mjs'
 import { runJob, drainQueue, HostGate } from '../lib/job-worker.mjs'
 
 /** A store in a throwaway directory, a queue with no backoff delay, and a fake clock. */
@@ -429,4 +430,144 @@ test('drainQueue runs everything claimable and stops', async (t) => {
   const results = await drainQueue(store, queue, { resolveHandler: () => pagedHandler({ pages: 2 }) })
   assert.deepEqual(results.map((job) => job.state), ['done', 'done'])
   assert.equal(queue.hasRunnable(), false)
+})
+
+
+/* ------------------------------------------------------- priority: a reader goes first ---- */
+//
+// Boot warming (decision 0014) enqueues the whole series before anybody visits, and `claim()` was
+// FIFO by insertion — so the page that triggered a fetch waited behind every month nobody had
+// asked for. Measured in production on 2026-08-21: a reader's `netflows-daily?month=2026-07&
+// network=polkadot` was job 74 of 135, `queued`, about two hours back, for a month that takes
+// ~45 s on its own. These four tests are the four halves of the fix, and each of them is a way
+// it could be got wrong quietly.
+
+/** A handler that records every batch it is asked for, as `<name>:<page>`. The RECORD is the
+ *  assertion here: what matters is not only that the right jobs ran but in what order, and
+ *  whether anything was fetched twice across a hand-over. */
+function tracingHandler(seen, pages = 3) {
+  return {
+    immutable: () => true,
+    nextBatch: async ({ params, cursor }) => {
+      const page = cursor === null ? 0 : cursor.page
+      seen.push(`${params.name}:${page}`)
+      return {
+        rows: [{ segment: `p${page}`, payload: { page } }],
+        cursor: { page: page + 1 },
+        done: page + 1 >= pages,
+        doneUnits: page + 1,
+      }
+    },
+  }
+}
+
+test('claim order is priority first, insertion second — and the default is warm', (t) => {
+  const { queue } = rig(t)
+  const first = queue.enqueue('syn', 'pages', { n: 1 })
+  const second = queue.enqueue('syn', 'pages', { n: 2 })
+  // Third in, and the one a reader asked for.
+  const reader = queue.enqueue('syn', 'pages', { n: 3 }, { priority: JOB_PRIORITY.reader })
+
+  assert.equal(first.priority, JOB_PRIORITY.warm, 'omitting the option must mean warm, not reader')
+  assert.equal(reader.priority, JOB_PRIORITY.reader)
+
+  // Not `first`. That is the whole bug.
+  assert.equal(queue.claim().id, reader.id)
+  // …and within one priority the order is unchanged: FIFO by id, as it always was.
+  assert.equal(queue.claim().id, first.id)
+  assert.equal(queue.claim().id, second.id)
+})
+
+test('find-or-create RAISES a warm job rather than minting a second, and warming cannot lower it', (t) => {
+  const { queue } = rig(t)
+  const warmed = queue.enqueue('syn', 'pages', { month: '2026-07' })
+  assert.equal(warmed.priority, JOB_PRIORITY.warm)
+
+  // A reader asking for a month warming already queued. One row, moved — never two, which the
+  // partial unique index would refuse anyway and which would refetch what is already in flight.
+  const joined = queue.enqueue('syn', 'pages', { month: '2026-07' }, { priority: JOB_PRIORITY.reader })
+  assert.equal(joined.id, warmed.id)
+  assert.equal(joined.priority, JOB_PRIORITY.reader)
+  assert.equal(queue.list().length, 1)
+
+  // The once-a-minute re-warm comes round again at warm priority. RAISE-ONLY: it must not put
+  // the reader's job back down, or the fix would undo itself sixty seconds later.
+  assert.equal(queue.enqueue('syn', 'pages', { month: '2026-07' }).priority, JOB_PRIORITY.reader)
+
+  // And the same through `raisePriority`, which is the path demand.mjs takes when a reader joins
+  // a live job without enqueueing at all.
+  const other = queue.enqueue('syn', 'pages', { month: '2026-06' })
+  assert.equal(queue.raisePriority(other.id, JOB_PRIORITY.reader).priority, JOB_PRIORITY.reader)
+  assert.equal(queue.raisePriority(other.id, JOB_PRIORITY.warm).priority, JOB_PRIORITY.reader)
+})
+
+test('a running warm job steps aside for a reader at the next BATCH boundary, and resumes where it stopped', async (t) => {
+  const { store, queue } = rig(t)
+  const seen = []
+
+  for (const name of ['warm-a', 'warm-b']) queue.enqueue('syn', 'pages', { name })
+
+  let planted = false
+  await drainQueue(store, queue, {
+    resolveHandler: () => tracingHandler(seen),
+    onProgress: () => {
+      // A reader arrives one batch into the backlog — the production case exactly.
+      if (planted) return
+      planted = true
+      queue.enqueue('syn', 'pages', { name: 'reader' }, { priority: JOB_PRIORITY.reader })
+    },
+  })
+
+  assert.deepEqual(seen, [
+    // The batch already in flight is NOT pre-empted: rows and cursor commit together first.
+    'warm-a:0',
+    // Then the drain is handed over — after ONE batch, not after warm-a's whole job.
+    'reader:0',
+    'reader:1',
+    'reader:2',
+    // warm-a resumes at page 1. Nothing is refetched: `p0` is not asked for twice.
+    'warm-a:1',
+    'warm-a:2',
+    'warm-b:0',
+    'warm-b:1',
+    'warm-b:2',
+  ])
+  assert.deepEqual(queue.list().map((job) => job.state), ['done', 'done', 'done'])
+})
+
+test('equal priorities never yield to each other — two warm jobs do not hand the drain back and forth', async (t) => {
+  const { store, queue } = rig(t)
+  const seen = []
+  queue.enqueue('syn', 'pages', { name: 'a' })
+  queue.enqueue('syn', 'pages', { name: 'b' })
+
+  await drainQueue(store, queue, { resolveHandler: () => tracingHandler(seen) })
+
+  // Strictly greater, in `hasRunnableAbove`. Non-strict would interleave these forever, one
+  // batch each, with every batch correct and the queue never emptying.
+  assert.deepEqual(seen, ['a:0', 'a:1', 'a:2', 'b:0', 'b:1', 'b:2'])
+})
+
+test('a reader JOINING a warm job through serveFromStore raises it — the production path', async (t) => {
+  const { store, queue } = rig(t)
+  const handler = { immutable: () => true, nextBatch: async () => ({ rows: [], done: true }) }
+
+  // Boot warming got there first, at warm priority.
+  const warmed = queue.enqueue('hydration', 'swaps-daily', { month: '2026-07' })
+  assert.equal(warmed.priority, JOB_PRIORITY.warm)
+
+  const answer = await serveFromStore({
+    store,
+    queue,
+    sourceId: 'hydration',
+    operationId: 'swaps-daily',
+    params: { month: '2026-07' },
+    handler,
+    startWorker: () => {},
+  })
+
+  assert.equal(answer.status, 200)
+  assert.equal(answer.body.job.id, warmed.id, 'the reader joins the warm job; a second row would refetch it')
+  assert.equal(queue.list().length, 1)
+  assert.equal(queue.get(warmed.id).priority, JOB_PRIORITY.reader, 'joining is the only lever a reader has')
 })

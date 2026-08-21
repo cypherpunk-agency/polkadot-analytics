@@ -57,6 +57,15 @@
 // batch returned — a crash between batches replays at most one page, and because facts insert
 // idempotently on their segment key, the replay is free.
 //
+// ── the batch is also the unit of fairness ───────────────────────────────────────────────────
+// Between batches — never inside one — the engine asks whether anything now outranks the job it
+// is running (JOB_PRIORITY in jobs.mjs), and steps aside if so: back to `queued`, cursor intact,
+// re-claimed the moment the reader who overtook it is served. So a batch is not only the unit of
+// commit and of replay-on-crash, it is ALSO the longest a reader can be made to wait behind work
+// nobody asked for. Sizing one is therefore a latency decision as well as a throughput one:
+// `swaps-daily` uses one day (~9 s measured) and `netflows-daily` ten (~14 s), against months
+// that take four and a half minutes and forty-five seconds respectively.
+//
 // `gate(host, fn)` is the politeness gate: at most ONE in-flight upstream request per host,
 // across every job this worker runs. Handlers wrap each upstream call in it, naming the host —
 // the hostname string lives in the source module, where hostnames belong, not here.
@@ -151,6 +160,17 @@ export async function runJob(store, queue, job, { resolveHandler = registryHandl
     }
 
     let cursor = job.cursor
+    // How many batches THIS run has committed. It gates the yield below, and that gate is what
+    // makes yielding terminate: every step aside costs the queue one re-claim and buys it one
+    // committed batch of real progress, so a higher-priority row that is visible to
+    // `hasRunnableAbove` but that this drainer cannot actually take (another process adopting a
+    // lapsed lease, say) turns into a slower drain rather than a tight loop that never fetches
+    // anything.
+    let committed = 0
+    // Re-read after every batch rather than trusted from the claim: a reader arriving mid-run
+    // may have raised THIS job's priority, and comparing against the stale value would make it
+    // step aside for itself — correct, but a wasted claim on the one job somebody is waiting for.
+    let priority = job.priority
     if (cursor === null && handler.plan) {
       const planned = await handler.plan({ params: job.params, gate: gate.run })
       if (planned && planned.totalUnits !== undefined) {
@@ -166,6 +186,22 @@ export async function runJob(store, queue, job, { resolveHandler = registryHandl
         const parked = queue.markPartial(job.id)
         onProgress?.(parked)
         return parked
+      }
+
+      // Step aside for a reader. A RUNNING job is never pre-empted mid-batch — the rows and the
+      // cursor that cover them commit together or not at all, and that invariant comes before
+      // anybody's latency — but between batches it costs nothing to hand the drain over, and
+      // between batches is close enough: a `swaps-daily` batch is ONE day (~9 s measured) and a
+      // `netflows-daily` batch is ten (~14 s), so the wait a reader inherits from work already in
+      // flight is seconds, not the four-and-a-half minutes a whole Hydration month takes.
+      //
+      // The job goes back to `queued` with its cursor intact, so it is claimable again in this
+      // same drain the moment nothing outranks it. Nothing is refetched: the last committed
+      // cursor is where it resumes, exactly as after a crash.
+      if (committed > 0 && queue.hasRunnableAbove(priority)) {
+        const stepped = queue.yieldJob(job.id)
+        onProgress?.(stepped)
+        return stepped
       }
 
       const batch = await handler.nextBatch({ params: job.params, cursor, gate: gate.run })
@@ -202,8 +238,10 @@ export async function runJob(store, queue, job, { resolveHandler = registryHandl
         queue.advance(job.id, { cursor, doneUnits: batch.doneUnits, totalUnits: batch.totalUnits })
         if (batch.done) queue.complete(job.id)
       })
+      committed += 1
 
       const current = queue.get(job.id)
+      priority = current?.priority ?? priority
       onProgress?.(current)
       if (batch.done) return current
     }

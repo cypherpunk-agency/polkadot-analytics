@@ -54,6 +54,35 @@ const RUNNABLE_WHERE = `(
   OR (state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
 )`
 
+/**
+ * Who asked. Two values, because there are two askers and the difference between them is the
+ * only thing the queue needs to order by.
+ *
+ * Before boot warming existed (decision 0014) a reader's request was the ONLY job in the queue,
+ * so claiming `ORDER BY id` — first in, first out — served the page that triggered the fetch.
+ * Warming inverted that: a cold store enqueues 135 identities before anybody visits, and FIFO
+ * then means the page waits on work queued for it in advance. Measured in production on
+ * 2026-08-21: a reader asking for `netflows-daily?month=2026-07&network=polkadot` got job 74 of
+ * 135, `queued`, behind about two hours of warm work, for a month that takes ~45 s on its own.
+ * Nothing was broken — jobs 1 and 2 were `done` — the ordering was simply wrong for the case
+ * that matters.
+ *
+ * `MAX_LIVE_JOBS_PER_OPERATION` was meant to protect readers and warming is deliberately exempt
+ * from it, which made this worse rather than better. Priority is the fix, and it is a fix at the
+ * point of claiming rather than at the point of enqueueing: warming should still fill the store,
+ * it should just never be in front of somebody.
+ *
+ * NUMBERS, not an enum, so a third asker can sit between them without a migration. The gap is
+ * deliberate.
+ */
+export const JOB_PRIORITY = {
+  /** Nobody asked yet. Boot warming (server/lib/warm.mjs) and anything else speculative. Also
+   *  the column default, so every row that predates the priority migration is one of these. */
+  warm: 0,
+  /** Somebody is looking at a page waiting for this, or a maintainer typed it at the CLI. */
+  reader: 10,
+}
+
 /** Backoff never exceeds an hour, and the exponent is capped so a large `maxAttempts` cannot
  *  overflow into an int64 that no later read can represent as a JS number (observed: attempt
  *  40 at the default base poisons the row for every subsequent SELECT). */
@@ -115,8 +144,16 @@ export class JobQueue {
    * because a new request IS the demand that resuming was waiting for. Only a `done` or
    * `gave-up` history permits a genuinely new row (an explicit re-derive, or a retry after a
    * fix — either way, deliberate).
+   *
+   * `priority` (JOB_PRIORITY above) is RAISE-ONLY on an existing job, and find-or-create is why
+   * that matters rather than being a nicety. A reader asking for a month warming already queued
+   * must JOIN that job — minting a second one for the same identity is the thing the partial
+   * unique index exists to prevent — so the only way their request can be served sooner is by
+   * moving the row they joined. Raise-only, in both directions: a reader's demand lifts a warm
+   * job, and the once-a-minute re-warm that re-queues a `partial` job afterwards must not put it
+   * back down (server/lib/warm.mjs enqueues at `warm` unconditionally).
    */
-  enqueue(source, operation, params = {}) {
+  enqueue(source, operation, params = {}, { priority = JOB_PRIORITY.warm } = {}) {
     const key = canonicalParams(params)
     return this.store.transaction(() => {
       const existing = this.db
@@ -127,6 +164,9 @@ export class JobQueue {
         .get(source, operation, key, ...LIVE_STATES)
 
       if (existing) {
+        // Before the state transitions below, so every one of them returns a row already
+        // carrying the priority this call asked for.
+        this.#raise(existing.id, priority)
         if (existing.state === 'partial') {
           // Re-queued NOW: clear the cancel flag AND any backoff left over from the attempt
           // that was cancelled — a demand that resumes a parked job should not silently wait
@@ -146,17 +186,43 @@ export class JobQueue {
           this.db.prepare('UPDATE jobs SET cancel_requested = 0, updated_at = ? WHERE id = ?').run(this.now(), existing.id)
           return this.get(existing.id)
         }
-        return toJob(existing)
+        // Re-read rather than `toJob(existing)`: the row in hand was SELECTed before #raise ran,
+        // so returning it would hand the caller the priority the job had a moment ago. That is
+        // the reading a reader's own request would get back — the one place it must be current.
+        return this.get(existing.id)
       }
 
       const created = this.db
         .prepare(
-          `INSERT INTO jobs (source, operation, params, state, max_attempts, created_at, updated_at)
-           VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+          `INSERT INTO jobs (source, operation, params, state, max_attempts, priority, created_at, updated_at)
+           VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(source, operation, key, this.maxAttempts, this.now(), this.now())
+        .run(source, operation, key, this.maxAttempts, priority, this.now(), this.now())
       return this.get(Number(created.lastInsertRowid))
     })
+  }
+
+  /**
+   * Move a job UP the claim order, never down. `MAX(priority, ?)` in SQL rather than a read and
+   * a compare in JS, so two processes racing the same raise cannot lose one of them.
+   *
+   * Public because a reader who JOINS a live job does not go through `enqueue` at all
+   * (server/lib/demand.mjs answers a live identity with one indexed lookup and no insert) — and
+   * that join is the exact case this whole mechanism exists for: the reader's month is on the
+   * warm list, so a warm job for it already exists and the reader's only lever is its position.
+   *
+   * @returns {Job | undefined} the job as it now stands
+   */
+  raisePriority(id, priority) {
+    this.#raise(id, priority)
+    return this.get(id)
+  }
+
+  #raise(id, priority) {
+    if (!Number.isFinite(priority)) return
+    this.db
+      .prepare('UPDATE jobs SET priority = MAX(priority, ?), updated_at = ? WHERE id = ? AND priority < ?')
+      .run(priority, this.now(), id, priority)
   }
 
   /** @returns {Job | undefined} */
@@ -181,12 +247,16 @@ export class JobQueue {
    * `running` under a lease owned by THIS queue instance. One transaction, so two workers
    * cannot claim the same row. A lapsed-lease `running` job is runnable too — claiming it IS
    * the recovery, and stamping a new owner is what fences the old one out.
+   *
+   * `priority DESC, id` — a reader's request first, and FIFO within one priority, which is what
+   * the order was before priority existed. Ordering, not filtering: a warm job is still claimed
+   * the instant no reader is waiting, so nothing here slows a backfill down.
    */
   claim(id = null) {
     return this.store.transaction(() => {
       const row = id === null
         ? this.db
-            .prepare(`SELECT * FROM jobs WHERE ${RUNNABLE_WHERE} ORDER BY id LIMIT 1`)
+            .prepare(`SELECT * FROM jobs WHERE ${RUNNABLE_WHERE} ORDER BY priority DESC, id LIMIT 1`)
             .get(this.now(), this.now())
         : this.db
             .prepare(`SELECT * FROM jobs WHERE id = ? AND ${RUNNABLE_WHERE}`)
@@ -337,6 +407,31 @@ export class JobQueue {
     })
   }
 
+  /**
+   * Step aside for something more urgent. `queued`, not `partial`, and the cursor stays — so the
+   * job is claimable again the moment nothing outranks it, in the SAME drain, with no new demand
+   * needed.
+   *
+   * That distinction is the whole of the difference from `markPartial`, and getting it wrong
+   * would be quiet: `partial` is not in RUNNABLE_WHERE, so a job parked there sits until
+   * something enqueues it again. The once-a-minute re-warm would eventually do that, which is
+   * exactly the kind of "recovers, just later, for a reason nobody can see" this queue keeps
+   * being bitten by. A yield is not a surrender and must not look like one.
+   *
+   * Ownership-guarded like every other running-state write: a deposed engine yields nothing.
+   * Called only between committed batches (server/lib/job-worker.mjs), so the rows-with-cursor
+   * invariant is untouched — the batch that was in flight has already committed both.
+   */
+  yieldJob(id) {
+    this.db
+      .prepare(
+        `UPDATE jobs SET state = 'queued', lease_expires_at = NULL, lease_owner = NULL, updated_at = ?
+         WHERE id = ? AND state = 'running' AND lease_owner = ?`,
+      )
+      .run(this.now(), id, this.owner)
+    return this.get(id)
+  }
+
   /** The engine observed the cancel flag (or is parking an interrupted run). Cursor stays.
    *  Ownership-guarded; a deposed engine parks nothing and just gets the current state back. */
   markPartial(id) {
@@ -454,6 +549,26 @@ export class JobQueue {
     return row !== undefined
   }
 
+  /**
+   * Is something claimable that outranks `priority`? The running engine asks this between
+   * batches; a yes is what makes it step aside (`yieldJob`).
+   *
+   * STRICTLY greater, and that is not a detail. Equal priorities must never yield to each other
+   * or two warm jobs would hand the drain back and forth doing one batch each, forever, with
+   * every batch correct and the queue never emptying.
+   *
+   * It reads COMMITTED state, so the reader whose request raised a job on the HTTP thread's
+   * connection is seen by the worker thread — the same cross-connection property `cancelRequested`
+   * relies on.
+   */
+  hasRunnableAbove(priority) {
+    if (!Number.isFinite(priority)) return false
+    const row = this.db
+      .prepare(`SELECT id FROM jobs WHERE priority > ? AND ${RUNNABLE_WHERE} LIMIT 1`)
+      .get(priority, this.now(), this.now())
+    return row !== undefined
+  }
+
   /** The running engine polls this between batches; it reads committed state, so a cancel
    *  issued from another process (the CLI, say) is seen too. */
   cancelRequested(id) {
@@ -499,6 +614,7 @@ export class JobQueue {
  * @property {unknown} cursor                    parsed; null = start
  * @property {number|null} doneUnits             null = not knowable
  * @property {number|null} totalUnits            null = not knowable
+ * @property {number} priority                   JOB_PRIORITY; higher is claimed first
  */
 function toJob(row) {
   return {
@@ -508,6 +624,7 @@ function toJob(row) {
     params: JSON.parse(row.params),
     paramsKey: row.params,
     state: row.state,
+    priority: Number(row.priority ?? JOB_PRIORITY.warm),
     cursor: row.cursor === null ? null : JSON.parse(row.cursor),
     doneUnits: row.done_units,
     totalUnits: row.total_units,

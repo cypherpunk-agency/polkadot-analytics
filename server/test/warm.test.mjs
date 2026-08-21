@@ -104,7 +104,15 @@ test('a deferred open that fails leaves the app serving with mode A off', async 
   assert.equal(app.queue, null)
   // And startBackgroundWork is a no-op rather than a throw — a warm-up must never be able to
   // take down a server that is already answering.
-  assert.deepEqual(await app.startBackgroundWork(), { warmed: null, resumed: false })
+  //
+  // `canaries.ok` is NULL, not true. With no store there is nothing to check, and "we did not
+  // look" must never be published as "nothing is wrong" — the same rule liveness applies to an
+  // upstream that will not say where its head is (server/lib/canary.mjs).
+  assert.deepEqual(await app.startBackgroundWork(), {
+    warmed: null,
+    resumed: false,
+    canaries: { ok: null, checkedAt: null, reports: [] },
+  })
 })
 
 test('the poll picks up a job whose lease had not yet lapsed at boot', async (t) => {

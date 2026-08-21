@@ -333,3 +333,58 @@ test('migration 2 run a SECOND time changes nothing', (t) => {
     canonicalParams({ month: '2024-03', network: 'polkadot' }),
   )
 })
+
+
+/* ------------------------------------------------- migration 3: the priority column ---- */
+//
+// The one migration in this file that is a schema change rather than a data rewrite, and the one
+// statement SQLite has no idempotent form of. `ALTER TABLE … ADD COLUMN` replayed over a store
+// that already has the column fails with `duplicate column name` — which, inside `migrate()`,
+// means the store does not open AT ALL. So the step is a function that looks first, and this is
+// the test that it looks.
+
+test('migration 3 adds `priority` defaulting to warm, and is harmless replayed', (t) => {
+  const box = atSchemaOne(t, (db) => {
+    // A job row as it existed before priority did — no such column, so nothing to set.
+    putJob(db, { params: canonicalParams({ month: '2024-03', network: 'polkadot' }), state: 'queued' })
+  })
+
+  const once = box.open()
+  const row = once.db.prepare('SELECT id, priority FROM jobs').get()
+  // Zero is JOB_PRIORITY.warm. A backlog mid-drain when this ships IS the warm work the priority
+  // exists to get out of a reader's way, so that is the direction that behaves correctly.
+  assert.equal(Number(row.priority), 0)
+  assert.equal(once.db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, MIGRATION_COUNT)
+
+  // Rewind the bookkeeping and replay every migration over a store that already has the column.
+  // `schema_version` is not the only thing that decides whether a step runs twice — a store
+  // half-converted by hand is a real state, and a throw here is a container that will not boot.
+  once.db.exec('DELETE FROM schema_version WHERE version > 1')
+  once.close()
+
+  const twice = box.open()
+  assert.equal(Number(twice.db.prepare('SELECT priority FROM jobs').get().priority), 0)
+  assert.equal(twice.db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, MIGRATION_COUNT)
+})
+
+/* ------------------------------------------------ the bounded read the canary uses ---- */
+
+test('countFactsBefore/readFactsBefore span every identity of one operation', async (t) => {
+  const store = scratch(t).open()
+
+  for (const [month, day] of [['2025-01', '2025-01-24'], ['2025-01', '2025-01-26'], ['2025-02', '2025-02-03']]) {
+    store.putFact({ source: 'hydration', operation: 'swaps-daily', params: { month }, segment: day, payload: { day } })
+  }
+  // A different operation must not be swept in.
+  store.putFact({ source: 'hydration', operation: 'other', params: { month: '2025-01' }, segment: '2025-01-01', payload: {} })
+
+  // Across identities, deliberately: an upstream's retention floor is a fact about the operation,
+  // not about whichever month bucket a reader happened to ask for.
+  assert.equal(store.countFactsBefore('hydration', 'swaps-daily', '2025-01-25'), 1)
+  assert.equal(store.countFactsBefore('hydration', 'swaps-daily', '2025-02-04'), 3)
+  assert.equal(store.countFactsBefore('hydration', 'swaps-daily', '2020-01-01'), 0)
+
+  const below = await store.readFactsBefore('hydration', 'swaps-daily', '2025-02-01')
+  assert.deepEqual(below.map((fact) => fact.segment), ['2025-01-24', '2025-01-26'])
+  assert.deepEqual(below.map((fact) => fact.payload.day), ['2025-01-24', '2025-01-26'])
+})

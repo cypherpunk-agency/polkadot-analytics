@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/check.mjs — everything CI enforces, runnable in one command on a laptop.
 //
-// WHY this exists instead of a linter: style is not what would hurt this repo. Five things
+// WHY this exists instead of a linter: style is not what would hurt this repo. Seven things
 // would, and each one is silent until it is expensive:
 //
 //   1. A SYNTAX ERROR reaching the container. There is no test suite and no framework to catch
@@ -25,6 +25,13 @@
 //      In a script it is worse than a disclosure: it is a default that works for exactly one
 //      person, so the command runs on one machine and fails everywhere else with a path nobody
 //      recognises. That is how `npm run data:netflows` came to be unreproducible.
+//   7. A THIRD STORE-BACKED JOB HANDLER. Not a code defect at all — a promise to somebody outside
+//      this repository. Infra sized the volume on a storage figure that is a sum over exactly two
+//      handlers, and accepted "no eviction, no backup" on the condition that they are told when
+//      that changes. A third would ship, fill, and cost disk nobody re-forecast, with the
+//      documents still quoting the old number and the build still green. See
+//      MEASURED_JOB_HANDLERS in the registry group: a promise to remember is worth nothing at the
+//      moment it matters, which is a year from now in somebody else's pull request.
 //
 // Dependency-free on purpose. `vite` is this repo's only dependency and it is a devDependency;
 // a verification script that needed its own toolchain would be the first crack in that.
@@ -268,6 +275,44 @@ function checkSecrets() {
 /* --------------------------------------------------------- group 3: the source registry ---- */
 
 /**
+ * The store-backed job handlers this repo's DISK SIZING was measured against.
+ *
+ * This list is a promise made to somebody outside this repository, which is why it is code and
+ * not a comment. Infra accepted the store's terms — no eviction, a ~16 MB terminal size, ~6 MB a
+ * year of growth — on one explicit condition: *"flag it if a third job handler ever gets added,
+ * since that's what actually breaks the 16 MB bound."* Every figure they sized the volume on is
+ * a sum over exactly these two handlers, and a third would invalidate all of them silently: it
+ * would ship, fill, and cost disk that nobody re-forecast, with the documents still quoting the
+ * old number and the build still green.
+ *
+ * A promise to remember is worth nothing at the moment it matters, which is a year from now in
+ * somebody else's pull request. So `npm run check` refuses the build instead.
+ *
+ * Both directions are checked, not just additions: a handler REMOVED also makes the published
+ * figures wrong, and a list that is allowed to silently over-state what exists stops being
+ * evidence of anything.
+ *
+ * See DISCHARGING_A_HANDLER_CHANGE below for what to do about a failure. Do not edit this list
+ * on its own — the list is the last step, not the first.
+ */
+const MEASURED_JOB_HANDLERS = ['asset-hub/netflows-daily', 'hydration/swaps-daily']
+
+/** What a change to that list obliges, in the order it has to happen. */
+const DISCHARGING_A_HANDLER_CHANGE =
+  'The store size published to infra is a sum over exactly the handlers in MEASURED_JOB_HANDLERS\n' +
+  '(scripts/check.mjs), and it is now wrong. Discharge it in this order:\n' +
+  '  1. Measure the new handler: bytes per stored segment, and segments per year. The method and\n' +
+  '     the two existing measurements are in docs/architecture/jobs.md, "What the store actually\n' +
+  '     costs" — a day of Hydration trades is 14–17 kB and a day of netflows is ~1.4 kB, so the\n' +
+  '     answer is nowhere near guessable from the count of handlers.\n' +
+  '  2. Update the storage figures in docs/architecture/jobs.md and docs/architecture/deployment.md\n' +
+  '     (the ~16 MB terminal size, the ~6 MB/year growth, and the 1 GB volume sizing that rests on\n' +
+  '     them). Infra sized the disk on those numbers and asked to be told when they move.\n' +
+  '  3. Tell infra. The volume has no quota and this service never deletes a fact\n' +
+  '     (decision 0006), so the only control is a disk alert somebody set using the old figure.\n' +
+  '  4. THEN add the handler to MEASURED_JOB_HANDLERS, in the same commit as the measurement.'
+
+/**
  * `/api` is generated from this registry, so a missing field does not throw — it publishes a
  * blank. And `ttlMs` is not cosmetic: it is both the cache TTL and the `cache-control` the
  * browser and Caddy are handed, so a source without one would be re-fetched on every request
@@ -291,6 +336,8 @@ async function checkRegistry() {
 
   let operationCount = 0
   let jobCount = 0
+  /** Every `<source>/<job>` the registry actually declares, for the sizing tripwire below. */
+  const declaredJobHandlers = []
   for (const [key, source] of Object.entries(sources)) {
     const where = `source \`${key}\``
     if (typeof source?.id !== 'string' || !source.id) fail('registry', `${where} has no \`id\`.`, 'It is the first path segment of /api/<source>/<operation>.')
@@ -326,6 +373,7 @@ async function checkRegistry() {
     // One operation, one mode, checked here rather than discovered on a dashboard.
     for (const [jobId, handler] of Object.entries(source.jobs ?? {})) {
       jobCount += 1
+      declaredJobHandlers.push(`${key}/${jobId}`)
       const jobWhere = `job \`${key}/${jobId}\``
       if (Object.prototype.hasOwnProperty.call(source.operations, jobId)) {
         fail('registry', `${jobWhere} has the same name as an operation of the same source.`,
@@ -340,10 +388,47 @@ async function checkRegistry() {
             'The job engine refuses a handler that does not implement the contract at the top of server/lib/job-worker.mjs.')
         }
       }
+      // The optional hooks. Both are called from a BACKGROUND tick with nothing watching the
+      // return value, so a misspelt one — `warmup`, `canaries` — is not an error anywhere: the
+      // handler simply never warms, or is never checked, and both look exactly like "there is
+      // nothing to do here". A wrong TYPE under the right name is the same silence, and this is
+      // the only place it can be caught.
+      for (const optional of ['warm', 'canary', 'plan']) {
+        if (handler?.[optional] !== undefined && typeof handler[optional] !== 'function') {
+          fail('registry', `${jobWhere} declares \`${optional}\` but it is not a function.`,
+            'It is called from a background tick (server/lib/warm.mjs, server/lib/canary.mjs) whose only\n' +
+            'signal is the value it returns, so a wrong type here is silence rather than an error.')
+        }
+      }
     }
   }
 
+  // ── the store-sizing tripwire ────────────────────────────────────────────────────────────
+  // Not a registry-shape check like the ones above: this one is about a number in a document and
+  // a disk on somebody else's VM. See MEASURED_JOB_HANDLERS.
+  const declared = [...declaredJobHandlers].sort()
+  const measured = [...MEASURED_JOB_HANDLERS].sort()
+  const added = declared.filter((name) => !measured.includes(name))
+  const removed = measured.filter((name) => !declared.includes(name))
+
+  if (added.length > 0 || removed.length > 0) {
+    const what = [
+      added.length > 0 ? `NEW: ${added.join(', ')}` : null,
+      removed.length > 0 ? `GONE: ${removed.join(', ')}` : null,
+    ]
+      .filter(Boolean)
+      .join('; ')
+    fail(
+      'registry',
+      `the store-backed job handlers have changed (${what}). The measured set is ` +
+        `${measured.join(', ')} — ${measured.length} handler${measured.length === 1 ? '' : 's'}; ` +
+        `the registry now declares ${declared.length}: ${declared.join(', ')}.`,
+      DISCHARGING_A_HANDLER_CHANGE,
+    )
+  }
+
   console.log(dim(`  registry: ${Object.keys(sources).length} sources, ${operationCount} operations, ${jobCount} store-backed job${jobCount === 1 ? '' : 's'}`))
+  console.log(dim(`         store sizing measured against: ${measured.join(', ')} (scripts/check.mjs, MEASURED_JOB_HANDLERS)`))
 }
 
 /* ------------------------------------------------------ group 4: no third-party origins ---- */

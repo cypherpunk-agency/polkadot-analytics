@@ -24,7 +24,7 @@
 // `assets=["DOT","USDC"]`.
 
 import { openStore, defaultDataDir } from '../server/lib/store.mjs'
-import { JobQueue } from '../server/lib/jobs.mjs'
+import { JobQueue, JOB_PRIORITY } from '../server/lib/jobs.mjs'
 import { drainQueue, HostGate } from '../server/lib/job-worker.mjs'
 
 const [command, ...rest] = process.argv.slice(2)
@@ -48,7 +48,11 @@ try {
     case 'enqueue': {
       const [source, operation, ...pairs] = rest
       if (!source || !operation) quit('enqueue needs <source> <operation> [key=value ...]')
-      const job = queue.enqueue(source, operation, readPairs(pairs))
+      // READER priority: somebody typed this. It outranks anything boot warming put in the queue
+      // (server/lib/jobs.mjs, JOB_PRIORITY), which is the whole reason an operator reaches for
+      // this command mid-backfill — to get one month out in front of the other hundred. Raise-only,
+      // so enqueueing an identity warming already holds moves it up rather than minting a second.
+      const job = queue.enqueue(source, operation, readPairs(pairs), { priority: JOB_PRIORITY.reader })
       print(job)
       break
     }
@@ -90,7 +94,13 @@ try {
     case 'list': {
       const [state] = rest
       for (const job of queue.list({ state })) {
-        console.log(`${String(job.id).padStart(5)}  ${job.state.padEnd(8)}  ${job.source}/${job.operation} ${job.paramsKey}  ${progress(job)}`)
+        // The priority column is what makes a starved reader visible in one glance: a `queued`
+        // row at `reader` sitting behind a `running` row at `warm` is the picture this list has
+        // to be able to show.
+        console.log(
+          `${String(job.id).padStart(5)}  ${job.state.padEnd(8)}  ${priorityName(job).padEnd(6)}  ` +
+            `${job.source}/${job.operation} ${job.paramsKey}  ${progress(job)}`,
+        )
       }
       break
     }
@@ -150,6 +160,13 @@ function readPairs(pairs) {
 /** Machine-readable result on stdout — the CLI is scriptable, prose goes to stderr. */
 function print(value) {
   console.log(JSON.stringify(value, null, 2))
+}
+
+/** The priority's NAME where there is one, the number where there is not — a bare integer in a
+ *  list of states says nothing, and an unrecognised one must still print rather than be hidden. */
+function priorityName(job) {
+  const found = Object.entries(JOB_PRIORITY).find(([, value]) => value === job.priority)
+  return found ? found[0] : String(job.priority)
 }
 
 function progress(job) {

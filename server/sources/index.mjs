@@ -16,6 +16,8 @@ import hydration from './hydration.mjs'
 import hydrationEvm from './hydration-evm.mjs'
 import hyperbridge from './hyperbridge.mjs'
 import interlay from './interlay.mjs'
+import prices from './prices.mjs'
+import transfers from './transfers.mjs'
 
 export const SOURCES = Object.fromEntries(
   [
@@ -28,6 +30,8 @@ export const SOURCES = Object.fromEntries(
     assetHub,
     bulletin,
     interlay,
+    prices,
+    transfers,
   ].map((source) => [source.id, source]),
 )
 

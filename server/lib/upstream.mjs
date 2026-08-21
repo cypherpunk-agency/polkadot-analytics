@@ -137,6 +137,62 @@ export async function graphql({ source, url, query, variables, timeoutMs, maxByt
   return body.data
 }
 
+/**
+ * NDJSON (`application/jsonl`) over POST — one JSON value per line, which is how archive
+ * gateways stream a range of blocks. It does its own `fetch` rather than going through
+ * `callUpstream` for one reason: that function ends in `JSON.parse(text)`, and a line-delimited
+ * body is not a JSON document. Everything else it promises is kept here — the timeout, the size
+ * ceiling, and `transport` vs `upstream` staying distinguishable.
+ *
+ * The response HEADERS come back too, and that is not incidental. SQD's portal reports its
+ * archive head on `x-sqd-head-number` of every stream response, so the liveness assertion costs
+ * nothing on a call that was happening anyway. See docs/platform/sqd-portal.md.
+ *
+ * @returns {Promise<{lines: unknown[], headers: Headers, bytes: number}>}
+ */
+export async function ndjson({ source, url, body, timeoutMs = 60_000, maxBytes = 24 * 1024 * 1024 }) {
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { accept: 'application/jsonl, application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (cause) {
+    const why = cause?.name === 'TimeoutError' ? `did not answer within ${timeoutMs / 1000}s` : 'could not be reached'
+    throw new UpstreamError(`${source} ${why}.`, { kind: 'transport', source, cause })
+  }
+
+  const text = await readCapped(response, maxBytes, source)
+  if (!response.ok) {
+    // The portal reports parameter errors as a JSON object with a readable message. Surfacing it
+    // beats "HTTP 400", which for a query DSL is almost never enough to fix the query.
+    let detail = ''
+    try {
+      detail = ` ${JSON.parse(text)?.error?.message ?? ''}`.trimEnd()
+    } catch {
+      /* not JSON; the status is all we have */
+    }
+    throw new UpstreamError(`${source} returned HTTP ${response.status}.${detail}`, {
+      kind: 'upstream',
+      source,
+      status: response.status,
+    })
+  }
+
+  const lines = []
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    try {
+      lines.push(JSON.parse(line))
+    } catch (cause) {
+      throw new UpstreamError(`${source} returned a line that is not JSON.`, { kind: 'decode', source, cause })
+    }
+  }
+  return { lines, headers: response.headers, bytes: text.length }
+}
+
 /** Substrate JSON-RPC over anonymous HTTPS POST. */
 export async function jsonRpc({ source, url, method, params = [], timeoutMs, maxBytes }) {
   const body = await callUpstream({

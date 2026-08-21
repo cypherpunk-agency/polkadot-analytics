@@ -156,8 +156,8 @@ export const PAGES = [
     nav: 'Account',
     title: 'Follow an account',
     blurb:
-      'One account on Hydration: what flowed in and out by asset, the trades behind it, and how much of that account’s history the window actually covers.',
-    source: 'Hydration orca indexer',
+      'One account: who it sent value to and received it from on Polkadot Asset Hub and the relay chain, with every counterparty a link so the graph can be walked one hop at a time — and, separately bounded, what it traded on Hydration.',
+    source: 'SQD archive + Hydration orca',
     live: true,
   },
   {

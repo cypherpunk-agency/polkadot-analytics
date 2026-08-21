@@ -154,6 +154,65 @@ independent gates pointed at the same volunteer-run node. `drainQueue` returns `
 empty array — when another live drainer holds the lock: "someone else is on it" is a different
 answer from "nothing to do".
 
+### Priority: a reader is claimed before a warm-enqueued job
+
+Jobs carry a `priority` (`JOB_PRIORITY`, `server/lib/jobs.mjs`): **`warm` (0)** for anything
+speculative, **`reader` (10)** for a request, a CLI `enqueue`, or anything else a human is waiting
+on. `claim()` takes `ORDER BY priority DESC, id` — **ordering, never filtering**, so a warm job is
+claimed the instant no reader is waiting and no backfill is slowed down.
+
+This was not a problem while a reader's own request was the only job in the queue. Decision 0014
+changed that: a cold volume enqueues **135 identities before anybody visits**. Measured in
+production 2026-08-21, under the old `ORDER BY id LIMIT 1`, a reader asking for
+`netflows-daily?month=2026-07&network=polkadot` got **job 74 of 135, `queued`**, behind about two
+hours of warm work, for a month that takes ~45 s on its own. Every request answered 200 with a
+correct coverage envelope; the page simply never filled. `MAX_LIVE_JOBS_PER_OPERATION` was meant to
+protect readers and warming is deliberately exempt from it, which made this *worse* rather than
+better.
+
+Three properties, each of which is a way this goes wrong quietly:
+
+- **Raise-only.** Find-or-create means a reader asking for a warmed month **joins** its job; a
+  second row is impossible (the partial unique index) and would refetch what is already in flight.
+  So the only lever a reader has is the position of the row they joined, and `enqueue` /
+  `raisePriority` raise but never lower — otherwise the once-a-minute re-warm would put every lifted
+  job back down sixty seconds later.
+- **No mid-batch pre-emption.** The rows-and-cursor invariant comes first. The engine checks between
+  batches only, and steps aside back to **`queued`** with the cursor intact, so it is re-claimed in
+  the same drain the moment the reader is served and nothing is refetched. Not `partial`: `partial`
+  is not in `RUNNABLE_WHERE`, so a job parked there would sit until something enqueued it again —
+  recovering a minute later, via the re-warm, for a reason nobody could see.
+- **Strictly greater.** `hasRunnableAbove` uses `priority > ?`. Two jobs at one priority must never
+  yield to each other, or they hand the drain back and forth one batch each, for ever, with every
+  batch correct and the queue never emptying.
+
+Measured two ways on 2026-08-21. A 135-identity cold store, real boot, synthetic upstream at the
+real batch granularity, reader arriving after three jobs had been claimed:
+
+| | FIFO (before) | priority (after) |
+|---|---|---|
+| reader's job claimed | **55th** | **4th** — the very next one |
+| jobs run between the GET and the answer | **52** | **1** (the batch already in flight) |
+
+The batch trace shows the hand-over exactly: `2022-03 days 1-10` (the in-flight batch, not
+pre-empted) → `2026-07 days 1-10, 11-20, 21-30, 31-31` (the reader's whole month) → `2022-03 days
+11-20` (resumed, nothing refetched).
+
+Then against the real registry and real upstreams on a cold volume: the reader's month was **job 74
+of 135** — the production number — `queued` at priority 0; the GET raised it to 10 without minting a
+second row; job 1 (`swaps-daily 2025-01`, running at 29/31) committed its in-flight day, stepped
+aside to `queued` with its cursor at `2025-01-31` and 30 stored segments; job 74 was claimed next
+and reached `done` at 31/31.
+
+Tests: the five priority cases in `server/test/jobs.test.mjs`. The reasoning, and the four rejected
+alternatives, are in
+[decision 0018](../decisions/0018-a-readers-job-outranks-a-warm-one.md).
+
+**A batch is therefore the unit of fairness as well as the unit of commit,** which makes batch size
+a **latency** decision and not only a throughput one: one batch is the longest a reader can be made
+to wait behind work nobody asked for. `swaps-daily` commits one day (~9 s), `netflows-daily` ten
+(~14 s), against whole months of 4.5 min and 45 s respectively.
+
 ### Where it runs
 
 A `worker_threads` worker in the same process: +17 MB measured, against about 47 MB for a second
@@ -180,6 +239,19 @@ jobs: {
       // May the answer still change? Consulted before the first batch. A handler that
       // answers false is REFUSED — mutable data belongs on the TTL cache, and a predicate
       // wrong in the permissive direction freezes a partial answer forever. Be conservative.
+
+    warm: () => [params, …],
+      // OPTIONAL, and a deployment concern rather than a fetching one: the identities worth
+      // filling BEFORE a reader asks. Called at boot and on the minute tick by
+      // server/lib/warm.mjs, never on a request path. Everything it returns goes through this
+      // handler's own `schema` and `immutable`, and an identity that is already complete is
+      // skipped, so a warm list may safely be "every month of the series" for ever. May be
+      // async. See deployment.md, boot step 3, for the three rules a warm list has to obey.
+
+    canary: async ({ store, sourceId, operationId }) => report | null,
+      // OPTIONAL. Does this handler's upstream still hold everything the store holds? A
+      // REPORTING condition, never an error: it does not throw, fail a request or stop a job.
+      // See server/lib/canary.mjs and decision 0019.
 
     plan: async ({ params, gate }) => ({ totalUnits }),
       // Optional. Runs once, before the first batch, to size the work.
@@ -363,6 +435,15 @@ make.
 So the range a `jobs` handler costs is **0.5 kB to 17 kB per day** on this evidence, and the thing
 that moves it is how much summarising the payload does — not how busy the chain was. Both handlers
 are nearly flat in the underlying volume.
+
+**The two handlers measured above are pinned as a tripwire.** They are listed in
+`MEASURED_JOB_HANDLERS` in `scripts/check.mjs`, and `npm run check` fails the registry group if a
+third is added or one is removed. Infra sized the volume on these figures and asked to be told when
+they move; a promise to remember is worth nothing at the moment it matters, which is a year from now
+in somebody else's pull request. The failure message carries the four steps that discharge it, in
+order — measure, update the figures in this document and in
+[deployment.md](deployment.md), tell infra, and **then** add the handler to the list, in the same
+commit as the measurement.
 
 ## What does not belong here
 

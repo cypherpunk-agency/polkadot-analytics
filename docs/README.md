@@ -58,6 +58,8 @@ written account of what it is querying.
 | [0015](decisions/0015-netflows-is-parameterised-by-network.md) | one netflows implementation parameterised by network, with `network` **required** — and what adding a param to a filled job costs |
 | [0016](decisions/0016-a-comparison-inherits-its-worst-reading.md) | a page does not carry a comparison whose reference point it cannot defend |
 | [0017](decisions/0017-a-control-sits-with-what-it-changes.md) | a control belongs to the smallest thing it changes; the global row is for load parameters only |
+| [0018](decisions/0018-a-readers-job-outranks-a-warm-one.md) | a reader's job outranks a warm one — priority orders the claim, and a batch is the unit of fairness |
+| [0019](decisions/0019-the-store-canaries-its-own-derivability.md) | the store canaries its own derivability, because "no backup" is a claim about upstreams |
 
 ## `concept/` — working notes, deliberately not published
 

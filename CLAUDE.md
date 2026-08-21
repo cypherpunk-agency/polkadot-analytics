@@ -482,3 +482,18 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   LOADED with, so using Network after flipping the graph silently reverts the graph. `src/design/page.js`
   keeps a `relinkers` set for exactly this. See
   `docs/decisions/0017-a-control-sits-with-what-it-changes.md`.
+- **The store stops being a cache the day an upstream's floor moves past a day we hold, and nothing
+  in the system would notice.** The no-backup DR position (decision 0006) is a claim about
+  UPSTREAMS, not about us: it holds only for as long as every stored segment can still be fetched
+  again. orca publishes a routed-trade floor — para block **6,837,788 @ 2025-01-25T05:58:36Z**, read
+  live 2026-08-21 — and if it moves forward, the days beneath it stop being re-derivable and the
+  volume silently becomes their only copy. Every request still answers, every chart still draws, the
+  coverage bar still reads complete, and a refill onto a fresh volume comes back **short at its
+  OLDEST end**. `hydration/swaps-daily` now declares a `canary` (`server/lib/canary.mjs`) that
+  compares the live floor against the store at boot and every 15 min, published as `canaries.ok` on
+  `/api/health`. **And the naive version of that comparison is a false alarm on day one**: a healthy
+  store deliberately holds 2025-01-01…24 as `coverage: 'before-source-floor'`, so "stored days below
+  the floor" fires immediately, gets explained away once, and is then ignored for ever — an alarm
+  nobody reads is indistinguishable from no alarm. The discriminator is the stored payload's own
+  `coverage`: only a day holding INDEXED content that now sits below the floor has actually been
+  lost. See `docs/decisions/0019-the-store-canaries-its-own-derivability.md`.

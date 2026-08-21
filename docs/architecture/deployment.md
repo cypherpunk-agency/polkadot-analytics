@@ -186,7 +186,8 @@ Returns `200` and JSON:
   "build": "<the deployed git sha>",
   "uptimeSeconds": 41,
   "cache": { "entries": 12, "approxBytes": 918273, "hits": 88, "misses": 12, "…": 0 },
-  "store": { "available": true }
+  "store": { "available": true },
+  "canaries": { "ok": true, "checkedAt": 1755772800000, "reports": [ … ] }
 }
 ```
 
@@ -204,6 +205,30 @@ the hard way. `false` means the container came up without a writable `/data`: ev
 answers normally and every store-backed operation answers 503, so the site looks entirely healthy
 from the outside while `/netflows/` is broken for every visitor. Nothing else distinguishes the two
 states.
+
+**`canaries.ok` is the durability alarm, and it is deliberately not `ok`.**
+
+```
+curl -s https://analytics.cypherpunk.agency/api/health | jq '.canaries'
+# want: .canaries.ok == true
+```
+
+The top-level `ok` stays `true` when a canary fires. A store that has stopped being re-derivable is
+something to tell a human about, not a reason to restart a container or pull a healthy site out of a
+load balancer. `canaries.ok` is `true` / `false` / **`null`** — null means nothing has been checked
+yet (a container with no volume, or the first seconds after boot) and **must not be read as
+`true`**. Each report carries a sentence naming the *consequence*, not a reading; a reading in an
+alert is a thing people learn to scroll past.
+
+Today there is exactly one, `hydration/swaps-daily` watching orca's routed-trade floor. If it goes
+`at-risk`, the store has stopped being a pure cache for that operation and this volume is the only
+copy of the days the message names — **that is the point at which a backup stops being
+unnecessary.** It re-checks at boot and every 15 minutes; `/api/health` publishes the last answer
+and the time it was taken. See
+[decision 0019](../decisions/0019-the-store-canaries-its-own-derivability.md).
+
+`canaries` is a sibling of `store` rather than a field inside it, so the `"store":{...}` grep in the
+runbook below still matches byte for byte.
 
 ### What neither of them does
 
@@ -244,6 +269,13 @@ The order is load-bearing, so it is written down rather than left to be read out
 > networks. `MAX_LIVE_JOBS_PER_OPERATION` (8) is counted per `(source, operation)` **across all
 > params**, so warming Polkadot alone would put 55 live jobs on that operation and a Kusama reader
 > arriving during the drain would be refused with "the queue is busy" for the whole of it.
+>
+> **A reader is not starved by that warm-up.** The 135 identities a cold volume enqueues are all at
+> `warm` priority; the first request for any of them raises the one it joins to `reader`, and the
+> drain hands over at the next batch boundary. So a visitor arriving mid-refill waits one batch
+> (≤ ~14 s), not the two hours the backlog takes. Before that existed it really was the two hours,
+> measured in production: job 74 of 135, answering 200 with a correct coverage envelope the whole
+> time. See [jobs.md](jobs.md#priority-a-reader-is-claimed-before-a-warm-enqueued-job).
 
 ## Push-to-deploy
 
@@ -374,6 +406,9 @@ What has to happen on `web-server` (`europe-west1-b`), once:
    ```
    curl -s https://analytics.cypherpunk.agency/api/health | grep -o '"store":{[^}]*}'
    # want: "store":{"available":true}
+
+   curl -s https://analytics.cypherpunk.agency/api/health | jq '.canaries.ok'
+   # want: true. null means nothing has been checked yet — wait for the first tick.
    ```
 
    Then watch it fill. `/api/asset-hub/netflows-daily?month=2026-07&network=polkadot` answers 200

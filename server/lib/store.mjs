@@ -24,8 +24,8 @@
 // that produced it (plan §6.1): a store you cannot audit is a store you cannot re-derive.
 
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { join, resolve as resolvePath } from 'node:path'
+import { accessSync, constants as FS, mkdirSync, statSync } from 'node:fs'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolvePath(fileURLToPath(new URL('../..', import.meta.url)))
@@ -281,7 +281,13 @@ export function openStore({ dir = defaultDataDir() } = {}) {
   const path = join(dir, 'store.sqlite')
   let db
   try {
-    mkdirSync(dir, { recursive: true })
+    ensureDir(dir)
+    // Asked BEFORE SQLite is, purely for the message. `new DatabaseSync` on an unwritable
+    // directory says "unable to open database file" and names neither the directory nor the
+    // reason; access(2) distinguishes EACCES (wrong owner — a bind mount the container's uid
+    // does not own) from EROFS (the --read-only rootfs, i.e. no volume is mounted at all),
+    // and those have completely different remedies.
+    accessSync(dir, FS.W_OK)
     db = new DatabaseSync(path)
 
     // WAL lets the HTTP thread read while the worker writes; busy_timeout makes a cross-process
@@ -306,8 +312,78 @@ export function openStore({ dir = defaultDataDir() } = {}) {
     )
   }
 
-  migrate(db)
+  // Outside the catch above on purpose — a migration failure is a schema problem, not a
+  // "point ANALYTICS_DATA_DIR somewhere writable" problem, and dressing it as one would send
+  // the reader to the wrong place. But the handle must not leak: without this, a failed
+  // migration left an open SQLite connection (and its WAL) behind on a process that then went
+  // on running.
+  try {
+    migrate(db)
+  } catch (problem) {
+    try {
+      db.close()
+    } catch {
+      /* the migration error is the one worth reporting */
+    }
+    throw problem
+  }
   return new Store(db, path)
+}
+
+/**
+ * Create `dir` and any missing ancestors. Deliberately NOT `mkdirSync(dir, {recursive:true})`.
+ *
+ * Node's recursive mkdir is not bounded. It reads ENOENT from a mkdir as "the parent does not
+ * exist yet", creates the parent, and retries the child — so on a filesystem that answers
+ * ENOENT to *creating* a child whose parent already exists, the two steps alternate forever.
+ * procfs does exactly that: `mkdir('/proc/x')` is ENOENT while `/proc` stats as a directory
+ * (verified on Linux 6.18, 2026-08-21, from Node and from /bin/mkdir alike).
+ *
+ * The failure mode is the reason this is worth 20 lines. It is a SPIN, not a block — the thread
+ * sits in C++ at 100% CPU, state R, and never throws — so `openStore`'s try/catch cannot fire,
+ * `createApp` never returns, and `server.listen` is never reached. A mistyped
+ * ANALYTICS_DATA_DIR became a container that starts, never listens, and prints nothing.
+ *
+ * This walks the ancestor chain ONCE and never revisits a path, so the loop is bounded by the
+ * depth of the path: the worst case is an error naming the directory, which is what the caller
+ * above is built to turn into a readable remedy.
+ */
+function ensureDir(dir) {
+  const target = resolvePath(dir)
+
+  // Deepest first: stop at the first ancestor that already is a directory.
+  const missing = []
+  for (let at = target; !isDirectory(at); at = dirname(at)) {
+    missing.push(at)
+    if (dirname(at) === at) break // the filesystem root itself is not a directory: give up
+  }
+
+  // Shallowest first, one mkdir each, no retries.
+  for (const path of missing.reverse()) {
+    try {
+      mkdirSync(path)
+    } catch (problem) {
+      // A concurrent process (the worker thread, a `job run` in another shell) may have created
+      // it between the stat and the mkdir. Anything else is real and is the caller's answer.
+      if (problem?.code !== 'EEXIST') throw problem
+    }
+  }
+
+  // A path that exists as a FILE reaches here having "succeeded": every mkdir said EEXIST.
+  // Saying so beats letting SQLite report it as an unopenable database.
+  if (!isDirectory(target)) {
+    throw new Error(`${target} exists but is not a directory.`)
+  }
+}
+
+function isDirectory(path) {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    // ENOENT, ENOTDIR, EACCES on a parent, or an invalid path (a NUL byte) — all "not a
+    // directory we can use", and the mkdir below reports which.
+    return false
+  }
 }
 
 function migrate(db) {

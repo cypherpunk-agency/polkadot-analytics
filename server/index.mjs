@@ -48,6 +48,7 @@ import { openStore, defaultDataDir } from './lib/store.mjs'
 import { JobQueue } from './lib/jobs.mjs'
 import { ensureWorker as spawnWorker } from './lib/job-worker.mjs'
 import { describeJob, serveFromStore } from './lib/demand.mjs'
+import { warmStore } from './lib/warm.mjs'
 import { describe, resolve as resolveOperation, resolveJob } from './sources/index.mjs'
 
 const ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)))
@@ -354,6 +355,9 @@ function serveJobStatus(ctx, res, segments) {
  *                                       file header. Defaults to the real source registry.
  * @param {(o: object) => unknown} [options.ensureWorker]  spawns the drain worker
  * @param {object}  [options.queueOptions]  passed to JobQueue (a test clock, mostly)
+ * @param {boolean} [options.deferStore]  do not open the store during construction; the caller
+ *                                        calls `app.openStore()` once it is listening. See the
+ *                                        entry point below for why that ordering matters.
  */
 export function createApp({
   dev = false,
@@ -362,42 +366,61 @@ export function createApp({
   registry = { resolve: resolveOperation, resolveJob },
   ensureWorker = spawnWorker,
   queueOptions,
+  deferStore = false,
   cache = new TtlCache({ maxEntries: 400, maxBytes: 48 * 1024 * 1024 }),
 } = {}) {
-  // Opening the store is NOT fatal. The production container runs `--read-only` with no volume
-  // (see the Dockerfile), so a deployment without ANALYTICS_DATA_DIR pointed somewhere writable
-  // is a normal state, and it must cost mode A only. A site that refuses to boot because a
-  // volume is missing is a worse outage than a site with half its operations answering 503.
-  let store = givenStore ?? null
-  if (!store) {
-    try {
-      store = openStore({ dir: dataDir })
-    } catch (problem) {
-      console.error(`[store] mode A is unavailable: ${problem.message}`)
-      store = null
-    }
-  }
-
-  // Constructing the queue IS the recovery: JobQueue's constructor calls recover(), which
-  // re-queues any job left `running` by a process that died. Once, at startup, because this is
-  // the only place a queue is constructed on the HTTP side — the worker thread opens its own.
-  const queue = store ? new JobQueue(store, queueOptions) : null
-
-  // The worker opens its OWN connection to the same file, so it needs the directory, not our
-  // handle. Derived from the store we actually opened rather than from `dataDir`, which a test
-  // passing a ready-made store never sets.
-  const dir = store ? dirOf(store.path) : dataDir
-
-  const startWorker = () => {
-    // The worker exists to drain work that exists. `hasRunnable` is the gate: an idle queue
-    // spawns nothing, and a queue whose only jobs are backing off spawns nothing either.
-    if (queue?.hasRunnable()) ensureWorker({ dir })
-  }
-
   const sweeper = setInterval(() => cache.sweep(), 60_000)
   sweeper.unref?.()
 
-  const ctx = { cache, store, queue, registry, startWorker, startedAt: Date.now() }
+  /** The "is there runnable work yet" tick. Null until `startBackgroundWork` starts it, so a
+   *  test that never asks for background work never gets one. */
+  let poller = null
+
+  // `store` and `queue` live on ctx rather than in closed-over consts because they may be
+  // attached AFTER the request handler exists — see `openStoreNow` and the entry point.
+  const ctx = { cache, store: null, queue: null, registry, startWorker, startedAt: Date.now() }
+
+  function startWorker() {
+    // The worker exists to drain work that exists. `hasRunnable` is the gate: an idle queue
+    // spawns nothing, and a queue whose only jobs are backing off spawns nothing either.
+    //
+    // The worker opens its OWN connection to the same file, so it needs the directory, not our
+    // handle. Derived from the store we actually opened rather than from `dataDir`, which a
+    // test passing a ready-made store never sets.
+    if (ctx.queue?.hasRunnable()) ensureWorker({ dir: ctx.store ? dirOf(ctx.store.path) : dataDir })
+  }
+
+  function attach(store) {
+    ctx.store = store
+    // Constructing the queue IS the recovery: JobQueue's constructor calls recover(), which
+    // re-queues any job left `running` by a process that died. Once, because this is the only
+    // place a queue is constructed on the HTTP side — the worker thread opens its own.
+    ctx.queue = store ? new JobQueue(store, queueOptions) : null
+    return store
+  }
+
+  /**
+   * Open the store, or report why not and carry on. Opening it is NOT fatal: the production
+   * container runs `--read-only`, so a deployment whose volume is missing or misconfigured is a
+   * state this service has to survive, and it must cost mode A only. A site that refuses to
+   * boot because a volume is missing is a worse outage than a site with two operations
+   * answering 503.
+   *
+   * Idempotent, so the entry point can call it without knowing whether construction already
+   * did.
+   */
+  function openStoreNow() {
+    if (ctx.store) return ctx.store
+    try {
+      return attach(openStore({ dir: dataDir }))
+    } catch (problem) {
+      console.error(`[store] mode A is unavailable: ${problem.message}`)
+      return attach(null)
+    }
+  }
+
+  if (givenStore) attach(givenStore)
+  else if (!deferStore) openStoreNow()
 
   /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
   async function handle(req, res) {
@@ -449,11 +472,69 @@ export function createApp({
   return {
     handle,
     cache,
-    store,
-    queue,
+    // Getters, not values: `openStoreNow()` may attach these after this object was built.
+    get store() {
+      return ctx.store
+    },
+    get queue() {
+      return ctx.queue
+    },
+    openStore: openStoreNow,
+
+    /**
+     * Get the fetching moving without waiting for a visitor. Three things, every one of which
+     * used to need somebody to load a page first:
+     *
+     *   · WARM. A handler that declares `warm()` names the identities worth having before
+     *     anybody asks. See server/lib/warm.mjs for what that does and does not enqueue.
+     *   · RESUME. A redeploy in the middle of a backfill leaves runnable jobs in the store and
+     *     no worker. Nothing spawned one at boot — `startWorker` was reachable only from the
+     *     request path — so a half-filled series stayed half-filled until the next visitor
+     *     happened along, which on a quiet site is hours.
+     *   · KEEP LOOKING. And this is the one a single boot-time check does NOT cover, because
+     *     "runnable" is a function of the clock, not only of the rows:
+     *       — a job SIGKILLed mid-batch keeps a lease for up to `leaseMs` after its owner
+     *         died, so at the instant a redeploy comes back up it is `running`, not runnable,
+     *         and a one-shot check at boot finds nothing to do and never looks again
+     *         (reproduced: a backfill sat at 30/31 across a restart);
+     *       — a `failed` job backs off for up to an hour before it is due.
+     *     Both resolve on their own a minute or an hour later, with nothing watching. A tick is
+     *     what turns "resumes when someone visits" into "resumes". It costs one indexed SELECT
+     *     against a local SQLite file per minute, and it spawns nothing while there is nothing
+     *     to run — `startWorker` gates on the same `hasRunnable()` predicate `claim()` uses.
+     *
+     * Never throws: a warm-up that fails must not be able to take down a server that is
+     * already serving.
+     */
+    async startBackgroundWork({ pollMs = 60_000, ...options } = {}) {
+      if (!ctx.store) return { warmed: null, resumed: false }
+      let warmed = null
+      try {
+        warmed = await warmStore({ store: ctx.store, queue: ctx.queue, ...options })
+      } catch (problem) {
+        console.error('[warm] skipped:', problem?.message ?? problem)
+      }
+      const resumed = Boolean(ctx.queue?.hasRunnable())
+      startWorker()
+
+      if (pollMs > 0 && !poller) {
+        poller = setInterval(() => {
+          try {
+            startWorker()
+          } catch (problem) {
+            // A poll that throws must not become an unhandled rejection that kills the process.
+            console.error('[warm] poll failed:', problem?.message ?? problem)
+          }
+        }, pollMs)
+        poller.unref?.()
+      }
+      return { warmed, resumed }
+    },
+
     close() {
       clearInterval(sweeper)
-      if (!givenStore) store?.close()
+      if (poller) clearInterval(poller)
+      if (!givenStore) ctx.store?.close()
     },
   }
 }
@@ -472,7 +553,16 @@ const invokedDirectly =
 
 if (invokedDirectly) {
   const dev = process.argv.includes('--dev')
-  const app = createApp({ dev })
+
+  // `deferStore` — THE PORT IS BOUND BEFORE THE FILESYSTEM IS TOUCHED, and that ordering is
+  // load-bearing rather than tidy. Opening the store means creating a directory and opening a
+  // SQLite file on a mounted volume, and a volume can be slow, wedged or hostile in ways a
+  // local disk never is. Whatever that costs, it must not be able to cost us the listener:
+  // a process that is alive and not listening is the worst of the three states, because every
+  // health check, load balancer and human reads it as "starting" for as long as it lasts.
+  // (It happened. See the ensureDir note in server/lib/store.mjs: one unbounded mkdir and the
+  // container held a port open in the scheduler's eyes forever, printing nothing.)
+  const app = createApp({ dev, deferStore: true })
 
   // `handle` is async, and `createServer` does not await it — so a rejection it does not catch
   // is an UNHANDLED rejection, which under Node's default policy kills the process. One
@@ -488,6 +578,29 @@ if (invokedDirectly) {
 
   server.listen(PORT, HOST, () => {
     console.log(`polkadot-analytics ${dev ? '(api only) ' : ''}listening on http://${HOST}:${PORT}`)
+
+    // Now, and not before. Until this returns, mode A answers 503 and mode B answers normally —
+    // which is exactly the degraded state this service is designed to survive, so a slow volume
+    // costs a few store-backed requests rather than the whole site.
+    app.openStore()
+
+    // Deliberately not awaited. Warming enqueues rows and spawns the drain worker; the worker
+    // is a thread doing hours of polite serial fetching, and the HTTP server has no business
+    // waiting on any of it.
+    app.startBackgroundWork().then(({ warmed, resumed }) => {
+      // Silent when there is nothing to say. A line on every boot of an instance that warms
+      // nothing is a line nobody reads, and this one has to be read when it appears.
+      if (warmed?.considered) {
+        console.log(
+          `[warm] ${warmed.enqueued} of ${warmed.considered} identities enqueued ` +
+            `(${Object.entries(warmed.skipped)
+              .filter(([, count]) => count > 0)
+              .map(([why, count]) => `${count} ${why}`)
+              .join(', ') || 'nothing skipped'})`,
+        )
+      }
+      if (resumed) console.log('[warm] the queue had runnable work; the drain worker was started')
+    })
   })
 
   // Compose sends SIGTERM on redeploy. Closing cleanly means in-flight requests finish instead

@@ -8,10 +8,17 @@
 #      devDependency. So the runtime stage installs nothing — no npm step, no node_modules, no
 #      registry access at deploy time, and nothing in the shipped image for a CVE feed to have
 #      an opinion about except Node itself.
-#   2. THERE ARE NO SECRETS AND NO WRITABLE STATE. The cache is in-process, the datasets are
-#      baked in at build time, and every upstream is anonymous public HTTP. The container is
-#      built to run with `--read-only` and no volume; if it ever needs to write something, that
-#      is a design change to argue about, not a flag to add.
+#   2. THERE ARE NO SECRETS, AND EXACTLY ONE WRITABLE PATH. Every upstream is anonymous public
+#      HTTP, so there is still no credential of any kind in this image. What HAS changed is the
+#      second half: decision 0006 added the persistent store, and mode A writes `store.sqlite`.
+#      The rootfs stays `--read-only`; the store lives on a volume mounted at /data, and
+#      ANALYTICS_DATA_DIR below points there. Nothing else in the container writes anything.
+#
+#      WITH NO VOLUME MOUNTED, /data IS PART OF THE READ-ONLY ROOTFS AND THE STORE CANNOT OPEN.
+#      That is a supported state, not a crash: the server logs `[store] mode A is unavailable`,
+#      keeps listening, answers every TTL-cached (mode B) operation normally and answers 503 on
+#      the store-backed ones. Which is to say: an image that boots and serves is NOT evidence
+#      that the volume is there. `/api/health` reports `store.available` — ask it.
 
 
 # ──────────────────────────────────────────────────────────────────── stage 1: build ────
@@ -51,11 +58,39 @@ ARG BUILD_STAMP="unknown"
 # kernel OOM-kills the process with no stack trace and no log line. Capped here, the same
 # overrun surfaces as a readable JavaScript heap error instead. 192 MB leaves room for the
 # 48 MB response cache plus a 24 MB in-flight upstream body.
+#
+# ANALYTICS_DATA_DIR is set HERE rather than left to the deployment, and that is the point: the
+# store's default is `<repo>/server/data`, which inside this image is a path in the read-only
+# rootfs. Left unset, every deployment would have to remember to supply it, and forgetting is
+# invisible — the site comes up, mode B works, and only the store-backed pages 503. Naming the
+# path in the image means the compose file has one job (mount something at /data) instead of two
+# (mount something, and point an environment variable at it), and the two can no longer disagree.
 ENV BUILD_STAMP=$BUILD_STAMP \
     NODE_ENV=production \
     PORT=8080 \
     HOST=0.0.0.0 \
+    ANALYTICS_DATA_DIR=/data \
     NODE_OPTIONS=--max-old-space-size=192
+
+# The mount point, created in the image and owned by uid 1000 — and creating it is not cosmetic.
+# When Docker mounts a NAMED VOLUME over a path that exists in the image, it seeds the empty
+# volume from that path, ownership included, so a fresh volume arrives owned by `node` and the
+# process can write to it on the first boot with no runtime chown and no root. Mount an empty
+# named volume over a path that does NOT exist in the image and it is created owned by root
+# instead: the container starts, cannot write, and reports exactly the same "mode A is
+# unavailable" as having no volume at all. One `mkdir` is the difference.
+#
+# (A BIND MOUNT does not inherit anything — the host directory's ownership wins — so a host path
+# must be `chown 1000:1000`ed by the operator. Named volume for preference, precisely because it
+# takes that step away from a human.)
+#
+# There is deliberately NO `VOLUME /data` instruction. `VOLUME` makes Docker create an ANONYMOUS
+# volume whenever the run does not supply one, which would turn "somebody forgot to configure
+# persistence" into a store that works perfectly and is silently discarded on every redeploy —
+# fetching the whole backfill again from other people's RPC nodes, every deploy, with nothing
+# anywhere reporting it. Failing to open the store is loud in the log and visible on
+# /api/health; a volume that quietly resets is neither.
+RUN mkdir -p /data && chown 1000:1000 /data
 
 WORKDIR /app
 
@@ -89,6 +124,8 @@ COPY --from=build /app/package.json ./package.json
 # Note what is NOT done here: the copied files stay owned by root. The service only ever reads
 # them, so root-owned and world-readable means the process cannot rewrite its own code even
 # before `--read-only` is applied at run time. Chowning them to `node` would quietly undo that.
+# /data above is the single exception, and the exception is the whole design: exactly one path
+# this uid can write, and it holds nothing but fetched public data.
 USER node
 
 EXPOSE 8080

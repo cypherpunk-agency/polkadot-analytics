@@ -53,6 +53,7 @@ written account of what it is querying.
 | [0011](decisions/0011-a-page-has-one-subject.md) | a page has one subject, and it goes first |
 | [0012](decisions/0012-netflows-is-a-store-plus-a-live-tail.md) | the netflows series is a **month-bucketed** store plus a live tail — how a stored fact's identity gets chosen |
 | [0013](decisions/0013-the-pricer-and-the-valuation-share-a-module.md) | the pricer and the valuation share a module, and only one half may fetch |
+| [0014](decisions/0014-the-store-gets-a-volume-and-fills-itself.md) | the store gets a volume, and fills itself at boot |
 
 ## `concept/` — working notes, deliberately not published
 

@@ -6,8 +6,12 @@ dist
 # The local job store. Gitignored too, and the same rule applies here as for the credential
 # patterns below: `COPY . .` reads the working directory, so a multi-GB store.sqlite from a
 # local backfill would otherwise be baked into an image layer (and served, stale, from a
-# read-only filesystem in production). The store's home in production is a mounted volume via
-# ANALYTICS_DATA_DIR, never the image.
+# read-only filesystem in production).
+#
+# `server/data/` is the store's home only on a developer's machine, where it is the default.
+# In the image ANALYTICS_DATA_DIR is /data (see the Dockerfile) and /data is a mounted volume.
+# So a `server/data/` that reached the image would not even be read — it would be dead weight
+# in a layer, and a stale copy of somebody's laptop published to a public registry.
 server/data/
 
 # `*.md` is ROOT-LEVEL ONLY — a dockerignore pattern's `*` does not cross a `/`. That matters

@@ -170,6 +170,51 @@ jobs:
         env:
           EXPECTED_STAMP: ci-${{ github.sha }}
 
+      # ── the store must never be able to stop the server listening ─────────────────────
+      #
+      # This is a regression test for an outage, not a hypothetical. `openStore()` is wrapped in
+      # a try/catch precisely so a missing or misconfigured volume costs mode A and nothing
+      # else — but a catch only helps if the call RETURNS. It did not: `mkdirSync(recursive:
+      # true)` treats ENOENT as "create the parent and retry", so on a filesystem that answers
+      # ENOENT to creating a child whose parent already exists, it span forever at 100% CPU,
+      # never threw, and `server.listen` was never reached. The container stayed alive, printed
+      # nothing, and answered nothing. See ensureDir in server/lib/store.mjs.
+      #
+      # So: point ANALYTICS_DATA_DIR at something that cannot be a directory, and require the
+      # server to come up anyway, say so in the log, and report the degradation honestly.
+      - name: Listens even when the store cannot be opened
+        run: |
+          set -euo pipefail
+
+          # A path UNDER A FILE. Portable and unambiguous — no filesystem anywhere can make
+          # /etc/hostname a directory — and it needs no privileges to arrange.
+          ANALYTICS_DATA_DIR=/etc/hostname/nope PORT=8082 HOST=127.0.0.1 \
+            node server/index.mjs > /tmp/nostore.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; cat /tmp/nostore.log || true' EXIT
+
+          # 15s is many times a healthy start. A hang fails here instead of at 3am.
+          for _ in $(seq 1 60); do
+            curl -fsS --max-time 2 http://127.0.0.1:8082/healthz >/dev/null 2>&1 && break
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo '::error::The server exited instead of degrading. A missing volume must cost mode A only.'
+              exit 1
+            fi
+            sleep 0.25
+          done
+
+          test "$(curl -fsS --max-time 5 http://127.0.0.1:8082/healthz)" = 'ok'
+
+          # And it must SAY so, both in the log and on /api/health. A degraded instance that
+          # looks identical to a healthy one is how this shipped unnoticed in the first place.
+          grep -q '\[store\] mode A is unavailable' /tmp/nostore.log \
+            || { echo '::error::The store failure was not logged.'; exit 1; }
+          curl -fsS --max-time 5 http://127.0.0.1:8082/api/health \
+            | tee /dev/stderr | grep -q '"store":{"available":false}' \
+            || { echo '::error::/api/health did not report store.available:false.'; exit 1; }
+
+          echo 'Server listens and reports mode A unavailable, as designed.'
+
       # The shutdown handler in server/index.mjs exists so a redeploy finishes in-flight
       # requests rather than cutting them. If it regressed, every deploy would show up in
       # monitoring as a blip and nobody would know why — so assert it here, where it is cheap.
@@ -219,7 +264,11 @@ jobs:
       # Prove the claims the Dockerfile makes, rather than trusting them: it must run as a
       # non-root user, with a READ-ONLY root filesystem, no volume, no environment beyond PORT,
       # and no secrets — and still answer both health endpoints.
-      - name: Run the image read-only and hit both health endpoints
+      #
+      # NO VOLUME IS THE DEGRADED CASE, and asserting it is the point: mode A cannot open, and
+      # the container must come up regardless and say so. `store.available:false` here is a
+      # PASS. The healthy case is the step after this one.
+      - name: Run the image read-only with no volume — degrades, does not fall over
         run: |
           set -euo pipefail
           docker run -d --name pa-smoke \
@@ -238,10 +287,58 @@ jobs:
           test "$(curl -fsS --max-time 5 http://127.0.0.1:8080/healthz)" = 'ok'
           curl -fsS --max-time 5 http://127.0.0.1:8080/api/health | tee /dev/stderr | grep -q '"ok":true'
 
+          # Explicitly: the store is NOT available and the service says so. Without this
+          # assertion the two states are indistinguishable from CI, which is how a store-backed
+          # page 503'd in production for a day while every check stayed green.
+          curl -fsS --max-time 5 http://127.0.0.1:8080/api/health \
+            | grep -q '"store":{"available":false}' \
+            || { echo '::error::No volume is mounted, yet /api/health claims the store is available.'; exit 1; }
+
           # It must not be running as root. A container that answers correctly but runs as uid 0
           # is a container that got lucky.
           uid=$(docker exec pa-smoke id -u)
           echo "container uid: $uid"
           if [ "$uid" = '0' ]; then echo '::error::The image runs as root.'; exit 1; fi
 
-          echo 'Image runs non-root on a read-only rootfs and answers both health endpoints.'
+          echo 'Image runs non-root on a read-only rootfs, degrades cleanly, and says so.'
+
+      # ── the same image, WITH the volume the deployment is supposed to give it ──────────
+      #
+      # The step above proves the degraded state is survivable. This one proves the intended
+      # state is reachable — which nothing checked before, and which is exactly the gap that let
+      # the store ship with nowhere to live. Same image, same --read-only rootfs, one named
+      # volume at /data.
+      #
+      # It also proves the ownership arrangement that makes this work with no runtime chown and
+      # no root: /data exists in the image owned by uid 1000, so Docker seeds the fresh named
+      # volume from it and the `node` user can write on the first boot. Delete the `mkdir` from
+      # the Dockerfile and this step goes red — which is the only reason a one-line mkdir is
+      # safe to leave in a file nobody rereads.
+      - name: Run the image read-only WITH a volume — the store opens
+        run: |
+          set -euo pipefail
+          docker volume create pa-data >/dev/null
+          docker run -d --name pa-store \
+            --read-only \
+            --memory 256m \
+            --volume pa-data:/data \
+            --publish 127.0.0.1:8083:8080 \
+            polkadot-analytics:ci
+
+          trap 'docker logs pa-store || true; docker rm -f pa-store >/dev/null 2>&1 || true; docker volume rm pa-data >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 60); do
+            curl -fsS --max-time 2 http://127.0.0.1:8083/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+          curl -fsS --max-time 5 http://127.0.0.1:8083/api/health | tee /dev/stderr \
+            | grep -q '"store":{"available":true}' \
+            || { echo '::error::A volume is mounted at /data and the store still did not open.'; exit 1; }
+
+          # The file is really there, on the volume, written by a non-root process on a
+          # read-only rootfs. `store.available:true` alone would also be true of a store opened
+          # somewhere it will not survive a redeploy.
+          docker exec pa-store ls -l /data/store.sqlite
+
+          echo 'Image opens its store on a mounted volume while the rootfs stays read-only.'

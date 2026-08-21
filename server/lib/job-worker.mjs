@@ -28,6 +28,14 @@
 //         // answers false is refused — mutable data belongs in mode B (the TTL cache), and a
 //         // predicate that is wrong in the permissive direction freezes a partial answer
 //         // forever (plan §2.1). Be conservative.
+//       warm: () => [params, …],
+//         // OPTIONAL, and it is a deployment concern rather than a fetching one: the identities
+//         // worth filling BEFORE a reader asks. Called once at boot (server/lib/warm.mjs),
+//         // never on a request path. Everything it returns goes through this handler's own
+//         // `schema` and `immutable`, and an identity that is already complete is skipped — so
+//         // a warm list may safely be "every month of the series" and stay that way forever.
+//         // May be async. Omitted means "nothing to warm", which is the right answer for an
+//         // operation whose useful params are not knowable in advance.
 //       plan: async ({ params, gate }) => ({ totalUnits }),
 //         // Optional. Runs once, before the first batch, to size the work. `totalUnits: null`
 //         // means "not knowable" — null, never 0.

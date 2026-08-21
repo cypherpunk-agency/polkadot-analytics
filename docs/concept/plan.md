@@ -919,3 +919,107 @@ day, and now stands at 5 blocking and 64 opening. The two worth reading first ar
 (`/sovereign/` is the last Polkadot-only page and no longer has a reason to be) and **O56** (a JSON
 503 from our own origin reached a browser as something that would not parse, which means every
 structured error this service writes may be being discarded at the edge).
+
+---
+
+## 14. The store goes live — 2026-08-21, second half
+
+§13 was written before the volume existed. This is what happened after, and it is the half that
+turned a store nothing could reach into one production is filling. Written as a handoff: the next
+session is local, and starts from here.
+
+### 14.1 It is live
+
+Verified against production, not inferred: build `40cd7e3`, `store.available: true`, jobs draining,
+and the orca canary answering in prose on `/api/health`. `/netflows/`, `/account/`,
+`/hydration-capital/`, `/bridged/` and the rest are all serving.
+
+**Infra mounted the volume** — `polkadot-analytics-data:/data`, named, `read_only: true` kept on the
+rootfs — after two definition-of-done gates, both of which improved the answer:
+
+| Their gate | What it forced |
+|---|---|
+| *"Is the store a pure cache?"* | Yes, with a conditional worth writing down: re-derivability depends on upstreams we do not own, and **orca already publishes a floor**. It became the canary. |
+| *"Does the store prune?"* | **No, and nothing enforces 1 GB.** The honest answer was a disk tripwire on their side, not a number in our documentation. |
+
+Three corrections came back with it and are applied: the VM compose file **is** tracked
+(`cypherpunk-agency/server-setup`, `stack/docker-compose.yml`), it uses `deploy.resources.limits`
+rather than `mem_limit` and publishes no ports because Caddy proxies over the `web` network, and
+`deployment.md` had invited a 404 by listing a page path and an API path side by side.
+
+### 14.2 Two standing conditions, turned into code rather than promises
+
+Infra asked to be told if a third job handler appeared, and to re-check the orca floor periodically.
+Both are now enforced by the repo, because **a promise to remember is not a control**:
+
+- **A third `jobs` handler fails `npm run check`**, compared both ways — a removal invalidates the
+  storage figures too. The failure names the four ordered steps: measure, update `jobs.md` and
+  `deployment.md`, tell infra, then extend the list.
+- **`server/lib/canary.mjs`** compares orca's *live* floor against what the store actually holds, and
+  reports on `/api/health` as a sibling of `store` so their existing grep still matches. It states
+  the consequence, not the number. Its `ok` is `true`/`false`/**`null`**, because never-checked is
+  not fine, and it never throws — an at-risk store is not a reason to restart a container.
+
+The subtlety the brief missed and the implementation caught: a naive floor comparison **cries wolf on
+day one**, because a healthy store deliberately holds 2025-01-01…24 as `before-source-floor`. Only a
+day holding *indexed* content now below the floor has actually been lost.
+
+### 14.3 The defect the go-live exposed, which was mine
+
+**Warming inverted the queue.** Before decision 0014 a reader's request was the only job in it; after,
+it lands behind 135 identities enqueued in advance. Measured in production: a reader asking for
+`netflows 2026-07` got **job 74 of 135** — about two hours behind work nobody asked for, for a month
+that takes 45 seconds alone. `MAX_LIVE_JOBS_PER_OPERATION` made it worse, not better, because warming
+is exempt from it.
+
+Fixed with a priority column, warm at 0 and readers at 10, and a yield at batch boundaries. Cold-boot
+measurement: the reader's job goes from **55th claimed to 4th**, and from **52 jobs run before it to
+one**.
+
+Three details carry the correctness, and each is a trap:
+
+- **`enqueue` is raise-only and `raisePriority` is public**, because the common case never reaches
+  `enqueue` — `demand.mjs` answers a live identity with a lookup, so the reader *joins* the warm job.
+- **A yielding job parks as `queued`, not `partial`.** `partial` is not in `RUNNABLE_WHERE`, so
+  parking there strands it until the next re-warm.
+- **`hasRunnableAbove` is strictly greater**, or two warm jobs ping-pong forever.
+
+**Still open, and genuinely unsolved:** priority fixes the ordering but not the cap. A reader whose
+month is not on the warm list is still refused, and the obvious fix — count only jobs at or above the
+caller's priority — is unsafe, because an anonymous caller sets its own priority by asking.
+
+### 14.4 What this half taught about the method
+
+- **Two false alarms in one afternoon, both from partial evidence.** The Caddy hypothesis (disproven
+  by two `curl`s) and "the worker is not draining" (it was job 74 of a FIFO queue; jobs 1 and 2 were
+  already `done`). Both were escalated to the user before being probed. The repo's own rule already
+  covers this — *when the evidence is inconclusive, write the probe* — and the failure was not
+  reasoning badly, it was **reporting before measuring**.
+- **A handover is not a patch.** Two agents handed over code that would have caused outages: the
+  netflows migration SQL would have thrown inside `migrate()` and dropped the whole site to mode B,
+  and `warm()` shipped wired to nothing. Both were caught by the agent that *applied* them, not the
+  one that wrote them. Applying a handover is a review, not a paste.
+- **An agent blocked for 2.5 hours on a drain it did not own.** Nine `Bash` sleeps of 16–20 minutes.
+  The drain runs at the same rate unwatched, and the store is demand-driven anyway — it never needed
+  a complete backfill to finish its task.
+
+### 14.5 Next — for the local session
+
+Ordered. The first is small and the second is the one with a number attached.
+
+1. **`/bridged/` full coverage — B9 then B8.** The only blocking items with money behind them:
+   **~$4.9 M currently reads as unpriced** and the page names all 26 assets it cannot value. **B9** is
+   cheaper and first — decimals for the 8 assets Asset Hub has no metadata for, worth $4.24 M, needing
+   each ERC-20's own `decimals()` on Ethereum, a chain this repo does not yet read. **B8** unlocks
+   ~$3.6 M but is a day's work with real risk: Hydration exposes **no routing runtime API**
+   (`RouterApi_quote`, `_calculate_sell`, `_calculate_spot_price` all "Exported method not found",
+   verified live), so the stableswap D-invariant must be implemented rather than asked for, and a
+   plausible wrong price is exactly this repo's stated failure mode.
+2. **Bisect the relay's positional→named event-arg flip** (blocks ~8M–12M). `/account/`'s transfer
+   graph throws loudly there rather than lying, which is right — but **the entire pre-2022 relay era
+   is unreadable until this is settled, and the relay is where all the history is.** This is what
+   unlocks the direction in §8: earliest transactions, following large amounts, correlating accounts.
+3. **O50 — `/sovereign/` is the last Polkadot-only page.** The netflows table would carry it; the only
+   real question left in it is whether `bridged-holders` has a Kusama meaning.
+
+Not urgent, and not worth promoting yet: 64 open O-items, a fair number of them small.

@@ -282,11 +282,13 @@ and it has a second bridge in it.
 
 ## What that leaves for Asset Hub's bridged inventory
 
-**Verified live 2026-08-21**, Asset Hub block 19,714,824 against Hydration block 13,715,537:
+**Verified live 2026-08-21 at 08:41 UTC**, Asset Hub block 19,715,478 against Hydration block
+13,715,682. These are *live prices*: re-read ten minutes later the total was $16,002,179, so treat
+the composition and the ranking as the finding and the total as a reading.
 
 | | Count | Value |
 |---|---:|---:|
-| Priced | **8** | **$15,946,828** |
+| Priced | **8** | **$15.9 M** |
 | Not in Hydration's registry under this location | 10 | — |
 | Registered on Hydration, priced by neither venue | 8 | — |
 | No decimals on Asset Hub at all | 8 | — |
@@ -331,8 +333,8 @@ decimals they use and their supply cannot be turned into a token count, let alon
 
 Hydration's registry does carry decimals for three of them — `0x458048…cbaf78` is PAXG at 18,
 `0x57e114…1e6061` is ENA at 18, `0x38eeb5…fe8a6a` is apyUSD at 18 — and at those decimals they
-would be worth about **$1.30 M, $87 k and $2.85 M**, or **$4.24 M** together, against a measured
-total of $15.9 M. That is **not used**: it is a
+would be worth about **$1.30 M, $87 k and $2.85 M**, or **$4.24 M** together — more than a quarter
+again on top of the $15.9 M that could be measured. That is **not used**: it is a
 second chain's claim about the divisor, and a wrong divisor is a silent factor of 10ⁿ on a figure
 that renders perfectly. The page states the amount at stake instead of quietly including or
 quietly dropping it.

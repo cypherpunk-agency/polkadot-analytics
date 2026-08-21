@@ -7,16 +7,23 @@
 // re-checks it on every read). `parents: 1` is a sibling parachain's own token and is not
 // bridged at all. Lumping the two together doubles the apparent bridge inventory.
 //
-// Four honesty constraints shape everything below, and each of them is a thing the page has to
+// Five honesty constraints shape everything below, and each of them is a thing the page has to
 // say out loud rather than a thing it can quietly get right:
 //
-//   · THERE ARE NO DOLLARS ON THIS PAGE. Nothing here prices an asset, so no bar on it is
-//     denominated against any other bar. `segmentedRows` is drawn with `scale: 'row'` for
-//     exactly that reason: each bar is denominated by its own supply and encodes COMPOSITION
-//     only — which chain holds what share of this asset. Magnitude lives in the amount column,
-//     where it carries its own unit. Denominated the other way, 473,031,022 MYTH would set the
-//     scale and 471.54 WETH would render as a sliver, and the picture would be a lie about
-//     size dressed up as a chart. The card states how many rows that would have hit.
+//   · THE PAGE OPENS ON DOLLARS, AND MOST ASSETS HAVE NONE. `/api/prices/bridged` values what
+//     it can from Hydration read on chain, and on a normal day that is EIGHT of thirty-four.
+//     An unpriced asset is ABSENT FROM THE BARS, never drawn at zero — "we could not value
+//     this" and "this was worth nothing" are different facts. The headline is therefore a
+//     FLOOR, it says so, and the twenty-six absentees are named with the reason each one is
+//     absent. There are three different reasons and they are not interchangeable.
+//
+//   · THE COMPOSITION CHART IS NOT DENOMINATED IN ANYTHING. It used to open this page and it
+//     now closes it. `segmentedRows` is drawn there with `scale: 'row'`: each bar is
+//     denominated by its OWN supply and encodes composition only — which chain holds what
+//     share of this asset. That reads as "every bar is the same length", which is exactly
+//     what it is and exactly why it is no longer the first thing on the page. Magnitude in
+//     tokens lives in the amount column; magnitude in dollars is the chart at the top, where
+//     the rows genuinely share a unit.
 //
 //   · Σ `ForeignAssets::Account` ≠ `supply` ON SIX OF THIRTY-FOUR ASSETS, AND THAT IS A REAL
 //     PROPERTY OF THE CHAIN. The sweep is complete — the number of holder keys read equals the
@@ -37,6 +44,12 @@
 //
 //   · EVERYTHING IS KEYED BY LOCATION, NEVER BY SYMBOL. Three symbols are currently carried by
 //     more than one asset. Summing by ticker adds an Ethereum ERC-20 to a parachain's own token.
+//     The same rule is what makes the dollar figures thin, and the page says so rather than
+//     hiding it: Hydration registers the same underlying token ONCE PER ROUTE — five USDCs,
+//     three WETHs, three WBTCs — and its money market prices at most one leg of each family,
+//     never the Snowbridge one this page is about. So the unpriced rows carry a `namesakes`
+//     list: the other assets on Hydration wearing the same ticker, with their prices, shown
+//     precisely so a reader can see that a price exists and is for something else.
 
 import '../../design/app.css'
 import { renderPage } from '../../design/page.js'
@@ -45,7 +58,7 @@ import { pageByKey } from '../../sources/pages.js'
 import { append, clear, el, notice, statRow, statTile, style } from '../../design/dom.js'
 import { segmentedLegend, segmentedRows } from '../../design/charts.js'
 import { livenessBanner, livenessNotes } from '../../design/liveness.js'
-import { compact, formatCount, formatUtc, shortAddr } from '../../core/format.js'
+import { compact, formatCount, formatUtc, money, money2, shortAddr } from '../../core/format.js'
 
 const dash = '—'
 
@@ -214,7 +227,7 @@ function sortAssets(assets, rank = (asset) => asset) {
 
 /* ───────────────────────────────────────────────────────────────────────────────── render ── */
 
-function render(host, [inventory, holders]) {
+function render(host, [inventory, holders, valued]) {
   clear(host)
 
   if (!inventory.bridged.length) {
@@ -234,27 +247,205 @@ function render(host, [inventory, holders]) {
 
   append(
     host,
-    statRow([
-      statTile('Bridged assets', formatCount(inventory.counts.bridged), `${networksLine(inventory.networks)} · ${inventory.counts.sibling} more entries are sibling parachains’ own tokens and are not bridged`, {
-        hero: true,
-      }),
-      statTile('Held by parachains', `${formatCount(holders.counts.holdings)} holdings`, `across ${holders.counts.chains} sovereign accounts, swept from the holder map rather than looked up`),
-      statTile(
-        'Σ holders = supply',
-        `${formatCount(holders.reconciliation.exact)} / ${formatCount(holders.reconciliation.assets)}`,
-        `${holders.reconciliation.mismatched.length} assets carry supply that is in no account at all`,
-      ),
-      statTile('Issued here, not bridged', formatCount(inventory.counts.localStables), inventory.localStables.map((coin) => `${coin.symbol} (${coin.assetId})`).join(' · ')),
-    ]),
-
-    livenessBanner([inventory.meta?.liveness, holders.meta?.liveness]),
+    // The page's subject leads: what is bridged in, in dollars. Decision 0011 — a dashboard
+    // opens on the thing its title names, under at most a title and a sentence or two.
+    valueStats(inventory, valued),
+    livenessBanner([valued.ok ? valued.data.meta?.liveness : null, inventory.meta?.liveness, holders.meta?.liveness]),
     anomalyNotice(inventory),
-    distributionCard(rows, series, holders),
-    reconciliationCard(holders),
+    valueCard(valued),
+    unpricedCard(valued),
     inventoryCard(inventory, holders),
     issuedCard(inventory),
-    notesSection(inventory, holders),
+    // Composition, and it closes the page rather than opening it. Every bar here is the same
+    // length by construction and that reads as broken until you have read the caption; it is a
+    // real answer to a different question, and a different question belongs further down.
+    distributionCard(rows, series, holders, valued.ok ? valued.data.totals.priced : null),
+    reconciliationCard(holders),
+    notesSection(inventory, holders, valued),
   )
+}
+
+/* ──────────────────────────────────────────────── what it is worth ── */
+
+/** The two price paths, in a FIXED slot order so colour never follows the ranking. */
+const PRICE_SERIES = [
+  { label: 'money-market oracle', key: 'money-market oracle' },
+  { label: 'Omnipool implied spot', key: 'Omnipool implied spot' },
+]
+
+/**
+ * The hero row, and the one number on this page a reader will quote.
+ *
+ * It is a FLOOR and the tile says so in the same breath, because the alternative — a confident
+ * total over a quarter of the inventory — is the exact failure this repository exists to avoid.
+ * The excluded figures get tiles of their own rather than a footnote: an amount you can see is a
+ * caveat, and an amount you cannot is a rounding error somebody else will find.
+ */
+function valueStats(inventory, valued) {
+  if (!valued.ok) {
+    return statRow([
+      statTile('Value bridged in', dash, 'Prices could not be read — see the notice below', { hero: true }),
+      statTile('Bridged assets', formatCount(inventory.counts.bridged), networksLine(inventory.networks)),
+      statTile('No decimals on chain', formatCount(inventory.counts.withoutMetadata), 'nothing on Asset Hub says how to scale them'),
+      statTile('Issued here, not bridged', formatCount(inventory.counts.localStables), inventory.localStables.map((coin) => `${coin.symbol} (${coin.assetId})`).join(' · ')),
+    ])
+  }
+
+  const t = valued.data.totals
+  const reasons = [
+    t.notOnHydration ? `${t.notOnHydration} not on Hydration` : null,
+    t.noVenue ? `${t.noVenue} in no priced venue` : null,
+    t.noDecimals ? `${t.noDecimals} with no decimals here` : null,
+    t.decimalsDisagree ? `${t.decimalsDisagree} whose decimals disagree` : null,
+  ].filter(Boolean)
+
+  return statRow([
+    statTile(
+      'Value bridged in, at least',
+      // `money()`, not `money2()`. The hero type size is large enough that a nine-character
+      // figure with separators clips at 1280px — "$16,002,..." — and a headline that has lost
+      // its last digits is worse than a rounded one. The exact figure is one line below.
+      t.pricedUsd === null ? dash : money(t.pricedUsd),
+      `${t.pricedUsd === null ? '' : `${money2(t.pricedUsd)} exactly. `}${formatCount(t.priced)} of ${formatCount(t.assets)} assets could be valued — a floor, not a total. The other ${formatCount(t.unpriced)} are absent from the bars, not worth zero.`,
+      { hero: true },
+    ),
+    statTile('Could not be valued', `${formatCount(t.unpriced)} assets`, reasons.join(' · ')),
+    statTile(
+      'Priced, but unscalable',
+      t.excludedNoDecimalsUsd === null ? dash : money2(t.excludedNoDecimalsUsd),
+      'what three of the metadata-less assets would be worth at Hydration’s decimals. Another chain’s divisor, so it is stated and not counted.',
+    ),
+    statTile('Issued here, not bridged', formatCount(inventory.counts.localStables), inventory.localStables.map((coin) => `${coin.symbol} (${coin.assetId})`).join(' · ')),
+  ])
+}
+
+/**
+ * One bar per bridged asset it was possible to value, on ONE shared linear scale from zero,
+ * largest first. This is the chart the page exists for.
+ *
+ * Colour is the price’s PROVENANCE, not the asset. Half the value here comes from the Omnipool’s
+ * implied spot rather than from the money-market oracle, and those are two different
+ * constructions that agree to about half a percent — close enough to use and not close enough to
+ * merge. Putting the venue in the bar means a reader cannot read the total without also seeing
+ * which half of it rests on which method.
+ *
+ * An unpriced asset is NOT a row here. There is no zero-length bar and no grey placeholder: it
+ * would sit on a linear scale at the same place as an asset genuinely worth nothing, and those
+ * are different facts. They get their own card, immediately below, with the reason each.
+ */
+function valueCard(valued) {
+  if (!valued.ok) {
+    return el(
+      'section.card',
+      null,
+      el('header', null, el('h2', { text: 'What is bridged in, in dollars' })),
+      notice(
+        valued.kind === 'transport' ? 'warning' : 'critical',
+        'No dollar figures on this read',
+        valued.message,
+        valued.advice,
+        'Everything below is unaffected: it comes from Asset Hub directly and needs no price. What is missing is only the valuation.',
+      ),
+    )
+  }
+
+  const { assets, totals, oracle, crossCheck, hydrationChain } = valued.data
+  const priced = assets.filter((a) => a.priceStatus === 'priced' && a.usd !== null)
+
+  if (!priced.length) {
+    return el(
+      'section.card',
+      null,
+      el('header', null, el('h2', { text: 'What is bridged in, in dollars' })),
+      notice(
+        'warning',
+        'Nothing on this page could be valued',
+        `Hydration answered and prices ${formatCount(oracle.quotedAssets)} of the ${formatCount(oracle.registeredAssets)} assets in its registry, and none of them is one of these ${formatCount(totals.assets)}. That is a fact about which assets have a market, not a failure to read one.`,
+      ),
+    )
+  }
+
+  const rows = priced.map((asset) => ({
+    label: assetLabel(asset),
+    // Amount only. The venue is the bar's COLOUR and the legend names it; repeating it here
+    // pushed the sublabel past the column and it clipped to "24.00M TRAC ·…".
+    sublabel: `${amount(asset.supplyScaled)} ${asset.symbol ?? 'units'}`,
+    total: asset.usd,
+    // One value, in the slot belonging to the venue that priced it. The other slot is 0 and
+    // `segmentedRows` filters zero-width segments out, so nothing is drawn for it.
+    segments: PRICE_SERIES.map((entry) => (entry.key === asset.priceSource ? asset.usd : 0)),
+    note: `${asset.symbol ?? 'this asset'} at $${Number(asset.price).toPrecision(6)} per token, from Hydration’s ${asset.priceSource}\nHydration asset ${asset.hydrationId} · ${asset.locationText}`,
+  }))
+
+  const plot = el('div')
+  const legendTotals = PRICE_SERIES.map((entry) =>
+    priced.filter((a) => a.priceSource === entry.key).reduce((sum, a) => sum + a.usd, 0),
+  )
+
+  const card = el(
+    'section.card',
+    null,
+    el(
+      'header',
+      null,
+      el('h2', { text: 'What is bridged in, in dollars' }),
+      el('p.note', {
+        text:
+          `One bar per bridged asset, on one shared linear scale from zero, largest first — so these bars ARE comparable with each other, which is the one thing the composition chart at the foot of this page cannot do. Prices are read live from Hydration at block ${formatCount(hydrationChain.block)}: the money-market oracle where it carries the asset, and the Omnipool’s own implied spot where it does not. Each bar is coloured by which of the two priced it.`,
+      }),
+      el('p.note', {
+        text:
+          `${formatCount(totals.unpriced)} of the ${formatCount(totals.assets)} bridged assets are NOT on this chart. They are not drawn at zero and they are not folded into the total: an asset this site cannot value and an asset worth nothing are different facts, and a linear scale from zero cannot tell them apart. The next card names every one of them and says which of four different things is wrong — they are not interchangeable and “unpriced” is not one answer.`,
+      }),
+    ),
+    segmentedLegend(PRICE_SERIES, legendTotals, money),
+    plot,
+  )
+
+  const tally = segmentedRows(plot, {
+    rows,
+    series: PRICE_SERIES,
+    format: money,
+    // Shared, deliberately, and it is the whole point of the chart. Every row is in dollars.
+    scale: 'shared',
+    residualLabel: 'not attributed to a venue',
+  })
+
+  const faint = tally.faint
+  append(
+    card,
+    faint
+      ? el('p.note', {
+          text: `${faint} of the ${rows.length} bars draw under 2 % of the largest and are held at the minimum width that stays visible — read the figure at the end of the row rather than the length of the bar. The concentration is the finding: the top three assets are ${((rows.slice(0, 3).reduce((s, r) => s + r.total, 0) / totals.pricedUsd) * 100).toFixed(0)} % of everything that could be valued.`,
+        })
+      : null,
+    crossCheckNote(crossCheck, totals),
+    el('p.note', {
+      text:
+        'The oracle is a stepped feed — about eighteen updates a day, not one per block — so a fast move can be up to an hour old here. It is the same feed for every asset, so the ranking moves less than the total does. Asset Hub and Hydration are also read a few seconds apart, so a transfer landing between the two moves a supply without moving its price.',
+    }),
+  )
+  return card
+}
+
+/**
+ * The two price paths, checked against each other on every read and reported whether or not they
+ * agree. Four assets are in both venues, so this is a real reconciliation rather than a promise —
+ * and half the value on the chart above rests on the path that is NOT the oracle.
+ */
+function crossCheckNote(crossCheck, totals) {
+  if (!crossCheck?.length) {
+    return el('p.note', {
+      text:
+        'No asset is currently in both venues, so the two price paths cannot be checked against each other on this read. Every figure above therefore rests on one construction with nothing to compare it to.',
+    })
+  }
+  const worst = crossCheck[0]
+  const share = totals.pricedUsd ? (totals.byOmnipoolUsd / totals.pricedUsd) * 100 : null
+  return el('p.note', {
+    text:
+      `${formatCount(crossCheck.length)} assets are priced by BOTH paths, so the two are checked against each other on every read: the largest disagreement right now is ${worst.symbol ?? `asset ${worst.id}`} at ${worst.differencePct.toFixed(2)} % (oracle $${Number(worst.oracle).toPrecision(6)}, Omnipool $${Number(worst.spot).toPrecision(6)}). That matters here because ${share === null ? 'part' : `${share.toFixed(0)} %`} of the total above comes from the Omnipool path rather than from the oracle. The two are never merged — each number keeps the label of the venue it came from.`,
+  })
 }
 
 const networksLine = (networks) => networks.map((network) => `${network.assets} from ${network.label.replace(/ mainnet$/, '')}`).join(', ')
@@ -275,9 +466,163 @@ function anomalyNotice(inventory) {
   )
 }
 
+/* ─────────────────────────────────────────────────── what could not be valued, and why ── */
+
+/**
+ * Rule 3, given a whole card instead of a footnote.
+ *
+ * Three quarters of this registry has no dollar figure and there are FOUR different reasons for
+ * that, which are not interchangeable and must not be summarised as "unpriced":
+ *
+ *   no-decimals        Asset Hub itself does not say how many decimals the asset uses, so its
+ *                      raw supply is not a token count yet, let alone a dollar figure. This is
+ *                      upstream of pricing entirely.
+ *   not-on-hydration   Hydration's registry has no entry for this location. Often it has an
+ *                      entry for the same TICKER, and that is a different asset.
+ *   no-venue           Hydration has the asset and prices it in neither the money market nor
+ *                      the Omnipool.
+ *   decimals-disagree  Both chains have it and they disagree about the divisor. Refused: the
+ *                      product would be wrong by a factor of ten to the n and render perfectly.
+ *
+ * The `namesakes` column is the load-bearing one and it exists because of a specific reader
+ * reaction. Hydration visibly prices something called WBTC; a blank next to this page's WBTC
+ * reads as a bug. It is not: Hydration registers the same underlying token once per ROUTE, and
+ * its money market took the Wormhole leg while this page is about the Snowbridge leg. Showing
+ * the namesake and its price is the only way to make that visible — and showing it is the exact
+ * opposite of using it.
+ */
+const REASON = {
+  'no-decimals': 'Asset Hub publishes no decimals for it',
+  'not-on-hydration': 'not in Hydration’s registry under this location',
+  'no-venue': 'on Hydration, but in neither priced venue',
+  'decimals-disagree': 'the two chains disagree about its decimals',
+}
+
+/** One namesake, in as few characters as a table cell can afford. The full form is on `title`. */
+const namesakeLine = (n) =>
+  `${n.symbol} #${n.id} · ${n.usd === null ? 'also unpriced' : `$${Number(n.usd).toPrecision(6)}`} · ${n.route}`
+
+/**
+ * One, because a five-USDC row pushes every other column off the scroll box — and the one is the
+ * most informative one: the server sorts namesakes by price descending, so the priced leg leads
+ * and the cell answers "a price for this ticker exists, and here is which asset it belongs to".
+ * The whole list is on the cell's `title`.
+ */
+function namesakeText(namesakes) {
+  if (!namesakes.length) return dash
+  const rest = namesakes.length - 1
+  return `${namesakeLine(namesakes[0])}${rest ? ` · +${rest} more` : ''}`
+}
+
+function unpricedCard(valued) {
+  if (!valued.ok) return null
+  const { assets, totals, unscalable } = valued.data
+  const missing = assets.filter((a) => a.priceStatus !== 'priced')
+  if (!missing.length) return null
+
+  // Ordered as a narrative from "nearly" to "not at all", rather than alphabetically. Sorting
+  // by label put the eight metadata-less rows — whose label is a 42-character hex string — above
+  // every recognisable ticker, so the first thing a reader met was the least legible thing here.
+  const ORDER = ['no-venue', 'not-on-hydration', 'decimals-disagree', 'no-decimals']
+  const ordered = [...missing].sort(
+    (a, b) =>
+      ORDER.indexOf(a.priceStatus) - ORDER.indexOf(b.priceStatus) ||
+      assetLabel(a).localeCompare(assetLabel(b)),
+  )
+
+  const body = el('tbody')
+  for (const asset of ordered) {
+    const namesakes = asset.namesakes ?? []
+    append(
+      body,
+      el(
+        'tr',
+        null,
+        el('td.mono', { text: assetLabel(asset) }),
+        el('td.num.mono', {
+          // A raw u128 printed in full is 25 unreadable digits and it is one glance away from
+          // being taken for a scaled figure. `amount()` sends anything at or above 1e15 through
+          // exponential form for exactly that reason; the exact digits stay on the title and in
+          // the registry table below.
+          text: scaledAsset(asset) ? amount(asset.supplyScaled) : amount(Number(asset.supply)),
+          title: `${asset.supply} raw units${scaledAsset(asset) ? ` at ${asset.decimals} decimals` : ', and no decimals on chain to scale them by'}`,
+        }),
+        el(
+          'td',
+          null,
+          el('span.pill', { text: asset.priceStatus, data: { tone: asset.priceStatus === 'decimals-disagree' ? 'critical' : 'warning' } }),
+          document.createTextNode(` ${REASON[asset.priceStatus] ?? ''}`),
+        ),
+        el('td', { text: namesakeText(namesakes), title: namesakes.map(namesakeLine).join('\n') }),
+      ),
+    )
+  }
+
+  const withNamesakes = missing.filter((a) => a.namesakes?.length).length
+  const pricedNamesakes = missing.filter((a) => (a.namesakes ?? []).some((n) => n.usd !== null)).length
+  const knownDivisor = unscalable.filter((u) => u.wouldBeUsd !== null)
+
+  return el(
+    'section.card',
+    null,
+    el(
+      'header',
+      null,
+      el('h2', { text: `The ${formatCount(missing.length)} assets that could not be valued` }),
+      el('p.note', {
+        text:
+          'Every one of them, named, with which of four things is wrong. None of them is drawn at zero anywhere on this page and none is inside the total above — an asset this site could not value is a different fact from an asset worth nothing, and folding the two together is how a dollar figure comes to describe less than it claims.',
+      }),
+    ),
+    pricedNamesakes
+      ? notice(
+          'info',
+          `Hydration does price something with the same ticker as ${formatCount(pricedNamesakes)} of these — and it is a different asset`,
+          'Hydration registers the same underlying token once per ROUTE, not once. On the last read it carried five USDCs, three WETHs, three WBTCs, three USDTs and three DAIs — arriving via Snowbridge, via Wormhole, via Acala, issued natively on Asset Hub, or issued by the token’s own parachain — as separate registry ids with separate liquidity. Its money market prices at most one leg of each family, and it is never the Snowbridge leg this page is about.',
+          'So the right-hand column is a diagnostic and never a price. Substituting the Wormhole WBTC’s price onto the Snowbridge WBTC would be within a fraction of a percent of right today, would render perfectly, and would be a claim about bridge risk that nothing here has evidence for. This is the same rule as “never sum by ticker”, one level up: the underlying contract address is not a key either.',
+        )
+      : null,
+    knownDivisor.length
+      ? notice(
+          'warning',
+          `${formatCount(knownDivisor.length)} of these have a price but no divisor, and would be worth about ${money2(totals.excludedNoDecimalsUsd)}`,
+          `Asset Hub carries no metadata entry for them, so the chain holding the supply does not say what one whole token is. Hydration’s registry does — ${knownDivisor.map((u) => `${u.hydrationSymbol} at ${u.hydrationDecimals}`).join(', ')} — and at those decimals they would come to ${money2(totals.excludedNoDecimalsUsd)}, against ${money2(totals.pricedUsd)} measured above.`,
+          'That figure is stated here and used nowhere. It rests on a second chain’s claim about the divisor, and a wrong divisor is a silent factor of ten to the n: at eighteen decimals one of these is 2.1 million tokens and at eight it is 21 thousand billion. Both render perfectly. Settling it needs the ERC-20’s own `decimals()`, which is on Ethereum and not on any chain this site reads.',
+        )
+      : null,
+    el(
+      'div.tablewrap.scroll-y',
+      null,
+      el(
+        'table.data',
+        null,
+        el(
+          'thead',
+          null,
+          el(
+            'tr',
+            null,
+            el('th', { text: 'Asset' }),
+            el('th.num', { text: 'Supply' }),
+            el('th', { text: 'Why there is no dollar figure' }),
+            el('th', { text: 'Same ticker on Hydration (a different asset)' }),
+          ),
+        ),
+        body,
+      ),
+    ),
+    el('p.note', {
+      text:
+        withNamesakes
+          ? `${formatCount(withNamesakes)} of these carry a same-ticker entry on Hydration. Matching here is done on the raw SCALE bytes of the XCM location, which is the only key that identifies an asset across two chains — three tickers on this page are already carried by more than one asset within Asset Hub alone.`
+          : 'Matching is done on the raw SCALE bytes of the XCM location, which is the only key that identifies an asset across two chains.',
+    }),
+  )
+}
+
 /* ──────────────────────────────────────────────────────────────────── where the assets sit ── */
 
-function distributionCard(rows, series, holders) {
+function distributionCard(rows, series, holders, pricedCount = null) {
   const plot = el('div')
   const tally = segmentedRows(plot, {
     rows,
@@ -312,11 +657,11 @@ function distributionCard(rows, series, holders) {
       el('h2', { text: 'Where each bridged asset currently sits' }),
       el('p.note', {
         text:
-          'One bar per bridged asset, split by whichever parachain sovereign account is holding it, with everything still on Asset Hub as the leading segment. The segments are the swept holder balances and the bar is the pallet’s own supply figure — they are read separately and checked against each other, so a bar that does not fill is supply that no account holds.',
+          'A different question from the chart at the top, and the reason this one is down here. One bar per bridged asset, split by whichever parachain sovereign account is holding it, with everything still on Asset Hub as the leading segment. The segments are the swept holder balances and the bar is the pallet’s own supply figure — they are read separately and checked against each other, so a bar that does not fill is supply that no account holds.',
       }),
       el('p.note', {
         text:
-          `Every bar is denominated by its OWN supply, so what it encodes is composition and nothing else. Nothing on this page has a price, and without one these rows have no shared unit: denominated instead by the largest supply among the ${inTokens.length} assets that can be scaled at all, ${wouldBeFaint} of them would draw under 2 % of the track — not because they are small, but because 473 million MYTH and 471 WETH are not the same thing. Magnitude is in the amount column, next to its unit.`,
+          `EVERY BAR HERE IS THE SAME LENGTH, and that is the chart working rather than failing: each one is denominated by its OWN supply, so what it encodes is composition and nothing else. These rows have no shared unit — only ${formatCount(inTokens.length)} of them can be scaled at all, and denominated instead by the largest supply among those, ${formatCount(wouldBeFaint)} would draw under 2 % of the track, not because they are small but because 473 million MYTH and 471 WETH are not the same thing. Magnitude in tokens is in the amount column next to its unit; magnitude in dollars is the chart at the top of this page, where the rows do share a unit and only ${formatCount(pricedCount ?? 0)} of them appear.`,
       }),
     ),
     segmentedLegend(series, legendTotals, (count) => (count === 1 ? '1 asset' : `${formatCount(count)} assets`)),
@@ -707,12 +1052,14 @@ function issuedCard(inventory) {
  * are drawn from. They are rendered rather than paraphrased: a hand-written caveat drifts from
  * the data the first time the data changes and nothing says it has.
  */
-function notesSection(inventory, holders) {
+function notesSection(inventory, holders, valued) {
   return el(
     'section.meta',
     null,
     el('h2', { text: 'Data notes' }),
-    livenessNotes([inventory.meta?.liveness, holders.meta?.liveness]),
+    livenessNotes([valued.ok ? valued.data.meta?.liveness : null, inventory.meta?.liveness, holders.meta?.liveness].flat().filter(Boolean)),
+    valued.ok ? el('h3', { text: 'The prices' }) : null,
+    valued.ok ? wrapAnywhere(el('ul', null, ...(valued.data.notes ?? []).map((note) => el('li', { text: note })))) : null,
     el('h3', { text: 'The registry' }),
     wrapAnywhere(el('ul', null, ...(inventory.notes ?? []).map((note) => el('li', { text: note })))),
     el('h3', { text: 'The holder sweep' }),
@@ -720,18 +1067,45 @@ function notesSection(inventory, holders) {
     el('p', {
       text: `The registry was read at Asset Hub block ${formatCount(inventory.chain.block)} and the holder sweep at block ${formatCount(holders.chain.block)}, runtime ${inventory.chain.specName} ${formatCount(inventory.chain.specVersion)}. Those are two reads a few blocks apart, so a transfer landing between them would show as a holding the inventory’s supply does not yet know about; each holding row carries its own block height for that reason.`,
     }),
+    valued.ok
+      ? el('p', {
+          text: `The prices were read from Hydration at block ${formatCount(valued.data.hydrationChain.block)}, runtime ${valued.data.hydrationChain.specName} ${formatCount(valued.data.hydrationChain.specVersion)}, from the money-market oracle at ${valued.data.oracle.address} with a base currency unit of ${formatCount(valued.data.oracle.baseCurrencyUnit)}. Both the oracle address and the base unit are derived on every read rather than hardcoded, and the read is refused outright if the aDOT aToken, the pool and the addresses provider stop agreeing about each other.`,
+        })
+      : null,
     el('p', {
       text: `Every figure here is one reading of current state, fetched ${formatUtc(Date.parse(inventory.fetchedAt))}. Nothing on this page has a history behind it, so nothing on it can tell you whether a balance is usual — only what it is.`,
     }),
   )
 }
 
+/**
+ * Three reads, and the third is allowed to fail on its own.
+ *
+ * Prices come from a different chain from everything else on this page, through a different
+ * source module, and Hydration being unreachable must not take down a registry read that never
+ * needed it (decision 0010 — unreachable is data). So the valuation is caught here and handed to
+ * `render` as an outcome rather than thrown: the page then opens on a notice explaining what is
+ * missing, and every block below it still draws.
+ */
+async function loadValuation() {
+  try {
+    return { ok: true, data: await read('prices', 'bridged') }
+  } catch (error) {
+    return {
+      ok: false,
+      kind: error?.kind ?? 'transport',
+      message: error?.message ?? 'The pricing source could not be read.',
+      advice: error?.advice ?? 'The valuation is unavailable on this read.',
+    }
+  }
+}
+
 renderPage({
   page: pageByKey('bridged'),
   intro:
-    'Everything that enters Polkadot from another consensus system arrives through one registry on Asset Hub, and the storage key itself says where it came from. This is that registry read whole: what is bridged in, which parachain’s sovereign account is holding each asset now, and — because the holder map can be swept completely — whether the balances still add back up to the supply the pallet claims. On six assets they do not, and that turns out to be something the chain does rather than something this read got wrong.',
-  load: () => Promise.all([read('asset-hub', 'bridged-inventory'), read('asset-hub', 'bridged-holders')]),
+    'Everything that enters Polkadot from another consensus system arrives through one registry on Asset Hub, and the storage key itself says where it came from. This is that registry read whole and, where a chain will price it, valued: what is bridged in and what it is worth, which parachain’s sovereign account is holding each asset now, and — because the holder map can be swept completely — whether the balances still add back up to the supply the pallet claims. Most of these assets have no on-chain price, so the dollar figure is a floor and the page names every asset it excludes.',
+  load: () => Promise.all([read('asset-hub', 'bridged-inventory'), read('asset-hub', 'bridged-holders'), loadValuation()]),
   render,
   skeleton: ['stats', 'chart', 'chart'],
-  loadingLabel: 'Reading Asset Hub’s ForeignAssets registry and sweeping every holder map',
+  loadingLabel: 'Reading Asset Hub’s ForeignAssets registry, sweeping every holder map, and pricing what Hydration can',
 })

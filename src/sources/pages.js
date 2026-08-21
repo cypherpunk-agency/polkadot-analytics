@@ -220,6 +220,26 @@ export const PAGES = [
     live: true,
   },
   {
+    // Sits next to `netflows` deliberately: it is the same machinery pointed at a different set
+    // of accounts — a store-backed daily series, one calendar month per fetch, read from both
+    // legs at each UTC day's close. Ungrouped for the same reason `netflows` is: it is a series
+    // across the relay chain AND Asset Hub, not a statement about what Asset Hub holds.
+    key: 'whales',
+    kind: 'dashboard',
+    href: '/whales/',
+    nav: 'DOT whales',
+    title: 'DOT whales, 2022 → today',
+    blurb:
+      'What the 990 largest DOT accounts hold, every UTC day since January 2022 — traced backwards from a cohort fixed on 2026-08-21, so it answers what TODAY’s whales held in the past rather than who was large at the time. Read from the chains themselves at each day’s last block, across both legs: `System::Account` on the Polkadot relay chain and on Asset Hub. The 2025-11-04 Asset Hub Migration is drawn rather than described.',
+    // The accounts are DISCOVERED from Subscan’s public holder list, once, on a stated date
+    // (decision 0021) — attribution that the page repeats from the payload’s own `seed.source`.
+    // Every number published is read from the chains, which is what this line names first.
+    source: 'Polkadot relay + Asset Hub RPC · cohort seeded from Subscan',
+    // Reads an upstream: whole past months come from a store that fills on demand from the two
+    // public RPCs, and reading the page is what starts the missing ones.
+    live: true,
+  },
+  {
     key: 'knowledge',
     kind: 'section',
     href: '/knowledge/',

@@ -1067,3 +1067,27 @@ Three asks, recorded before compaction so they survive it:
 
 Sequencing note: O84 before O85 — the top-100 snapshot O85 needs is a byproduct of O84's
 Asset Hub half.
+
+### 15.2 Delivered — 2026-08-21, fourth session: the whale series, seed to page in one day
+
+Ask 2 above shipped, larger than asked (top 1,000, not 100) and reshaped twice by Tommi
+mid-design — both decisions recorded in [0021](../decisions/0021-the-whale-cohort-is-seeded-not-enumerated.md):
+
+- **Never enumerate; seed.** The 4.14 M-account sweep was cancelled for a one-off read of
+  Subscan's public holder list, verified account-by-account against the chain at a pinned block.
+  Discovery is editorial and dated; measurement is chain-read. `src/data/dot-whales.json`:
+  990 accounts, 1,130,529,331 DOT, 66.54 % of Asset Hub issuance.
+- **Current cohort only.** Historical cohorts and the union idea were dropped; the series is
+  "today's whales traced backwards" with survivorship stated on the page, bounded by the second
+  chart (in 2022-01 only 271 of the 990 existed).
+
+Live in production the same day: `asset-hub/whales-daily` (both legs, each day's close block,
+~43 MB / ~2.2 h backfill self-filling since deploy), `whales-series` (one ~300 kB aggregate,
+decision 0020 machinery), the SSE watch, and `/whales/` — which deliberately withholds the
+top-10 concentration line until O87 settles whether its movement is real or a cohort artefact.
+Both build agents' findings are recorded: O86–O91, B10, two CLAUDE.md traps, and the
+ED-pre-provisioning discovery in `docs/platform/asset-hub.md` (550 of the 990 held exactly one
+existential deposit on Asset Hub a year before the Migration).
+
+Still open from the original three asks: O84's Hydration/Hyperbridge halves and the all-tokens
+valuation; O63/O64 for "follow the money".

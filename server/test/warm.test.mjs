@@ -13,6 +13,10 @@
 //   3. `warmStore` enqueues what a reader would have enqueued, and REFUSES the three cases
 //      that would make a boot hook expensive: a complete identity (a refetch of everything),
 //      a mutable one (a job the engine surrenders), a surrendered one (an undone decision).
+//   4. The REAL registry declares the identities the pages ask for — the mechanism above ships
+//      inert unless a handler has a `warm()`, and a warm list that drifts from its page's list
+//      is worse than none: warming N months uses up MAX_LIVE_JOBS_PER_OPERATION, so a month on
+//      the page's list and not on ours cannot be fetched by the reader who asks for it.
 //
 // Nothing here touches an upstream, and nothing binds a port.
 
@@ -26,6 +30,8 @@ import { createApp } from '../index.mjs'
 import { openStore } from '../lib/store.mjs'
 import { JobQueue } from '../lib/jobs.mjs'
 import { warmStore, MAX_WARM_IDENTITIES } from '../lib/warm.mjs'
+import { SOURCES } from '../sources/index.mjs'
+import { netflowsMonthIsSettled } from '../sources/asset-hub.mjs'
 
 function scratch(t) {
   const dir = mkdtempSync(join(tmpdir(), 'pa-warm-'))
@@ -355,3 +361,140 @@ test('boot with nothing to do spawns no worker — an idle queue costs 0 MB, not
 function none() {
   return { resolve: () => ({ error: 'none' }), resolveJob: () => ({ error: 'none' }) }
 }
+
+/* ═══════════════════════ 4: the real handlers, against the real warmStore ══════════════════ */
+
+// The synthetic source above proves warmStore's refusals. These prove the two things a synthetic
+// source cannot: that the identities the REGISTRY declares are the ones the pages ask for, and
+// that a second boot over a filled store enqueues nothing.
+//
+// Nothing here reaches an upstream. `asset-hub`'s warm() is pure (a clock and a table);
+// `hydration`'s takes its floor from orca, so its month walk is driven by an injected head and
+// floor rather than by a real request.
+
+test('asset-hub/netflows-daily warms every settled month of BOTH networks, and no other', async (t) => {
+  const { store, queue } = rig(t)
+  const handler = SOURCES['asset-hub'].jobs['netflows-daily']
+  assert.equal(typeof handler.warm, 'function', 'the boot warm-up is inert without this')
+
+  const wanted = await handler.warm()
+  const byNetwork = new Map()
+  for (const identity of wanted) {
+    if (!byNetwork.has(identity.network)) byNetwork.set(identity.network, [])
+    byNetwork.get(identity.network).push(identity.month)
+  }
+  assert.deepEqual([...byNetwork.keys()].sort(), ['kusama', 'polkadot'], 'half a page is not warmed')
+
+  // The floors are the per-network ones, and they are NOT the same month — Kusama Asset Hub's
+  // clock starts five months before Polkadot's, and a shared floor would be wrong on both.
+  assert.equal(byNetwork.get('polkadot')[0], '2022-01')
+  assert.equal(byNetwork.get('kusama')[0], '2021-07')
+
+  // Every entry is settled, and the current month is therefore absent — nothing here has to
+  // know the settling rule, which is the point of deriving both lists from one predicate.
+  const now = Date.now()
+  const currentMonth = new Date(now).toISOString().slice(0, 7)
+  for (const identity of wanted) {
+    assert.ok(netflowsMonthIsSettled(identity, now), `${JSON.stringify(identity)} must be immutable to be warmed`)
+    assert.notEqual(identity.month, currentMonth)
+  }
+
+  // And they are real identities: warmStore validates each through the handler's own schema, so
+  // an entry misspelled here would be reported invalid rather than stored under a second key.
+  const warmed = await warmStore({ store, queue, sources: { 'asset-hub': SOURCES['asset-hub'] }, log: quiet })
+  assert.equal(warmed.considered, wanted.length)
+  assert.equal(warmed.enqueued, wanted.length)
+  assert.equal(warmed.skipped.invalid, 0)
+})
+
+test('asset-hub/netflows-daily: THREE boots over a filled store enqueue it once, not three times', async (t) => {
+  const { store, queue } = rig(t)
+  const sources = { 'asset-hub': SOURCES['asset-hub'] }
+
+  // Boot 1 — a cold volume.
+  const first = await warmStore({ store, queue, sources, log: quiet })
+  assert.ok(first.enqueued > 100, 'the whole settled series, both networks')
+
+  // Finish them, the way the drain worker would.
+  for (const id of first.jobs) queue.complete(queue.claim(id).id)
+
+  // Boots 2 and 3. `enqueue` is find-or-create over LIVE states only and `done` is not one, so
+  // without warmStore's completeness check each of these would mint a fresh job and refetch
+  // every stored day — correct answers, a full coverage bar, and nothing anywhere reporting it.
+  const second = await warmStore({ store, queue, sources, log: quiet })
+  const third = await warmStore({ store, queue, sources, log: quiet })
+  assert.equal(second.enqueued, 0)
+  assert.equal(third.enqueued, 0)
+  assert.equal(second.skipped.complete, first.enqueued)
+  assert.equal(third.skipped.complete, first.enqueued)
+
+  const rows = store.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE source = 'asset-hub'").get().n
+  assert.equal(rows, first.enqueued, 'one job row per identity after three boots')
+})
+
+test('asset-hub/netflows-daily: one completed month is skipped while the rest are warmed', async (t) => {
+  const { store, queue } = rig(t)
+  const sources = { 'asset-hub': SOURCES['asset-hub'] }
+  const params = { month: '2024-03', network: 'polkadot' }
+
+  queue.complete(queue.claim(queue.enqueue('asset-hub', 'netflows-daily', params).id).id)
+
+  const warmed = await warmStore({ store, queue, sources, log: quiet })
+  assert.equal(warmed.skipped.complete, 1)
+  assert.equal(warmed.enqueued, warmed.considered - 1)
+})
+
+/* ---- hydration: the floor is read, so the walk is driven by an injected head and floor ---- */
+
+const orca = (floorAt, headAt) => async () => ({
+  floor: { block: { timestamp: floorAt } },
+  head: { timestamp: headAt },
+})
+
+test('hydration/swaps-daily warms from ORCA’S FLOOR, not from the chain’s beginning', async (t) => {
+  const handler = SOURCES.hydration.jobs['swaps-daily']
+  assert.equal(typeof handler.warm, 'function')
+
+  // The real values on 2026-08-21. `monthIsSettled` has no floor of its own, so without this
+  // bound the list would be every month back to 2019 — hundreds of jobs storing nothing.
+  const months = (
+    await handler.warm({
+      connect: orca('2025-01-25T05:58:36+00:00', '2026-08-21T09:00:00+00:00'),
+      now: Date.parse('2026-08-21T09:00:00Z'),
+    })
+  ).map((identity) => identity.month)
+
+  assert.equal(months[0], '2025-01', 'the month CONTAINING the floor, whose later days are real')
+  assert.equal(months.at(-1), '2026-07')
+  assert.equal(months.length, 19)
+  // A contiguous walk across two year boundaries — the arithmetic that a Date advanced by "one
+  // month" gets wrong on a 31st.
+  assert.ok(months.includes('2025-12') && months.includes('2026-01'))
+  assert.deepEqual([...new Set(months)], months, 'no month twice')
+})
+
+test('hydration/swaps-daily will not warm a month orca has not indexed past', async (t) => {
+  const handler = SOURCES.hydration.jobs['swaps-daily']
+
+  // An indexer three weeks behind. The wall clock says June and July are settled; orca cannot
+  // answer for either, and `ingestDay` would refuse them three times and SURRENDER the identity
+  // — a `gave-up` a reboot does not undo. Bounding on the head we already fetched avoids it.
+  const months = (
+    await handler.warm({
+      connect: orca('2025-01-25T05:58:36+00:00', '2026-07-20T00:00:00+00:00'),
+      now: Date.parse('2026-08-21T09:00:00Z'),
+    })
+  ).map((identity) => identity.month)
+
+  assert.equal(months.at(-1), '2026-06')
+  assert.ok(!months.includes('2026-07'))
+})
+
+test('hydration/swaps-daily refuses an orca answer with no usable timestamp', async (t) => {
+  const handler = SOURCES.hydration.jobs['swaps-daily']
+  await assert.rejects(
+    () => handler.warm({ connect: async () => ({ floor: { block: {} }, head: {} }) }),
+    /timestamp/,
+    'a NaN floor must be a reported failure, not a silently empty warm list',
+  )
+})

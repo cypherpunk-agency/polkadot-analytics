@@ -94,7 +94,80 @@ const MIGRATIONS = [
 
   CREATE INDEX jobs_claimable ON jobs (state, next_attempt_at);
   `,
+
+  // 2 — netflows-daily gained a required `network`, which changed its identity.
+  //
+  // THE PARAMS ARE THE IDENTITY (docs/architecture/jobs.md), so adding a parameter to a
+  // store-backed job does not extend the old rows — it ORPHANS them. `{"month":"2022-01"}` and
+  // `{"month":"2022-01","network":"polkadot"}` share no segment, no coverage and no `done` job,
+  // so 1,673 already-fetched Polkadot days became invisible and would have been re-derived from
+  // Parity's public RPC, once, for nothing (~39 minutes of politeness-gated requests). This
+  // renames them instead.
+  //
+  // Data, not schema, and that is the point: a migration is the only place where the identity of
+  // a fact can be changed at all. Nothing in the running code may rewrite a params string —
+  // `canonicalParams` is the one function allowed to produce one — so a change of identity is a
+  // forward-only, once-only, transactional event or it is a bug.
+  //
+  // Why `replace()` is exactly right here rather than merely plausible: canonical params sort
+  // their keys, so `month` precedes `network` and appending the pair before the closing brace
+  // produces byte-for-byte what `canonicalParams({month, network:'polkadot'})` produces. The
+  // `LIKE '{"month":"____-__"}'` guard is what makes that a proof rather than a hope — it admits
+  // only the exact shape this job's old identity could have had (one key, a `YYYY-MM` string,
+  // therefore exactly one `}`, at the end). A params string that merely LOOKS right is a fact
+  // nothing can ever find again, so the shape is asserted, not assumed. `server/test/store.test.mjs`
+  // checks the result against `canonicalParams` itself.
+  //
+  // The two DELETEs are the collision case, and they are not hypothetical: an instance that
+  // served this month both before and after the Kusama change holds BOTH identities. The facts
+  // table is keyed (source, operation, params, segment), so renaming into an occupied key is a
+  // constraint failure — which, inside `migrate`, means the store does not open AT ALL. The row
+  // written by the CURRENT code wins; the orphan is dropped. Same for `jobs`, where the partial
+  // unique index admits one LIVE job per identity (a `done` or `gave-up` twin is harmless, and
+  // `describeIdentity` already takes the newest `done` by id).
+  //
+  // Harmless to run twice by construction, not merely by `schema_version`: every statement is
+  // guarded on `params NOT LIKE '%network%'`, which nothing it produces can match.
+  `
+  DELETE FROM facts AS orphan
+   WHERE orphan.source = 'asset-hub' AND orphan.operation = 'netflows-daily'
+     AND orphan.params NOT LIKE '%network%'
+     AND orphan.params LIKE '{"month":"____-__"}'
+     AND EXISTS (
+       SELECT 1 FROM facts AS current
+        WHERE current.source = orphan.source AND current.operation = orphan.operation
+          AND current.segment = orphan.segment
+          AND current.params = replace(orphan.params, '}', ',"network":"polkadot"}')
+     );
+
+  DELETE FROM jobs AS orphan
+   WHERE orphan.source = 'asset-hub' AND orphan.operation = 'netflows-daily'
+     AND orphan.params NOT LIKE '%network%'
+     AND orphan.params LIKE '{"month":"____-__"}'
+     AND orphan.state IN ('queued', 'running', 'partial', 'failed')
+     AND EXISTS (
+       SELECT 1 FROM jobs AS current
+        WHERE current.source = orphan.source AND current.operation = orphan.operation
+          AND current.params = replace(orphan.params, '}', ',"network":"polkadot"}')
+          AND current.state IN ('queued', 'running', 'partial', 'failed')
+     );
+
+  UPDATE facts SET params = replace(params, '}', ',"network":"polkadot"}')
+   WHERE source = 'asset-hub' AND operation = 'netflows-daily'
+     AND params NOT LIKE '%network%'
+     AND params LIKE '{"month":"____-__"}';
+
+  UPDATE jobs SET params = replace(params, '}', ',"network":"polkadot"}')
+   WHERE source = 'asset-hub' AND operation = 'netflows-daily'
+     AND params NOT LIKE '%network%'
+     AND params LIKE '{"month":"____-__"}';
+  `,
 ]
+
+/** How far a fully-migrated store has come. Exported so a test can assert "every migration ran,
+ *  exactly once" without a literal that has to be edited every time one is added — a literal
+ *  left stale still passes while half the list has not run. */
+export const MIGRATION_COUNT = MIGRATIONS.length
 
 /** How many rows a large read processes between yields to the event loop. */
 const YIELD_EVERY = 512

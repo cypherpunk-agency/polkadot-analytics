@@ -2695,6 +2695,50 @@ export default {
 
       immutable: (params) => netflowsMonthIsSettled(params),
 
+      /**
+       * Fill this without waiting for a reader — see server/lib/warm.mjs and decision 0014.
+       *
+       * Every settled month of every network, which is the same set `/netflows/` asks for and
+       * must stay the same set: a warm identity that differs from a requested one by so much as
+       * a key is a SECOND identity, so the backfill runs twice, both copies are correct, and the
+       * page still starts empty. Both lists are therefore derived from `firstMonth` and the
+       * clock rather than written down twice, and `netflowsMonthIsSettled` — the same predicate
+       * `immutable` uses, and the same one warmStore re-applies — decides which of them are real,
+       * so the current month falls out on its own without this function knowing the rule.
+       *
+       * BOTH NETWORKS, deliberately, and the deciding argument is not the one about cost.
+       * `MAX_LIVE_JOBS_PER_OPERATION` is counted per (source, operation) ACROSS ALL PARAMS
+       * (jobs.mjs `countLive`), so warming Polkadot alone would put 55 live jobs on this
+       * operation and a Kusama reader arriving during the drain would be refused with "the queue
+       * is busy" for the whole of it — warming half the page would make the other half HARDER to
+       * fetch than warming nothing. Warming both is also what the page is: `/netflows/` is one
+       * chart with a network toggle, and a cold half is not a state worth shipping. The cost is
+       * one-time and measured — 33.1 min / 2.73 MB for Kusama's 61 months, ~39 min / 2.33 MB for
+       * Polkadot's 55 (2026-08-21) — and the two networks are different hosts, so neither drain
+       * slows the other through the per-host gate.
+       *
+       * Safe to leave as "everything, forever": warmStore skips an identity that is already
+       * complete, so once the series is filled this costs one indexed lookup per month per boot.
+       */
+      warm: () => {
+        const out = []
+        const now = new Date()
+        for (const net of Object.values(NETFLOW_NETWORKS)) {
+          // From the network's own floor to the current month. Per network, because Kusama can
+          // answer for 2021-07 and Polkadot cannot — a shared floor would either lock Kusama out
+          // of five readable months or mint a Polkadot job for a month with no clock.
+          for (let year = Number(net.firstMonth.slice(0, 4)); year <= now.getUTCFullYear(); year += 1) {
+            for (let index = 1; index <= 12; index += 1) {
+              const month = `${year}-${String(index).padStart(2, '0')}`
+              if (month < net.firstMonth) continue
+              if (!netflowsMonthIsSettled({ month, network: net.id })) continue
+              out.push({ month, network: net.id })
+            }
+          }
+        }
+        return out
+      },
+
       // Knowable without asking anybody. The engine records it before the first batch so the
       // coverage bar has a denominator from the start.
       plan: async ({ params }) => ({ totalUnits: daysOfMonth(params?.month ?? '').length || null }),

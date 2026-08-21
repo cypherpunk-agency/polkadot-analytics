@@ -1000,6 +1000,14 @@ function monthEndMs(month) {
   return index === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, index, 1)
 }
 
+/** The next calendar month. Arithmetic on the month string rather than on a Date, because a
+ *  Date advanced by "one month" lands on the 31st of a 30-day month and rolls into the one
+ *  after. Exported for the warm-list test, which walks it across a year boundary. */
+export function nextMonth(month) {
+  const [year, index] = monthOf(month)
+  return index === 12 ? `${year + 1}-01` : `${year}-${String(index + 1).padStart(2, '0')}`
+}
+
 /** Every UTC day in the month, as ISO dates — which is also the segment id, and ISO dates sort
  *  as strings in their real order. A counter here would draw the chart out of sequence.
  *  Exported, with `monthIsSettled` and `summariseDay`, because those three are the parts of this
@@ -3297,6 +3305,69 @@ export default {
       },
 
       immutable: (params) => monthIsSettled(params),
+
+      /**
+       * Fill this without waiting for a reader — see server/lib/warm.mjs and decision 0014.
+       *
+       * THE FLOOR IS READ, NEVER HARDCODED, and here that is a correctness requirement rather
+       * than a style: `monthIsSettled` has no floor of its own, so an unbounded warm list would
+       * be every month back to 2019 — hundreds of jobs whose every day stores
+       * `coverage: 'before-source-floor'`, i.e. nothing, forever. What bounds it is orca's own
+       * index floor, the first block it groups swap legs into routed trades from — para block
+       * 6,837,788 at 2025-01-25T05:58:36+00:00 (read live off orca-prod-pool-01 on 2026-08-21,
+       * and carried on all 24 `before-source-floor` days of this store's own 2025-01).
+       *
+       * `src/pages/hydration/history.js` reads that same floor live, out of the tail request,
+       * for the same reason. THE TWO LISTS MUST AGREE, and a constant here would be the way they
+       * stop agreeing — silently, and in the expensive direction: warmStore's own header warns
+       * that a month on the page's list but not on ours cannot be fetched by the reader who asks
+       * for it, because the ~19 warmed jobs have already used up
+       * `MAX_LIVE_JOBS_PER_OPERATION` (8, counted per operation across all params). So one
+       * `connect()` — one GraphQL request, the same head-and-floor both the page and every
+       * ingest already open with — decides it.
+       *
+       * The upper bound is orca's HEAD, not only the wall clock, and that is the other thing a
+       * constant cannot do. `ingestDay` refuses to store a day the index stops inside; three
+       * such refusals surrender the identity, and `gave-up` is a decision a reboot does not undo
+       * (warm.mjs, refusal 3). An indexer a few days behind would therefore permanently lose its
+       * newest month to a warm-up nobody asked for. Bounding by the head we already fetched
+       * costs nothing and makes that unreachable.
+       *
+       * If orca does not answer at boot this throws, warmStore logs it and warms nothing for
+       * this handler — which leaves exactly the pre-warm behaviour, a reader-triggered fetch
+       * against an uncapped queue. Degrading toward "what we did before" is the safe direction;
+       * there is no retry because a boot is the only thing that warms.
+       *
+       * `connect` and `now` are injectable ONLY so the month walk can be tested without an
+       * upstream (warmStore calls this with no arguments, so production always takes the
+       * defaults). The walk is where the bugs live — a year boundary, a head bound and a
+       * settled filter — and none of them is worth a live orca call to exercise.
+       */
+      warm: async ({ connect: connectTo = connect, now = Date.now() } = {}) => {
+        const { head, floor } = await connectTo()
+        const floorMs = Date.parse(floor?.block?.timestamp ?? '')
+        const headMs = Date.parse(head?.timestamp ?? '')
+        if (!Number.isFinite(floorMs) || !Number.isFinite(headMs)) {
+          throw new UpstreamError(
+            `orca answered head/floor without a usable timestamp (floor ${floor?.block?.timestamp}, head ${head?.timestamp}).`,
+            { kind: 'decode', source: ORCA },
+          )
+        }
+
+        const first = new Date(floorMs).toISOString().slice(0, 7)
+        const out = []
+        // Bounded by the head: `monthEndMs` of a month orca has not reached is in the future, so
+        // the loop stops there. A malformed first month makes `monthEndMs` NaN and the loop runs
+        // zero times, which is the refusing direction.
+        for (let month = first; monthEndMs(month) <= headMs; month = nextMonth(month)) {
+          if (!MONTH_RE.test(month)) break
+          // The same predicate `immutable` uses and warmStore re-applies, so the current month
+          // falls out here for the same reason it would there.
+          if (!monthIsSettled({ month }, now)) continue
+          out.push({ month })
+        }
+        return out
+      },
 
       // Knowable without asking anybody: a month has the number of days a month has. The engine
       // records it before the first batch so the coverage bar has a denominator from the start.

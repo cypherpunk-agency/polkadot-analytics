@@ -409,7 +409,14 @@ test('asset-hub/netflows-daily warms every settled month of BOTH networks, and n
 
   // And they are real identities: warmStore validates each through the handler's own schema, so
   // an entry misspelled here would be reported invalid rather than stored under a second key.
-  const warmed = await warmStore({ store, queue, sources: { 'asset-hub': SOURCES['asset-hub'] }, log: quiet })
+  // Scoped to THIS handler: the source warms more than one job, and this assertion is about the
+  // identities netflows-daily declares, not about everything asset-hub warms.
+  const warmed = await warmStore({
+    store,
+    queue,
+    sources: { 'asset-hub': { ...SOURCES['asset-hub'], jobs: { 'netflows-daily': handler } } },
+    log: quiet,
+  })
   assert.equal(warmed.considered, wanted.length)
   assert.equal(warmed.enqueued, wanted.length)
   assert.equal(warmed.skipped.invalid, 0)

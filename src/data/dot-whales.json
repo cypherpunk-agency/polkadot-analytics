@@ -1,8 +1,8 @@
 {
  "cohort": "2026-08-21",
  "what": "The top DOT holders on Polkadot Asset Hub by free+reserved, as one dated cohort of 990 accounts. Seeded from Subscan's public top-1000 list; 10 rows were lost to page-boundary reshuffling during the fetch and the cohort is deliberately left at 990 rather than re-fetched into a second block height.",
- "seed": "Discovery: https://assethub-polkadot.subscan.io/account_list pages 1-40 (public, anonymous, read 2026-08-21). Balances and ranking: read from the chain, not from Subscan.",
- "rpc": "https://polkadot-asset-hub-rpc.polkadot.io",
+ "seed": "Discovery: assethub-polkadot.subscan.io/account_list pages 1-40 (public, anonymous, read 2026-08-21). Balances and ranking: read from the chain, not from Subscan.",
+ "rpc": "polkadot-asset-hub-rpc.polkadot.io",
  "head": "0x51e6fc78d81374386847648f979c2f8e246649c55c088c488ad5309a89c96d6d",
  "blockNumber": 19727122,
  "readAt": "2026-08-21T16:02:37.138Z",

@@ -52,13 +52,32 @@
 // the invariant on every read — parents 2 must open with `GlobalConsensus(X)`, X must not be
 // Polkadot — and reports any key that fails it instead of counting it.
 //
-// ── two hosts, one module, and why that is not a violation ──────────────────────────────────
-// The rule is one module per upstream, and this module names two hostnames. They are one
-// upstream in every sense that matters: the same operator's public RPC, the same network, the
-// same runtime release (`1.24.1-8ae9775dc43` on both, 2026-08-20), and — decisively — a single
-// figure. Post-Asset-Hub-Migration a chain's sovereign DOT is `para` on the relay PLUS `sibl`
-// on Asset Hub; splitting that across two modules would mean neither could compute the number
-// anybody wants. So: one module, one seam, both hostnames declared here and nowhere else.
+// ── four hosts, one module, and why that is not a violation ─────────────────────────────────
+// The rule is one module per upstream, and this module names four hostnames: Polkadot's relay
+// and Asset Hub, and Kusama's. They are one upstream in every sense that matters: the same
+// operator's public RPC, the same runtime release (`1.24.1-8ae9775dc43` on all four, verified
+// 2026-08-21), and — decisively — a single figure. Post-Asset-Hub-Migration a chain's sovereign
+// balance is `para` on its relay PLUS `sibl` on its Asset Hub; splitting that across modules
+// would mean neither could compute the number anybody wants.
+//
+// The Kusama pair is here for the DAILY SERIES ONLY (`netflows-daily`, `sovereign-dot-recent`),
+// because that measurement is identical on both networks and the alternative was a second copy
+// of ~900 lines of block-boundary search whose only differences are two URLs, two decimals and
+// one SS58 prefix — that is, two places for the same off-by-one. The three Polkadot-specific
+// operations above it (`bridged-inventory`, `bridged-holders`, `sovereign-dot`) read Polkadot
+// and nothing else: `ForeignAssets` on Kusama Asset Hub is a different registry answering a
+// different question, and pretending otherwise would be the mislabelling this module is built
+// to avoid.
+//
+// WHAT DIFFERS BETWEEN THE TWO NETWORKS, and each of these is a silent factor if it is missed:
+//   · KSM IS 12 DECIMALS, DOT IS 10. A Kusama series divided by 1e10 is exactly 100× too large
+//     and renders perfectly. The divisor is never a constant here — it comes from the network
+//     table, and `netflowsHeads` refuses to run if the chain disagrees with the table.
+//   · KUSAMA'S SS58 PREFIX IS 2. An address rendered at prefix 0 is a valid-looking Polkadot
+//     address for a Kusama account. The prefix comes from `system_properties`, per chain.
+//   · THE MIGRATION DATES DIFFER — Polkadot 2025-11-04, Kusama 2025-10-07 (both bisected out of
+//     their own relay chains; see the network table below).
+//   · THE SERIES FLOORS DIFFER, and both are set by a chain that has state but no clock.
 //
 // ── everything is pinned to one finalized block ─────────────────────────────────────────────
 // Every read in an operation is issued with an explicit block hash from `chain_getFinalizedHead`.
@@ -159,16 +178,41 @@ import { toHex, fromHex, utf8, concat, u32le, leHexToNumber } from '../../src/co
 const AH = {
   id: 'asset-hub-rpc',
   label: 'Polkadot Asset Hub (Parity public RPC)',
+  chainLabel: 'Polkadot Asset Hub',
   url: 'https://polkadot-asset-hub-rpc.polkadot.io',
 }
 
 const RELAY = {
   id: 'polkadot-rpc',
   label: 'Polkadot relay chain (Parity public RPC)',
+  chainLabel: 'Polkadot relay chain',
   url: 'https://rpc.polkadot.io',
 }
 
-const LABEL = 'Polkadot Asset Hub + relay chain'
+/**
+ * Kusama's two, for the daily series only.
+ *
+ * Identity verified rather than inferred from the hostname (2026-08-21): `system_chain` answers
+ * `Kusama` and `Kusama Asset Hub`, `system_version` is `1.24.1-8ae9775dc43` on both — the same
+ * runtime release the two Polkadot hosts serve. This repo has already been bitten by a hostname
+ * that resolved, answered, and served a different chain (CLAUDE.md), so the check is in
+ * `netflowsHeads` on every read and not in a comment.
+ */
+const KUSAMA_AH = {
+  id: 'kusama-asset-hub-rpc',
+  label: 'Kusama Asset Hub (Parity public RPC)',
+  chainLabel: 'Kusama Asset Hub',
+  url: 'https://kusama-asset-hub-rpc.polkadot.io',
+}
+
+const KUSAMA_RELAY = {
+  id: 'kusama-rpc',
+  label: 'Kusama relay chain (Parity public RPC)',
+  chainLabel: 'Kusama relay chain',
+  url: 'https://kusama-rpc.polkadot.io',
+}
+
+const LABEL = 'Polkadot Asset Hub + relay chain (and Kusama’s two, for the daily series)'
 
 /**
  * A chain producing six-second blocks is behind long before the fifteen-minute default. These
@@ -966,7 +1010,7 @@ async function bridgedInventory() {
     duplicateSymbols,
     complete,
     fetchedAt: new Date().toISOString(),
-    meta: { liveness: livenessOf(chain, null) },
+    meta: { liveness: livenessOf(chain) },
     notes: inventoryNotes({ chain, rows, bridged, sibling, stables, unscaled, anomalies, duplicateSymbols, complete }),
   }
 }
@@ -974,7 +1018,10 @@ async function bridgedInventory() {
 const bySupply = (a, b) => (b.supplyScaled ?? -1) - (a.supplyScaled ?? -1)
 
 const chainMeta = (chain) => ({
-  chain: chain === null ? null : chain.host === AH ? 'Polkadot Asset Hub' : 'Polkadot relay chain',
+  // The chain names ITSELF, from the host record, rather than being inferred by comparing the
+  // host against `AH`. With four hosts in this module that comparison silently labelled every
+  // Kusama chain "Polkadot relay chain".
+  chain: chain === null ? null : chain.host.chainLabel,
   block: chain.block,
   blockHash: chain.hash,
   specName: chain.specName,
@@ -1172,7 +1219,7 @@ async function bridgedHolders() {
     },
     counts: { assets: assets.length, holdings: holdings.length, chains: byChain.size },
     fetchedAt: observedAt,
-    meta: { liveness: livenessOf(chain, null) },
+    meta: { liveness: livenessOf(chain) },
     notes: holderNotes({ chain, assets, holdings, failed, unchecked, negative, shortSweeps, overAccounted }),
   }
 }
@@ -1403,7 +1450,7 @@ async function sovereignDot() {
       holdings: holdings.length,
     },
     fetchedAt: observedAt,
-    meta: { liveness: [livenessOf(ahChain, 'Asset Hub'), livenessOf(relayChain, 'relay chain')] },
+    meta: { liveness: [livenessOf(ahChain), livenessOf(relayChain)] },
     notes: sovereignNotes({ relayChain, ahChain, chains, missing, totals, issuance, paras }),
   }
 }
@@ -1415,11 +1462,10 @@ async function sovereignDot() {
  * set by the block's inherent, so the lag it produces is "how long ago the node we asked
  * finalized a block" — the one thing a state read cannot tell you by succeeding.
  */
-function livenessOf(chain, which) {
-  const label = which ? `${LABEL} — ${which}` : chain.host.label
+function livenessOf(chain) {
   return liveness({
     source: 'asset-hub',
-    label,
+    label: chain.host.label,
     headAt: chain.timeMs,
     head: `finalized #${chain.block.toLocaleString('en-US')}`,
     staleAfterMs: STALE_AFTER_MS,
@@ -1581,20 +1627,38 @@ function sovereignNotes({ relayChain, ahChain, chains, missing, totals, issuance
   return notes
 }
 
-/* ═════════════════════════════════════════════ the daily series: sovereign DOT over time ═════ */
+/* ═══════════════════════════════ the daily series: sovereign balances over time, per network ═════ */
 //
-// `sovereign-dot` above answers "how much DOT is in these accounts right now". This section
-// answers the question `/netflows/` is named for — how much was in them on every day since the
-// first parachain — and it is the same measurement, taken 1,700 times.
+// `sovereign-dot` above answers "how much DOT is in these accounts right now", on Polkadot. This
+// section answers the question `/netflows/` is named for — how much was in them on every day
+// since the first parachain — and it is the same measurement, taken ~3,500 times across TWO
+// networks. Everything below is parameterised by `NETFLOW_NETWORKS`; nothing below names a host,
+// a token, a decimal count or a date directly.
 //
 // ── one request per chain per day, not one per account ───────────────────────────────────────
 // `state_queryStorageAt` reads MANY keys at ONE block, so a day costs a handful of requests
 // rather than one per sovereign account. And because the JSON-RPC endpoints accept a BATCH
-// (an array of calls in one POST, verified against both hosts on 2026-08-20), the day loop
-// batches across DAYS as well: ten days' block-boundary probes are two HTTP requests, not
-// twenty. Measured end to end over the whole 2022→2026 backfill: **~2.2 HTTP requests and ~1.4 s
-// per day** with both chains in flight at once, and ~0.9 kB stored per day — see
-// docs/platform/asset-hub.md.
+// (an array of calls in one POST, verified against all four hosts), the day loop batches across
+// DAYS as well: ten days' block-boundary probes are two HTTP requests, not twenty.
+//
+// MEASURED, 2026-08-21, by counting real fetches through the job handler with the hint carried
+// across batches exactly as the engine carries it:
+//
+//   kusama   2026-06   30 days   163 requests   5.43 per day   0.75 s/day
+//   polkadot 2026-06   30 days   171 requests   5.70 per day   1.09 s/day
+//
+// End to end, the whole Kusama backfill — 61 months, 1,857 days, 2021-07-01 → 2026-07-31 —
+// took 33.1 minutes through the engine's politeness gate: **1.07 s per day**, 1,542 B mean
+// stored per day, 2.73 MB in total.
+//
+// THIS CORRECTS THE FIGURE THAT WAS HERE. It said "~2.2 HTTP requests and ~1.4 s per day",
+// measured on 2026-08-20; re-measured on the same Polkadot path the next day it is 5.70. The
+// arithmetic that gives 2.2 counts the boundary search and the account reads and forgets that
+// `netflowsHeads` runs on EVERY batch — `pin()` is five un-batched calls per host, so ten
+// requests per ten-day batch, a full request per day spent re-reading two heads that moved by
+// a few hundred blocks since the last batch. Whether that can be hoisted out of the batch loop
+// is docs/concept/research-queue.md; what matters here is that the cost of this backfill is
+// two and a half times what this comment claimed.
 //
 // ── the day's value is its CLOSE, and that is not a stylistic choice ─────────────────────────
 // The 2023 Polkalytics dataset in `src/data/netflows.json` defines a day as "the last balance
@@ -1622,32 +1686,114 @@ function sovereignNotes({ relayChain, ahChain, chains, missing, totals, issuance
 // indistinguishable from "this account holds nothing" — a whole chart of zeros that renders
 // perfectly. The guard is `Timestamp::Now`, which EVERY block has: a day whose close block
 // cannot produce a timestamp inside that UTC day is refused outright, and no row is written.
-// Both public endpoints were probed to genesis on 2026-08-20 and serve full archive state
-// (relay #1 = 2020-05-26; Asset Hub's clock starts at #305,204 = 2021-12-18T18:52:54Z, before
-// which the chain has state but sets no timestamp).
+// All four public endpoints were probed down to their floors and serve full archive state:
+//
+//   relay      #1 = 2020-05-26 (Polkadot), #1 = 2019-11-28T17:27:54Z (Kusama)
+//   Asset Hub  a clockless prefix on BOTH, which is the interesting case. Polkadot Asset Hub's
+//              clock starts at #305,204 = 2021-12-18T18:52:54Z (2026-08-20) and Kusama Asset
+//              Hub's at #66,687 = 2021-06-03T15:36:00.509Z (2026-08-21). Below those the chain
+//              answers `state_getRuntimeVersion` (`statemint 601` / `statemine 1`) and answers
+//              `Timestamp::Now` with `null` — a pre-launch period that is indistinguishable
+//              from a pruned archive, and a balance read there is indistinguishable from an
+//              empty account. That is what sets each network's `firstMonth`.
 //
 // ── the Asset Hub Migration is drawn, not hidden ─────────────────────────────────────────────
-// Before 2025-11-04 a parachain's DOT sat in its `para` account on the relay; after it, in its
-// `sibl` account on Asset Hub. Both legs are read on every day of the range and stored
+// Before the migration a parachain's reserve sat in its `para` account on the relay; after it,
+// in its `sibl` account on Asset Hub. Both legs are read on every day of the range and stored
 // SEPARATELY, so the page can draw the handover rather than assert a continuous line through
-// it. Summing them is correct — the migration moved the DOT, it did not duplicate it — but a
-// series that only reported the sum would hide the single largest structural break in it.
-
-/** Stamped on every stored row. Bump when the payload's meaning changes. */
-const NETFLOWS_VERSION = 'asset-hub/netflows-daily@1'
+// it. Summing them is correct — the migration moved the money, it did not duplicate it — but a
+// series that only reported the sum would hide the single largest structural break in it. The
+// two networks migrated on different days (Polkadot 2025-11-04, Kusama 2025-10-07) and both
+// dates were bisected out of the relay chains themselves — see the network table below.
 
 /**
- * The first month this series can be read.
+ * Stamped on every stored row. Bump when the payload's meaning changes.
  *
- * Not a taste decision: Asset Hub sets no `Timestamp::Now` before block #305,204
- * (2021-12-18T18:52:54.582Z, verified live 2026-08-20), so a UTC day before that has no
- * readable Asset Hub close and the second leg of the sum would be `null` rather than `0`.
- * Polkadot's first parachains onboarded 2021-12-17 and NO sovereign account held any DOT until
- * 2022-02-02 — the relay's own state says so, and the archived dataset's first non-null value
- * (Acala, 1.23 DOT) is that same day. January 2022 is therefore a month of verified-empty days
- * rather than a month of missing ones, which is why the series opens there and not later.
+ * `@2` adds `network` and `token` to each day. The bump is honest rather than defensive: making
+ * `network` a parameter changed the store IDENTITY of every Polkadot day too (see the registry
+ * entry below), so nothing stored under `@1` is reachable any more and a reader comparing two
+ * rows can tell which code wrote each.
  */
-const SERIES_FIRST_MONTH = '2022-01'
+const NETFLOWS_VERSION = 'asset-hub/netflows-daily@2'
+
+/**
+ * The two networks, and everything that differs between them.
+ *
+ * This table is the whole of the parameterisation: one implementation reads it and nothing else
+ * below names a host, a token or a date. Two of its fields are canaries rather than
+ * configuration — `token` and `decimals` are ASSERTED against `system_properties` on every read
+ * in `netflowsHeads`, because a Kusama figure divided by Polkadot's 1e10 is exactly 100× too
+ * large and looks entirely reasonable.
+ *
+ * `firstMonth` is not a taste decision on either network. It is the first WHOLE calendar month
+ * whose every UTC day has a readable close on BOTH chains, and on both networks the binding
+ * constraint is the same one: an Asset Hub that has state but sets no `Timestamp::Now`, which is
+ * indistinguishable from a pruned archive and whose balance reads come back `null`, which is
+ * indistinguishable from an empty account.
+ *
+ *   polkadot  Asset Hub's clock starts at #305,204 = 2021-12-18T18:52:54.582Z (verified live
+ *             2026-08-20). Polkadot's first parachains onboarded 2021-12-17 and NO sovereign
+ *             account held DOT until 2022-02-02, so 2022-01 is a month of verified-empty days
+ *             rather than missing ones.
+ *   kusama    Kusama Asset Hub's clock starts at #66,687 = 2021-06-03T15:36:00.509Z (bisected
+ *             live 2026-08-21; #66,686 answers `statemine 1` to `state_getRuntimeVersion` and
+ *             `null` to `Timestamp::Now`). June 2021 therefore cannot be a whole month and the
+ *             series opens at 2021-07 — which is also, by coincidence rather than by design, the
+ *             archived 2023 dataset's own first day.
+ *
+ * `migratedOn` is the Asset Hub Migration, and NO storage item says it. Both dates were
+ * established by bisecting a large sovereign account's balance out of the relay chain itself:
+ *
+ *   polkadot  Acala's `para` account falls 3,137,094.16 → 341.00 DOT across relay
+ *             #28,493,861→862 (2025-11-04).
+ *   kusama    Karura's `para` account falls 40,394.8 → 160.0 KSM across relay
+ *             #30,424,405→#30,424,406, dated 2025-10-07T14:47:54.001Z (verified 2026-08-21).
+ *             Progressive rather than atomic, exactly as Polkadot's was: at that same block
+ *             Bifrost still held 19,525.2 KSM on the relay, Kintsugi 6,481.3, Basilisk 2,528.5
+ *             and Picasso 2,470.8, while Moonriver, Heiko and Mangata were already at 40–90 KSM.
+ *             The handover completes inside that UTC day — by its close the fifteen relay legs
+ *             sum to 1,210 KSM against 102,581 KSM on Asset Hub.
+ *
+ * The Kusama date had been carried in `docs/platform/` as an unverified transcription until this
+ * read. It was right; it is no longer a transcription.
+ */
+const NETFLOW_NETWORKS = {
+  polkadot: {
+    id: 'polkadot',
+    label: 'Polkadot',
+    relay: RELAY,
+    assetHub: AH,
+    token: 'DOT',
+    decimals: 10,
+    firstMonth: '2022-01',
+    migratedOn: '2025-11-04',
+  },
+  kusama: {
+    id: 'kusama',
+    label: 'Kusama',
+    relay: KUSAMA_RELAY,
+    assetHub: KUSAMA_AH,
+    token: 'KSM',
+    decimals: 12,
+    firstMonth: '2021-07',
+    migratedOn: '2025-10-07',
+  },
+}
+
+const NETFLOW_NETWORK_IDS = Object.keys(NETFLOW_NETWORKS)
+
+/** The network, or a throw. Never a default: a silent one would attribute Kusama days to
+ *  Polkadot's identity in the store, and both would render. */
+function netflowNetwork(id) {
+  const net = NETFLOW_NETWORKS[id]
+  if (!net) {
+    throw new UpstreamError(`\`network\` must be one of: ${NETFLOW_NETWORK_IDS.join(', ')} — got \`${id}\`.`, {
+      kind: 'decode',
+      source: 'asset-hub',
+    })
+  }
+  return net
+}
 
 const NETFLOWS_MONTH_RE = /^\d{4}-(?:0[1-9]|1[0-2])$/
 
@@ -1675,9 +1821,19 @@ const RPC_BATCH_STATE = 60
 /** Keys per `state_queryStorageAt` HTTP request, across however many days it covers. */
 const KEYS_PER_REQUEST = 300
 
-/** A chain holding less than this is folded into one `dust` row rather than getting its own
- *  entry on every one of ~1,700 days. One DOT: below it a line is invisible against a chart
- *  whose top series is measured in millions, and the aggregate keeps the totals exact. */
+/**
+ * A chain holding less than this is folded into one `dust` row rather than getting its own entry
+ * on every one of ~1,700 days. The aggregate keeps every total exact; what it costs is the
+ * ability to NAME a chain that held less than the floor.
+ *
+ * It is a fixed PLANCK amount, deliberately, and that means it is a different amount of money on
+ * each network: 1 DOT (10 decimals) and 0.01 KSM (12 decimals). One whole token per network was
+ * the alternative and it is not obviously better — the cap below binds on most days anyway, and a
+ * finer floor errs towards naming a chain rather than absorbing it, which is the safe direction.
+ * What matters is that nothing ANYWHERE says "1 token": the floor is written into every stored
+ * day as `dust.floor` and every note that mentions it is generated from that value, so the page
+ * cannot describe a floor the data was not built with.
+ */
 const DUST_PLANCK = 10_000_000_000n
 
 /** Per-day cap on individually listed chains, after the dust floor. Measured over the whole
@@ -1709,14 +1865,21 @@ function daysOfMonth(month) {
 }
 
 /**
- * The most dangerous line in this section. Total by construction: anything unparseable, before
- * the series floor, or not yet finished is NOT immutable and is refused before a job exists.
- * A predicate wrong in the permissive direction freezes a partial answer forever.
+ * The most dangerous line in this section. Total by construction: anything unparseable, an
+ * unknown network, a month before THAT network's floor, or a month not yet finished is NOT
+ * immutable and is refused before a job exists. A predicate wrong in the permissive direction
+ * freezes a partial answer forever.
+ *
+ * The floor is per network and that matters here rather than only in the reader: Kusama can
+ * answer for 2021-07 and Polkadot cannot, and a single floor would either lock Kusama out of
+ * five readable months or let Polkadot mint a job for a month whose Asset Hub leg has no clock.
  */
 export function netflowsMonthIsSettled(params, now = Date.now()) {
   const month = params?.month
+  const net = NETFLOW_NETWORKS[params?.network]
+  if (!net) return false
   if (typeof month !== 'string' || !NETFLOWS_MONTH_RE.test(month)) return false
-  if (month < SERIES_FIRST_MONTH) return false
+  if (month < net.firstMonth) return false
   return now >= monthEndMs(month) + NETFLOWS_SETTLE_MS
 }
 
@@ -2019,22 +2182,22 @@ async function headBlockMs(host, head, headAt, run, span = 20_000) {
  * chain that leaves the registry mid-series from vanishing out of the chart while its sovereign
  * account still holds DOT.
  */
-const TOPOLOGY_PARA_IDS = CHAINS.filter((c) => c.network === 'polkadot' && c.paraId !== null).map((c) => c.paraId)
+const topologyParaIds = (network) => CHAINS.filter((c) => c.network === network && c.paraId !== null).map((c) => c.paraId)
 
-async function enumerateParasAt(run, hashes) {
+async function enumerateParasAt(run, net, hashes) {
   const calls = []
   for (const hash of hashes) {
     calls.push({ method: 'state_getKeysPaged', params: [KEYS.paraLifecycles, KEY_PAGE, KEYS.paraLifecycles, hash] })
     calls.push({ method: 'state_getKeysPaged', params: [KEYS.registrarParas, KEY_PAGE, KEYS.registrarParas, hash] })
   }
-  const out = await batchCalls(run, RELAY, calls, 24, 60_000)
+  const out = await batchCalls(run, net.relay, calls, 24, 60_000)
   return hashes.map((_, i) => {
     const lifecycles = out[i * 2] ?? []
     const registrar = out[i * 2 + 1] ?? []
     if (lifecycles.length >= KEY_PAGE || registrar.length >= KEY_PAGE) {
       throw new UpstreamError(
-        `the relay returned a full page of parachain registrations (${KEY_PAGE}); the enumeration for this day would be truncated and the day short.`,
-        { kind: 'upstream', source: RELAY.id },
+        `${net.relay.label} returned a full page of parachain registrations (${KEY_PAGE}); the enumeration for this day would be truncated and the day short.`,
+        { kind: 'upstream', source: net.relay.id },
       )
     }
     return {
@@ -2087,7 +2250,7 @@ const planck = (info) => (info ? (info.free ?? 0n) + (info.reserved ?? 0n) : nul
  * not exist on that chain that day, which is a different fact from `"0"` — an account that
  * exists holding nothing — and the two must not be collapsed.
  */
-function summariseDay({ date, relayFrame, ahFrame, ids, enumerated, relayValues, ahValues }) {
+function summariseDay({ net, date, relayFrame, ahFrame, ids, enumerated, relayValues, ahValues }) {
   const rows = []
   let relayTotal = 0n
   let assetHubTotal = 0n
@@ -2097,8 +2260,8 @@ function summariseDay({ date, relayFrame, ahFrame, ids, enumerated, relayValues,
     const relayRaw = relayValues.get(systemAccountKey(sovereignAccountHex(id, { on: 'relay' })).toLowerCase()) ?? null
     const ahRaw = ahValues.get(systemAccountKey(sovereignAccountHex(id, { on: 'sibling' })).toLowerCase()) ?? null
     if (!relayRaw && !ahRaw) continue
-    const relayAmount = relayRaw ? planck(decodeAccountInfo(relayRaw, RELAY.id)) : null
-    const ahAmount = ahRaw ? planck(decodeAccountInfo(ahRaw, AH.id)) : null
+    const relayAmount = relayRaw ? planck(decodeAccountInfo(relayRaw, net.relay.id)) : null
+    const ahAmount = ahRaw ? planck(decodeAccountInfo(ahRaw, net.assetHub.id)) : null
     relayTotal += relayAmount ?? 0n
     assetHubTotal += ahAmount ?? 0n
     withAccount += 1
@@ -2123,6 +2286,12 @@ function summariseDay({ date, relayFrame, ahFrame, ids, enumerated, relayValues,
 
   return {
     date,
+    // Which network this day is, carried in the row rather than only in the store key. A payload
+    // that does not say which chain it came from is one copy-paste away from a KSM series drawn
+    // as DOT, and the divisor differs by a factor of a hundred.
+    network: net.id,
+    token: net.token,
+    decimals: net.decimals,
     // The LAST block of the UTC day on each chain, with the chain's own clock reading for it.
     // Two chains, two blocks: a single height for both would be a claim that is true of neither.
     relay: { block: relayFrame.closeHeight, at: new Date(relayFrame.closeAt).toISOString() },
@@ -2151,15 +2320,15 @@ function summariseDay({ date, relayFrame, ahFrame, ids, enumerated, relayValues,
  * is what keeps the search to two or three rounds. It is a HINT in the strict sense: every value
  * it produces is checked against the chain's own timestamps before anything is stored.
  */
-async function readSovereignDays({ days, run, heads, hint, sticky }) {
+async function readSovereignDays({ net, days, run, heads, hint, sticky }) {
   const targets = days.map((day) => dayStartMs(day) + DAY_MS)
 
   // With no cursor there is no rate to carry forward, so one is measured at the head.
   const cold = !hint?.relay?.blocksPerDay || !hint?.assetHub?.blocksPerDay
   const measured = cold
     ? await Promise.all([
-        headBlockMs(RELAY, heads.relay.block, heads.relay.timeMs, run),
-        headBlockMs(AH, heads.assetHub.block, heads.assetHub.timeMs, run),
+        headBlockMs(net.relay, heads.relay.block, heads.relay.timeMs, run),
+        headBlockMs(net.assetHub, heads.assetHub.block, heads.assetHub.timeMs, run),
       ]).then(([relay, assetHub]) => ({ relay, assetHub }))
     : { relay: null, assetHub: null }
 
@@ -2182,7 +2351,7 @@ async function readSovereignDays({ days, run, heads, hint, sticky }) {
   }
 
   const [relayFrames, ahFrames] = await Promise.all([
-    firstBlocksAtOrAfter(RELAY, {
+    firstBlocksAtOrAfter(net.relay, {
       targets,
       hints: hintsFor('relay'),
       head: heads.relay.block,
@@ -2190,7 +2359,7 @@ async function readSovereignDays({ days, run, heads, hint, sticky }) {
       blockMs: rateFor('relay'),
       run,
     }),
-    firstBlocksAtOrAfter(AH, {
+    firstBlocksAtOrAfter(net.assetHub, {
       targets,
       hints: hintsFor('assetHub'),
       head: heads.assetHub.block,
@@ -2206,8 +2375,8 @@ async function readSovereignDays({ days, run, heads, hint, sticky }) {
   days.forEach((day, i) => {
     const from = dayStartMs(day)
     for (const [side, frame, host] of [
-      ['relay', relayFrames[i], RELAY],
-      ['Asset Hub', ahFrames[i], AH],
+      ['relay', relayFrames[i], net.relay],
+      ['Asset Hub', ahFrames[i], net.assetHub],
     ]) {
       if (!frame.closeHash || frame.closeAt === null || frame.closeAt === undefined) {
         throw new UpstreamError(
@@ -2224,21 +2393,22 @@ async function readSovereignDays({ days, run, heads, hint, sticky }) {
     }
   })
 
-  const enumerations = await enumerateParasAt(run, relayFrames.map((f) => f.closeHash))
+  const enumerations = await enumerateParasAt(run, net, relayFrames.map((f) => f.closeHash))
 
   const carried = new Set(sticky ?? [])
   const idsPerDay = enumerations.map((row) => {
-    const ids = new Set([...row.lifecycles, ...row.registrar, ...TOPOLOGY_PARA_IDS, ...carried])
+    const ids = new Set([...row.lifecycles, ...row.registrar, ...topologyParaIds(net.id), ...carried])
     return [...ids].filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b)
   })
 
   const [relayValues, ahValues] = await Promise.all([
-    accountsAt(run, RELAY, 'relay', relayFrames, idsPerDay),
-    accountsAt(run, AH, 'sibling', ahFrames, idsPerDay),
+    accountsAt(run, net.relay, 'relay', relayFrames, idsPerDay),
+    accountsAt(run, net.assetHub, 'sibling', ahFrames, idsPerDay),
   ])
 
   const payloads = days.map((day, i) =>
     summariseDay({
+      net,
       date: day,
       relayFrame: relayFrames[i],
       ahFrame: ahFrames[i],
@@ -2275,13 +2445,24 @@ async function readSovereignDays({ days, run, heads, hint, sticky }) {
   }
 }
 
-/** Both chains' finalized heads, and the assertion that the two legs are denominated alike. */
-async function netflowsHeads(run) {
-  const [relay, assetHub] = await Promise.all([run(RELAY, () => pin(RELAY)), run(AH, () => pin(AH))])
+/**
+ * Both chains' finalized heads, and the two assertions that make the pair usable.
+ *
+ * The first is the canary the network table exists for: each chain must report the token and the
+ * decimals this network says it has. It catches three failures that all render perfectly — the
+ * two legs summed across different units, a hostname that resolves to the wrong chain (this repo
+ * has already had one: `rpc-composable.luckyfriday.io` serving Centrifuge), and a Kusama figure
+ * divided by Polkadot's 1e10, which is exactly 100× too large.
+ */
+async function netflowsHeads(run, net) {
+  const [relay, assetHub] = await Promise.all([
+    run(net.relay, () => pin(net.relay)),
+    run(net.assetHub, () => pin(net.assetHub)),
+  ])
   for (const chain of [relay, assetHub]) {
-    if (chain.tokenSymbol !== 'DOT' || chain.tokenDecimals !== 10) {
+    if (chain.tokenSymbol !== net.token || chain.tokenDecimals !== net.decimals) {
       throw new UpstreamError(
-        `${chain.host.label} reports its native token as ${chain.tokenSymbol}/${chain.tokenDecimals}, not DOT/10. The two legs of this series are summed and cannot be summed across different units.`,
+        `${chain.host.label} reports its native token as ${chain.tokenSymbol}/${chain.tokenDecimals}, not ${net.token}/${net.decimals}. Either this is not the chain it claims to be, or the two legs of this series are denominated differently and cannot be summed.`,
         { kind: 'upstream', source: chain.host.id },
       )
     }
@@ -2320,14 +2501,15 @@ const directRun = (host, fn) => fn()
  * Today itself is deliberately absent. A day's value here is its CLOSE, and today has not
  * closed; `sovereign-dot` is the operation that answers "right now".
  */
-async function sovereignDotRecent({ days }) {
-  const heads = await netflowsHeads(directRun)
+async function sovereignDotRecent({ days, network }) {
+  const net = netflowNetwork(network)
+  const heads = await netflowsHeads(directRun, net)
 
   // The last day that has ENDED on both chains. Both, not either: a day whose Asset Hub close
   // has not happened yet would be half a reading.
   const edge = Math.min(heads.relay.timeMs, heads.assetHub.timeMs)
   const lastClosed = addDaysIso(isoDay(edge), -1)
-  const firstDay = `${SERIES_FIRST_MONTH}-01`
+  const firstDay = `${net.firstMonth}-01`
 
   const wanted = []
   for (let i = days - 1; i >= 0; i -= 1) {
@@ -2335,54 +2517,74 @@ async function sovereignDotRecent({ days }) {
     if (day >= firstDay) wanted.push(day)
   }
 
+  const meta = () => ({
+    network: net.id,
+    token: net.token,
+    decimals: net.decimals,
+    migratedOn: net.migratedOn,
+    firstMonth: net.firstMonth,
+    relay: chainMeta(heads.relay),
+    assetHub: chainMeta(heads.assetHub),
+    fetchedAt: new Date().toISOString(),
+    meta: { liveness: [livenessOf(heads.assetHub), livenessOf(heads.relay)] },
+  })
+
   if (!wanted.length) {
     return {
       days: [],
       first: null,
       last: null,
       requested: days,
-      relay: chainMeta(heads.relay),
-      assetHub: chainMeta(heads.assetHub),
-      fetchedAt: new Date().toISOString(),
-      meta: { liveness: [livenessOf(heads.assetHub, 'Asset Hub'), livenessOf(heads.relay, 'relay chain')] },
+      ...meta(),
       notes: [`Neither chain has closed a UTC day at or after ${firstDay}, which is where this series begins.`],
     }
   }
 
-  const { payloads } = await readSovereignDays({ days: wanted, run: directRun, heads, hint: null, sticky: [] })
+  const { payloads } = await readSovereignDays({ net, days: wanted, run: directRun, heads, hint: null, sticky: [] })
 
   return {
     days: payloads,
     first: wanted[0],
     last: wanted[wanted.length - 1],
     requested: days,
-    relay: chainMeta(heads.relay),
-    assetHub: chainMeta(heads.assetHub),
-    fetchedAt: new Date().toISOString(),
-    meta: { liveness: [livenessOf(heads.assetHub, 'Asset Hub'), livenessOf(heads.relay, 'relay chain')] },
-    notes: netflowsNotes({ payloads, first: wanted[0], last: wanted[wanted.length - 1], live: true }),
+    ...meta(),
+    notes: netflowsNotes({ net, payloads, first: wanted[0], last: wanted[wanted.length - 1], live: true }),
   }
+}
+
+/**
+ * How wrong the OTHER network's divisor would be here, computed from the table rather than
+ * asserted, so it stays true if a third network is ever added.
+ */
+function otherDivisorNote(net) {
+  const others = NETFLOW_NETWORK_IDS.filter((id) => id !== net.id).map((id) => NETFLOW_NETWORKS[id])
+  const worst = others.reduce((max, other) => Math.max(max, Math.abs(other.decimals - net.decimals)), 0)
+  if (!worst) return 'Every network this series covers uses the same number of decimals.'
+  return `Scaling these by another network's divisor is a factor of ${(10 ** worst).toLocaleString('en-US')} that renders perfectly.`
 }
 
 /**
  * The caveats that come out of the payload itself, so they cannot describe a different reading
  * than the one on screen.
  */
-function netflowsNotes({ payloads, first, last, live }) {
+function netflowsNotes({ net, payloads, first, last, live }) {
   const notes = [
     `Each day is the state at that UTC day's LAST BLOCK on each chain — its close, not its open. That is the same definition the archived 2021–2023 dataset uses, and reading it at 00:00 instead would shift this series one day earlier against that file and read as a genuine lead rather than as an off-by-one.`,
-    `A chain's figure is the SUM of two accounts on two chains: \`para\` on the relay and \`sibl\` on Asset Hub, read at two different blocks because they are two different chains. Both legs are kept separately in the payload — the Asset Hub Migration on 2025-11-04 moved the money from one to the other, and a series that reported only the sum would hide the largest structural break in it.`,
-    `Amounts are exact planck as decimal strings. \`null\` means the account does not exist on that chain that day, which is not the same fact as \`"0"\` — an account that exists holding nothing — and the two are never collapsed.`,
+    `A chain's figure is the SUM of two accounts on two chains: \`para\` on ${net.label} and \`sibl\` on ${net.label} Asset Hub, read at two different blocks because they are two different chains. Both legs are kept separately in the payload — the Asset Hub Migration on ${net.migratedOn} moved the money from one to the other, and a series that reported only the sum would hide the largest structural break in it.`,
+    `Amounts are exact planck as decimal strings, and ${net.token} is ${net.decimals} decimals. ${otherDivisorNote(net)} \`null\` means the account does not exist on that chain that day, which is not the same fact as \`"0"\` — an account that exists holding nothing — and the two are never collapsed.`,
   ]
   const dusty = payloads.filter((day) => day.dust.chains > 0)
   if (dusty.length) {
     const most = Math.max(...dusty.map((day) => day.dust.chains))
+    // The floor comes out of the payload, never out of the constant: the same planck figure is
+    // 1 DOT and 0.01 KSM, and a note that said "1 token" would be wrong on one of them.
+    const floor = Number(BigInt(payloads[0].dust.floor)) / 10 ** net.decimals
     notes.push(
-      `Chains holding less than 1 DOT on a given day are summed into that day's single \`dust\` row rather than listed — up to ${most} of them on one day here. The day's totals still include them exactly, so nothing is lost from any sum; what is lost is the ability to name a chain that held under a DOT.`,
+      `Chains holding less than ${floor} ${net.token} on a given day are summed into that day's single \`dust\` row rather than listed — up to ${most} of them on one day here. The day's totals still include them exactly, so nothing is lost from any sum; what is lost is the ability to name a chain that held under ${floor} ${net.token}.`,
     )
   }
   notes.push(
-    `Which chains are read on a day is the union of four enumerations at that day's own block: the relay's \`Paras::ParaLifecycles\`, its \`Registrar::Paras\`, this site's own topology registry, and every chain already seen holding an account earlier in the same fetch. No single one of them is complete — para 2004 is in neither relay item today and still holds DOT.`,
+    `Which chains are read on a day is the union of four enumerations at that day's own block: ${net.label}'s \`Paras::ParaLifecycles\`, its \`Registrar::Paras\`, this site's own topology registry for ${net.label}, and every chain already seen holding an account earlier in the same fetch. No single one of them is complete — on Polkadot, para 2004 is in neither relay item today and still holds DOT.`,
   )
   if (live) {
     notes.push(
@@ -2403,6 +2605,8 @@ export default {
   covers: [
     'Polkadot Asset Hub (para 1000) — ForeignAssets, Assets, sovereign account balances',
     'Polkadot relay chain — Paras::ParaLifecycles, Registrar::Paras, sovereign account balances',
+    'Kusama Asset Hub (para 1000) — sovereign account balances, daily series only',
+    'Kusama relay chain — Paras::ParaLifecycles, Registrar::Paras, sovereign account balances, daily series only',
   ],
 
   operations: {
@@ -2436,7 +2640,7 @@ export default {
 
     'sovereign-dot-recent': {
       summary:
-        'The same daily reading the `netflows-daily` store holds, for the most recent CLOSED UTC days — the tail a month-bucketed store cannot serve. Both sovereign legs, per parachain, at each day’s last block on each chain.',
+        'The same daily reading the `netflows-daily` store holds, for the most recent CLOSED UTC days on one network — the tail a month-bucketed store cannot serve. Both sovereign legs, per parachain, at each day’s last block on each chain.',
       // Thirty minutes. The days it returns are closed and can never change; the TTL exists to
       // bound how often a public page re-derives the same forty block boundaries, not because
       // the answer goes stale.
@@ -2445,8 +2649,13 @@ export default {
         // Forty days is the ceiling because the seam this fills is at most one calendar month
         // wide. Asking for a year here would be a backfill on the request path.
         days: { type: 'int', min: 1, max: RECENT_MAX_DAYS, default: 32 },
+        // Required, and not defaulted, for the same reason as the job below: a default would
+        // make `?days=7` and `?days=7&network=polkadot` two cache entries for one answer, and
+        // there is no reading of a missing `network` that is not a guess about which chain a
+        // number came from.
+        network: { type: 'string', required: true, oneOf: NETFLOW_NETWORK_IDS },
       },
-      run: ({ days }) => sovereignDotRecent({ days }),
+      run: ({ days, network }) => sovereignDotRecent({ days, network }),
     },
   },
 
@@ -2459,12 +2668,29 @@ export default {
   jobs: {
     'netflows-daily': {
       summary:
-        'DOT in every parachain sovereign account at the close of one UTC day, one stored fact per day, a calendar month at a time. Both legs — `para` on the relay and `sibl` on Asset Hub — read at that day’s last block on each chain. Fetched once and never again.',
+        'The native token in every parachain sovereign account at the close of one UTC day, on one network, one stored fact per day, a calendar month at a time. Both legs — `para` on the relay and `sibl` on that network’s Asset Hub — read at that day’s last block on each chain. Fetched once and never again.',
       schema: {
         // A month, and only a month. The params are part of the fact key, so a free {from, to}
         // range would refetch and re-store the same day once per distinct window a reader asks
         // for — see docs/architecture/jobs.md.
         month: { type: 'string', required: true, pattern: NETFLOWS_MONTH_RE, maxLength: 7 },
+        // REQUIRED, deliberately, and this is the whole of the Kusama support.
+        //
+        // The params ARE the store identity, so a default would be filled in by readParams and
+        // `?month=2026-01` and `?month=2026-01&network=polkadot` would become two identities
+        // holding the same days — the duplicated-segments mistake docs/architecture/jobs.md
+        // names as the expensive one, with correct answers and nothing anywhere reporting it.
+        // Required means one identity per (network, month) and a URL that says which chain its
+        // numbers came from.
+        //
+        // The cost, stated rather than discovered: this change ORPHANS the Polkadot days
+        // already stored under `{"month":…}` — 1,673 of them across 55 identities in the
+        // development store on 2026-08-21. They are re-derived once, on demand, and the old rows
+        // sit there until somebody deletes them. A forward-only store migration rewriting
+        // `{"month":X}` to `{"month":X,"network":"polkadot"}` avoids the re-derivation entirely
+        // and produces exactly what `canonicalParams` does; it belongs in server/lib/store.mjs
+        // rather than here.
+        network: { type: 'string', required: true, oneOf: NETFLOW_NETWORK_IDS },
       },
 
       immutable: (params) => netflowsMonthIsSettled(params),
@@ -2475,6 +2701,7 @@ export default {
 
       async nextBatch({ params, cursor, gate }) {
         const run = gatedRun(gate)
+        const net = netflowNetwork(params.network)
         const days = daysOfMonth(params.month)
         const state = cursor ?? { day: days[0], hint: null, sticky: [] }
         const index = days.indexOf(state.day)
@@ -2482,11 +2709,11 @@ export default {
           // A cursor from another month's job, or a hand-edited one. Not weather — say so.
           throw new UpstreamError(`the stored cursor names ${state.day}, which is not a day of ${params.month}.`, {
             kind: 'decode',
-            source: RELAY.id,
+            source: net.relay.id,
           })
         }
 
-        const heads = await netflowsHeads(run)
+        const heads = await netflowsHeads(run, net)
         const slice = days.slice(index, index + DAYS_PER_BATCH)
         const lastEnd = dayStartMs(slice[slice.length - 1]) + DAY_MS
 
@@ -2504,6 +2731,7 @@ export default {
         }
 
         const { payloads, sticky, hint } = await readSovereignDays({
+          net,
           days: slice,
           run,
           heads,
@@ -2513,8 +2741,8 @@ export default {
 
         const finished = index + slice.length >= days.length
         const head =
-          `relay #${heads.relay.block} @ ${new Date(heads.relay.timeMs).toISOString()}; ` +
-          `asset hub #${heads.assetHub.block} @ ${new Date(heads.assetHub.timeMs).toISOString()}`
+          `${net.relay.chainLabel} #${heads.relay.block} @ ${new Date(heads.relay.timeMs).toISOString()}; ` +
+          `${net.assetHub.chainLabel} #${heads.assetHub.block} @ ${new Date(heads.assetHub.timeMs).toISOString()}`
 
         return {
           rows: payloads.map((payload) => ({ segment: payload.date, payload, head, codeVersion: NETFLOWS_VERSION })),

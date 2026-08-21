@@ -1,17 +1,19 @@
-// Parachain netflows: DOT held in parachain sovereign accounts, every day, 2022 → yesterday.
+// Parachain netflows: the relay token held in parachain sovereign accounts, every day, from the
+// first month each network can answer for to yesterday. Polkadot and Kusama, the same series.
 //
 // ── what changed, and why it is the whole point of this page ─────────────────────────────────
-// For three years this page drew a 2023 Polkalytics archive — 2022-02-02 to 2023-04-08 — and
-// stopped there, while `/sovereign/` drew today. Between them was a three-and-a-half-year hole,
-// and no amount of caveat text makes a hole into a series. It is now filled: the same
-// measurement the 2023 study made is taken again, from the chains themselves, once per UTC day,
-// from 2022-01-01 to yesterday. The archive is still here — as a CROSS-CHECK, drawn against the
-// re-derived series where the two overlap, with the deviation stated rather than assumed.
+// For three years this page drew a 2023 Polkalytics archive — 2022-02-02 to 2023-04-08 for
+// Polkadot, 2021-07-01 to 2023-03-12 for Kusama — and stopped there, while `/sovereign/` drew
+// today. Between them was a three-and-a-half-year hole, and no amount of caveat text makes a
+// hole into a series. It is now filled on BOTH networks: the same measurement the 2023 study
+// made is taken again, from the chains themselves, once per UTC day. The archive is still here —
+// as a CROSS-CHECK, drawn against the re-derived series where the two overlap, with the
+// deviation stated rather than assumed.
 //
 // The backfill lives in `server/sources/asset-hub.mjs` as the store-backed job
-// `netflows-daily` (one calendar month per job, one UTC day per stored fact) plus the live
-// operation `sovereign-dot-recent` for the tail a month-bucketed store cannot serve. This file
-// reads both and draws the join.
+// `netflows-daily` (one calendar month per job per NETWORK, one UTC day per stored fact) plus
+// the live operation `sovereign-dot-recent` for the tail a month-bucketed store cannot serve.
+// This file reads both and draws the join.
 //
 // ── the three things this page must be loud about ────────────────────────────────────────────
 //
@@ -20,20 +22,26 @@
 //     meaningful: reading at 00:00 instead would shift the whole series one day early and read
 //     as a genuine lead rather than as an off-by-one.
 //
-//  2. THE SERIES CROSSES TWO CHAINS. Before the Asset Hub Migration (2025-11-04) a parachain's
-//     DOT sat in its `para` account ON THE RELAY CHAIN; after it, in its `sibl` account on ASSET
-//     HUB. Every day here reads BOTH, and the second chart draws the handover explicitly. The
-//     per-chain lines are continuous because the DOT moved rather than doubled — but a series
-//     that only showed the sum would hide the largest structural break in it.
+//  2. THE SERIES CROSSES TWO CHAINS. Before the Asset Hub Migration — Polkadot 2025-11-04,
+//     Kusama 2025-10-07, both bisected out of their own relay chain rather than transcribed — a
+//     parachain's reserve sat in its `para` account ON ITS RELAY CHAIN; after it, in its `sibl`
+//     account on ITS ASSET HUB. Every day here reads BOTH, and the second chart draws the
+//     handover explicitly. The per-chain lines are continuous because the money moved rather
+//     than doubled — but a series that only showed the sum would hide the largest structural
+//     break in it.
 //
 //  3. WHAT IS MISSING IS DRAWN. A day the store does not hold yet is a gap in the line, never a
 //     zero, and the data notes count them. The store fills on demand: the first reader of a
 //     month is what starts its fetch, so a fresh deployment draws a sparse chart that fills in
 //     over the following minutes rather than an empty one that looks broken.
 //
-// Kusama keeps the archive-only view. `sovereign-dot-recent` and `netflows-daily` read the
-// Polkadot relay chain and Polkadot Asset Hub; this site reads neither Kusama chain, and a
-// Kusama toggle that silently drew a different measurement would be worse than one that says so.
+// ── the two networks are one page, and the differences are the dangerous part ────────────────
+// Nothing here is Polkadot-shaped any more. Every token amount, every chain name, every
+// sovereign address and both structural dates come from `NETWORKS` below and never from a
+// module constant. The reason is that KSM is 12 decimals and DOT is 10: a Kusama series drawn
+// with the DOT divisor is exactly 100× too large, with a correctly shaped line and a correctly
+// shaped axis. Kusama's SS58 prefix is 2, so an address rendered at prefix 0 is a valid-looking
+// Polkadot address for a Kusama account. And the two Asset Hub Migrations are four weeks apart.
 
 import '../../design/app.css'
 import { choiceControl, renderPage } from '../../design/page.js'
@@ -45,24 +53,73 @@ import { liveness } from '../../core/liveness.js'
 import { livenessNotes } from '../../design/liveness.js'
 import { compact, formatCount, percent } from '../../core/format.js'
 import { chainOf, resolveChain, sovereignAddress } from '../../core/topology.js'
-import { buildSeries, crossCheck, dot, isoDay, monthsBetween } from './series.js'
+import { ARCHIVE_QUANTUM, buildSeries, crossCheck, units, isoDay, monthsBetween } from './series.js'
 import dataset from '../../data/netflows.json'
 
-const NETWORK = new URLSearchParams(location.search).get('network') === 'kusama' ? 'kusama' : 'polkadot'
+/**
+ * Everything that differs between the two networks, in one table, mirroring the server's.
+ *
+ * `firstMonth` is the earliest WHOLE month both of that network's chains can answer for, and on
+ * both networks the binding constraint is the same: an Asset Hub with state but no
+ * `Timestamp::Now`, which is indistinguishable from a pruned archive and whose balance reads come
+ * back `null`, which is indistinguishable from an empty account.
+ *
+ *   polkadot  Asset Hub's clock starts at #305,204 = 2021-12-18T18:52:54Z. Polkadot's first
+ *             parachains onboarded 2021-12-17 and no sovereign account held DOT until
+ *             2022-02-02, so 2022-01 is a month of verified-EMPTY days, not missing ones.
+ *   kusama    Kusama Asset Hub's clock starts at #66,687 = 2021-06-03T15:36:00.509Z (bisected
+ *             live 2026-08-21). June 2021 cannot be a whole month, so the series opens at
+ *             2021-07 — which is also the archived dataset's own first day.
+ *
+ * `migratedOn` is the Asset Hub Migration. No storage item says it; both dates were established
+ * in this repo by bisecting a large sovereign account out of the relay chain itself, and both
+ * were PROGRESSIVE rather than atomic — `migrationEvidence` carries each one's, verbatim.
+ *
+ * `decimals` is the one that fails silently. DOT is 10 and KSM is 12; the wrong divisor is a
+ * factor of 100 that draws a correctly shaped line on a correctly shaped axis.
+ */
+const NETWORKS = {
+  polkadot: {
+    id: 'polkadot',
+    label: 'Polkadot',
+    token: 'DOT',
+    decimals: 10,
+    ss58: 0,
+    relayName: 'the relay chain',
+    assetHubName: 'Asset Hub',
+    firstMonth: '2022-01',
+    migratedOn: '2025-11-04',
+    migrationEvidence:
+      `Acala's \`para\` account on the Polkadot relay falls from 3,137,094.16 DOT to 341.00 DOT across ` +
+      `#28,493,861→862 — while at that same block Moonbeam still held 1,465,523 DOT there and Hydration, ` +
+      `Bifrost, Astar and Interlay were already down to 281–481 DOT.`,
+  },
+  kusama: {
+    id: 'kusama',
+    label: 'Kusama',
+    token: 'KSM',
+    decimals: 12,
+    ss58: 2,
+    relayName: 'the Kusama relay chain',
+    assetHubName: 'Kusama Asset Hub',
+    firstMonth: '2021-07',
+    migratedOn: '2025-10-07',
+    migrationEvidence:
+      `Karura's \`para\` account on the Kusama relay falls from 40,394.8 KSM to 160.0 KSM across ` +
+      `#30,424,405→#30,424,406, dated 2025-10-07T14:47:54Z — while at that same block Bifrost still held ` +
+      `19,525.2 KSM there, Kintsugi 6,481.3, Basilisk 2,528.5 and Picasso 2,470.8, and Moonriver, Heiko ` +
+      `and Mangata were already down to 40–90 KSM. The handover completes inside that UTC day.`,
+  },
+}
+
+const NET = NETWORKS[new URLSearchParams(location.search).get('network')] ?? NETWORKS.polkadot
+const NETWORK = NET.id
+
+/** Planck to whole tokens, at THIS network's decimals. Never a module constant — see series.js. */
+const amount = (raw) => units(raw, NET.decimals)
 
 /** A chain whose ARCHIVE daily line understates its true peak by more than this gets marked. */
 const CLIP_THRESHOLD = 0.03
-
-/**
- * Where the re-derived series begins, and it is not a taste decision — it is the earliest month
- * both chains can answer for. Asset Hub sets no `Timestamp::Now` before block #305,204
- * (2021-12-18T18:52:54Z), so a UTC day before that has no readable Asset Hub close and the
- * second leg of every sum would be `null` rather than `0`. Polkadot's first parachains onboarded
- * 2021-12-17 and no sovereign account held any DOT until 2022-02-02 — verified against the relay
- * itself, and the archived dataset's first non-null value (Acala, 1.23 DOT) is that same day. So
- * January 2022 is a month of *verified-empty* days rather than missing ones.
- */
-const SERIES_FIRST_MONTH = '2022-01'
 
 /** How many chains get a line. Everything else is in the ranking and the table beneath it. */
 const CHART_LINES = 10
@@ -70,23 +127,15 @@ const CHART_LINES = 10
 /** Months fetched at once. Each is one HTTP request against this origin. */
 const MONTH_CONCURRENCY = 6
 
-/** Below this, a chain is folded into the server's `dust` aggregate and has no row of its own. */
-const DUST_DOT = 1
-
 const amountOf = (token) => (value) => `${compact(value)} ${token}`
 
-/**
- * The Asset Hub Migration, per network — the single most important event inside this series.
- *
- * Not read from a chain, because no storage item says "this happened here". Polkadot's date was
- * established in this repo by bisection: Acala's `para` sovereign account falls from
- * 3,137,094.16 DOT to 341.00 DOT across relay blocks #28,493,861→862, and it was PROGRESSIVE
- * rather than atomic — at that same block Moonbeam still held 1,465,523 DOT on the relay while
- * Hydration, Bifrost, Astar and Interlay were already down to 281–481 DOT. Kusama's is
- * transcribed from `docs/platform/asset-hub.md` and was not re-derived; nothing here reads
- * Kusama.
- */
-const MIGRATED_ON = { polkadot: '2025-11-04', kusama: '2025-10-07' }
+/** This network's chain registry entry for a para id, or null. Keyed by RELAY, never globally:
+ *  para 2000 is Acala on Polkadot and Karura on Kusama. */
+const nameOf = (paraId) => chainOf(paraId, NETWORK)?.name ?? `para ${paraId}`
+
+/** A sovereign address at THIS network's SS58 prefix. Prefix 0 on a Kusama account is a
+ *  valid-looking Polkadot address for an account that does not exist there. */
+const addressOf = (paraId, on) => sovereignAddress(paraId, { on, ss58Prefix: NET.ss58 })
 
 /* ═════════════════════════════════════════════════════════════════════════════ liveness ═════ */
 
@@ -143,12 +192,22 @@ async function mapLimit(items, limit, fn) {
 async function load({ progress }) {
   const network = dataset.networks[NETWORK]
   if (!network) throw Object.assign(new Error(`The archived dataset has no \`${NETWORK}\` network.`), { kind: 'decode' })
+  if (network.token !== NET.token || network.decimals !== NET.decimals) {
+    // The archive is compiled into this bundle and the series is read from a chain. If the two
+    // disagree about the token or its decimals, every comparison below is nonsense — and that
+    // mismatch is exactly the shape a copy-paste between the two networks would take. The
+    // archive is a THIRD independent statement of the divisor, after the network table here and
+    // `system_properties` on the chains themselves, and it costs one comparison to use it.
+    throw Object.assign(
+      new Error(
+        `The archived dataset calls ${NETWORK} \`${network.token}\`/${network.decimals} and this page calls it ` +
+          `\`${NET.token}\`/${NET.decimals}. Every figure below would be scaled by the wrong divisor.`,
+      ),
+      { kind: 'decode' },
+    )
+  }
 
   const archive = archiveLiveness(network)
-  if (NETWORK !== 'polkadot') {
-    progress({ stage: `Reading the archived ${network.token} dataset`, done: 1, total: 1 })
-    return { mode: 'archive-only', network, archive }
-  }
 
   // "Now" comes from the reader's clock, which is the only clock the browser has. It is used
   // for ONE thing — deciding which months are whole — and the server refuses any month that is
@@ -156,7 +215,7 @@ async function load({ progress }) {
   const now = new Date()
   const currentMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
   const lastWholeMonth = isoDay(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).slice(0, 7)
-  const months = monthsBetween(SERIES_FIRST_MONTH, lastWholeMonth)
+  const months = monthsBetween(NET.firstMonth, lastWholeMonth)
 
   // The tail: the days of the current month that have already closed. On the 1st there are
   // none, and the stored months already reach yesterday.
@@ -174,7 +233,7 @@ async function load({ progress }) {
   const failures = []
   const answers = await mapLimit(months, MONTH_CONCURRENCY, async (month) => {
     try {
-      const body = await readStore('asset-hub', 'netflows-daily', { month })
+      const body = await readStore('asset-hub', 'netflows-daily', { month, network: NETWORK })
       return { month, body }
     } catch (problem) {
       if (problem?.name === 'AbortError') throw problem
@@ -189,36 +248,33 @@ async function load({ progress }) {
   let tail = null
   if (tailDays > 0) {
     step('Reading the current month from the chains')
-    tail = await read('asset-hub', 'sovereign-dot-recent', { days: Math.min(tailDays, 40) })
+    tail = await read('asset-hub', 'sovereign-dot-recent', { days: Math.min(tailDays, 40), network: NETWORK })
     fetched += 1
     step('Reading the current month from the chains')
   }
 
-  return { mode: 'series', network, archive, months: answers, tail, currentMonth, lastWholeMonth, failures }
+  return { network, archive, months: answers, tail, currentMonth, lastWholeMonth, failures }
 }
-
-/* ══════════════════════════════════════════════════════════════════════ shaping the data ═════ */
 
 /* ═══════════════════════════════════════════════════════════════════════════════ render ═════ */
 
 function render(host, data) {
   clear(host)
-  if (data.mode === 'archive-only') return renderArchiveOnly(host, data)
-  return renderSeries(host, data)
+  renderSeries(host, data)
 }
 
 function renderSeries(host, { network, archive, tail, months, lastWholeMonth, failures }) {
-  const series = buildSeries({ months, tail, firstDay: `${SERIES_FIRST_MONTH}-01` })
-  const check = crossCheck(series, network, (name) => resolveChain(name, 'polkadot')?.paraId ?? null)
-  const token = network.token
-  const amount = amountOf(token)
+  const series = buildSeries({ months, tail, firstDay: `${NET.firstMonth}-01`, decimals: NET.decimals })
+  const check = crossCheck(series, network, (name) => resolveChain(name, NETWORK)?.paraId ?? null)
+  const token = NET.token
+  const format = amountOf(token)
 
   if (!series.days.length) {
     return append(
       host,
       notice(
         'warning',
-        'Nothing is stored yet, and the fetch has just been started',
+        `Nothing is stored yet for ${NET.label}, and the fetch has just been started`,
         'This page is drawn from a store that fills on demand: the first reader of a month is what starts its fetch. Reload in a minute and the chart will have days in it.',
         coverageSentence(series.coverage),
       ),
@@ -226,7 +282,7 @@ function renderSeries(host, { network, archive, tail, months, lastWholeMonth, fa
     )
   }
 
-  const totalNow = series.latest ? dot(series.latest.totals.total) : null
+  const totalNow = series.latest ? amount(series.latest.totals.total) : null
 
   append(
     host,
@@ -238,16 +294,17 @@ function renderSeries(host, { network, archive, tail, months, lastWholeMonth, fa
     // Slim, and underneath. Context for the chart, not a headline of its own.
     statRow([
       statTile('Days drawn', formatCount(series.coverage.present), coveredRange(series)),
-      statTile('Chains seen', String(series.chains.length), 'held at least 1 DOT on at least one day'),
-      statTile('Largest holding', amount(series.chains[0]?.peak ?? 0), `${chainOf(series.chains[0]?.paraId, 'polkadot')?.name ?? `para ${series.chains[0]?.paraId}`}, on ${series.chains[0]?.peakOn}`),
-      statTile('Held on the last day', totalNow === null ? '—' : amount(totalNow), series.last ? `across every chain, at the close of ${series.last}` : 'nothing stored'),
+      statTile('Chains seen', String(series.chains.length), `held at least ${series.coverage.dustFloor ?? '—'} ${token} on at least one day`),
+      statTile('Largest holding', format(series.chains[0]?.peak ?? 0), `${nameOf(series.chains[0]?.paraId)}, on ${series.chains[0]?.peakOn}`),
+      statTile('Held on the last day', totalNow === null ? '—' : format(totalNow), series.last ? `across every chain, at the close of ${series.last}` : 'nothing stored'),
     ]),
 
     failures.length ? failureNotice(failures) : null,
     series.coverage.missing > 0 ? gapNotice(series) : null,
     legsCard(series, token),
-    check ? crossCheckCard(check) : null,
-    rankCard(series, amount),
+    check ? crossCheckCard(check, token) : null,
+    archiveClipNotice(network),
+    rankCard(series, format),
     discrepanciesCard(),
     notes({ series, check, archive, network, lastWholeMonth, tail }),
   )
@@ -259,7 +316,6 @@ const coveredRange = (series) => (series.firstPresent && series.last ? `${series
 
 function chartCard(series, token) {
   const drawn = series.chains.slice(0, CHART_LINES)
-  const nameOf = (chain) => chainOf(chain.paraId, 'polkadot')?.name ?? `para ${chain.paraId}`
   const card = el(
     'section.card',
     null,
@@ -270,9 +326,9 @@ function chartCard(series, token) {
       el('p.note', {
         text:
           `One line per chain on one shared scale — the ${CHART_LINES} largest by peak, of ${series.chains.length} seen. ` +
-          `Each point is that chain's balance at the UTC day's LAST BLOCK, summed across its \`para\` account on the relay ` +
-          `chain and its \`sibl\` account on Asset Hub. A line begins where that chain first holds DOT; before that it is ` +
-          `absent, not zero.` +
+          `Each point is that chain's balance at the UTC day's LAST BLOCK, summed across its \`para\` account on ` +
+          `${NET.relayName} and its \`sibl\` account on ${NET.assetHubName}. A line begins where that chain first holds ` +
+          `${token}; before that it is absent, not zero.` +
           (series.coverage.missing ? ' A break in a line is one of the days this site has not fetched yet.' : ''),
       }),
     ),
@@ -286,7 +342,7 @@ function chartCard(series, token) {
         'li',
         null,
         el('span.swatch', { style: `background:${seriesColor(i)}` }),
-        document.createTextNode(`${nameOf(chain)} `),
+        document.createTextNode(`${nameOf(chain.paraId)} `),
         el('span.amt', { text: compact(chain.peak) }),
       ),
     )
@@ -297,7 +353,7 @@ function chartCard(series, token) {
   queueMicrotask(() =>
     multiLine(plot, {
       days: series.days,
-      series: drawn.map((chain) => ({ label: nameOf(chain), values: chain.values })),
+      series: drawn.map((chain) => ({ label: nameOf(chain.paraId), values: chain.values })),
       format: compact,
       height: 380,
     }),
@@ -314,28 +370,29 @@ function chartCard(series, token) {
  * accounts underneath them changed chain.
  */
 function legsCard(series, token) {
-  const migrationIndex = series.days.indexOf(MIGRATED_ON.polkadot)
+  const migrationIndex = series.days.indexOf(NET.migratedOn)
   const card = el(
     'section.card',
     null,
     el(
       'header',
       null,
-      el('h2', { text: 'Which chain the DOT is actually on' }),
+      el('h2', { text: `Which chain the ${token} is actually on` }),
       el('p.note', {
         text:
           `The same total, split by where it sits. Until the Asset Hub Migration a parachain's reserve was in its \`para\` ` +
-          `account on the relay chain; from ${MIGRATED_ON.polkadot} it is in its \`sibl\` account on Asset Hub. The lines above ` +
-          `are continuous across that date because the DOT moved rather than doubled — this is the handover itself. It was ` +
-          `progressive, not atomic: different chains moved on different days, which is why the crossing takes more than one day.`,
+          `account on ${NET.relayName}; from ${NET.migratedOn} it is in its \`sibl\` account on ${NET.assetHubName}. The ` +
+          `lines above are continuous across that date because the ${token} moved rather than doubled — this is the handover ` +
+          `itself. It was progressive, not atomic: different chains moved on different days, which is why the crossing takes ` +
+          `more than one day.`,
       }),
     ),
   )
   const legend = el(
     'ul.legend',
     null,
-    el('li', null, el('span.swatch', { style: `background:${seriesColor(0)}` }), document.createTextNode('On the relay chain (`para`)')),
-    el('li', null, el('span.swatch', { style: `background:${seriesColor(1)}` }), document.createTextNode('On Asset Hub (`sibl`)')),
+    el('li', null, el('span.swatch', { style: `background:${seriesColor(0)}` }), document.createTextNode(`On ${NET.relayName} (\`para\`)`)),
+    el('li', null, el('span.swatch', { style: `background:${seriesColor(1)}` }), document.createTextNode(`On ${NET.assetHubName} (\`sibl\`)`)),
   )
   const plot = el('div.plot')
   append(card, legend, plot)
@@ -343,8 +400,8 @@ function legsCard(series, token) {
     multiLine(plot, {
       days: series.days,
       series: [
-        { label: 'On the relay chain', values: series.legs.relay },
-        { label: 'On Asset Hub', values: series.legs.assetHub },
+        { label: `On ${NET.relayName}`, values: series.legs.relay },
+        { label: `On ${NET.assetHubName}`, values: series.legs.assetHub },
       ],
       format: compact,
       height: 280,
@@ -354,7 +411,7 @@ function legsCard(series, token) {
     append(
       card,
       el('p.note', {
-        text: `${MIGRATED_ON.polkadot} is day ${formatCount(migrationIndex + 1)} of ${formatCount(series.days.length)} on this axis.`,
+        text: `${NET.migratedOn} is day ${formatCount(migrationIndex + 1)} of ${formatCount(series.days.length)} on this axis. ${NET.migrationEvidence}`,
       }),
     )
   }
@@ -363,9 +420,20 @@ function legsCard(series, token) {
 
 /* ------------------------------------------------------------------------ cross-check ---- */
 
-function crossCheckCard(check) {
+/**
+ * The verdict is taken on the ABSOLUTE gap, not on the relative deviation, and that is the one
+ * decision in this card worth explaining.
+ *
+ * The archive stores two decimal places. On Polkadot its smallest overlapping balance is 1.23
+ * DOT, where half a hundredth is 0.25%; on Kusama it is 0.03 KSM, where the identical half a
+ * hundredth is 7.3%. A relative threshold therefore reports two readings that agree to the
+ * planck as a third of the Kusama chain-days disagreeing — a warning banner on a page whose
+ * numbers are right. `beyondQuantum` counts the chain-days whose difference the file's own
+ * precision CANNOT explain, which is the same question on both networks.
+ */
+function crossCheckCard(check, token) {
   const { body, tail, assetHub } = check
-  const agrees = body && body.max < 0.005
+  const agrees = body && body.beyondQuantum === 0
 
   // A `p.note` above the table rather than a `<caption>` inside it: this page adds no CSS, and
   // the design system has no caption rule, so a bare one would render in the UA's centred style.
@@ -388,9 +456,10 @@ function crossCheckCard(check) {
             null,
             el('th', { text: 'Day' }),
             el('th', { text: 'Chain' }),
-            el('th.num', { text: '2023 archive' }),
+            el('th.num', { text: `2023 archive (${token})` }),
             el('th.num', { text: '`para` leg, read now' }),
             el('th.num', { text: 'Deviation' }),
+            el('th.num', { text: `Gap (${token})` }),
           ),
         ),
         el(
@@ -405,6 +474,7 @@ function crossCheckCard(check) {
               el('td.num', { text: compact(row.archived) }),
               el('td.num', { text: compact(row.value) }),
               el('td.num', { text: percent(row.deviation * 100, 4) }),
+              el('td.num', { text: row.gap.toFixed(6) }),
             ),
           ),
         ),
@@ -425,8 +495,8 @@ function crossCheckCard(check) {
           `compiled into this page. Where it overlaps the series above — ${check.from} to ${check.to}, ` +
           `${formatCount(check.pairs)} chain-days across ${check.chains} chains — the two are compared here rather than ` +
           `assumed to agree. The comparison is against the \`para\` LEG ALONE, because that is what the 2023 study read: ` +
-          `scoring it against the sum would count the Asset Hub leg as a disagreement when it is simply something the ` +
-          `original never had.`,
+          `scoring it against the sum would count the ${NET.assetHubName} leg as a disagreement when it is simply something ` +
+          `the original never had.`,
       }),
     ),
     body
@@ -434,17 +504,26 @@ function crossCheckCard(check) {
           agrees ? 'good' : 'warning',
           agrees
             ? `They agree: median deviation ${percent(body.median * 100, 7)} over ${formatCount(body.pairs)} chain-days`
-            : `They disagree on ${formatCount(body.over)} of ${formatCount(body.pairs)} chain-days`,
+            : `They disagree on ${formatCount(body.beyondQuantum)} of ${formatCount(body.pairs)} chain-days`,
           agrees
-            ? `Outside that final day the worst disagreement anywhere in the overlap is ${percent(body.max * 100, 3)}, on ${body.worst[0].name} holding ` +
-              `${compact(body.worst[0].archived)} DOT — the archive stores two decimal places, so a balance of 1.2330 DOT is ` +
-              `recorded as 1.23 and differs by a quarter of a percent. ${formatCount(body.over)} chain-days exceed ` +
-              `0.01% and every one of them is a small balance where that rounding dominates. The account derivation, the ` +
-              `day boundary, the decimals and the \`free + reserved\` convention all reproduce independently, three ` +
-              `years apart, from two different codebases.`
-            : `${formatCount(body.over)} chain-days differ by more than 0.01%, the worst by ${percent(body.max * 100, 3)}. ` +
-              `That is larger than the archive's two-decimal rounding can explain and is a real disagreement between the ` +
-              `two readings.`,
+            ? `Outside that final day, not one of the ${formatCount(body.pairs)} chain-days differs by more than ` +
+              `${ARCHIVE_QUANTUM} ${token} in absolute terms — the largest gap anywhere is ${body.maxGap.toFixed(6)} ${token} — ` +
+              `which is exactly what the archive's own two-decimal storage can produce and nothing more. The worst RELATIVE ` +
+              `deviation is ${percent(body.max * 100, 3)}, on ${body.worst[0].name} holding ${compact(body.worst[0].archived)} ` +
+              `${token}, and it is the same rounding seen through a small denominator: ${formatCount(body.over)} chain-days ` +
+              `exceed 0.01% and every one of them is a small balance. The account derivation, the day boundary, the decimals ` +
+              `and the \`free + reserved\` convention all reproduce independently, three years apart, from two different ` +
+              `codebases.`
+            : `${formatCount(body.beyondQuantum)} of ${formatCount(body.pairs)} chain-days differ by more than the ` +
+              `${ARCHIVE_QUANTUM} ${token} the file's two decimal places can produce. The largest is ` +
+              `${body.worstGap[0].name} on ${body.worstGap[0].date}: ${body.worstGap[0].archived.toFixed(2)} ${token} in ` +
+              `the file against ${body.worstGap[0].value.toFixed(6)} read from the chain, a gap of ` +
+              `${body.maxGap.toFixed(6)} ${token} — ${percent(body.worstGap[0].deviation * 100, 4)} of that balance. Those ` +
+              `are real differences between two readings of the same past, not rounding. Everything else agrees: the ` +
+              `median deviation over all ${formatCount(body.pairs)} is ${percent(body.median * 100, 7)}. (The worst ` +
+              `RELATIVE figure on this page, ${percent(body.max * 100, 3)}, is a different row — a chain holding ` +
+              `${compact(body.worst[0].archived)} ${token}, where the same rounding is a large fraction of a small ` +
+              `number — and the two must not be quoted together.)`,
         )
       : null,
     // The archive's last day is not a whole day, and this is where that stops being a footnote
@@ -453,8 +532,8 @@ function crossCheckCard(check) {
       ? notice(
           'warning',
           `Except on ${check.finalDay}, the archive's last day, where all ${formatCount(tail.pairs)} chains disagree`,
-          `Up to ${percent(tail.max * 100, 1)} on ${tail.worst[0].name}: ${compact(tail.worst[0].archived)} DOT in the file ` +
-            `against ${compact(tail.worst[0].value)} DOT read from the chain at that day's last block. This is the file's ` +
+          `Up to ${percent(tail.max * 100, 1)} on ${tail.worst[0].name}: ${compact(tail.worst[0].archived)} ${token} in the ` +
+            `file against ${compact(tail.worst[0].value)} ${token} read from the chain at that day's last block. This is the file's ` +
             `own coverage caveat becoming visible — its captures run eight days past the report's window and simply stop, ` +
             `so its final row is the last observation it happened to take rather than that UTC day's close. Every other ` +
             `day in the overlap is a close and matches. The archive's published "at the end" figures are therefore ` +
@@ -464,33 +543,39 @@ function crossCheckCard(check) {
     assetHub.pairs
       ? notice(
           'info',
-          `And the Asset Hub leg, which the 2023 study could not have read`,
+          `And the ${NET.assetHubName} leg, which the 2023 study could not have read`,
           `On ${formatCount(assetHub.pairs)} of the ${formatCount(check.pairs)} chain-days in this overlap a parachain ` +
-            `ALSO held DOT in its \`sibl\` account on Asset Hub — at most ${percent(assetHub.maxShare * 100, 2)} of that ` +
-            `chain's total at the time. Small then, and the whole thing now: after the Asset Hub Migration it is where ` +
+            `ALSO held ${token} in its \`sibl\` account on ${NET.assetHubName} — at most ${percent(assetHub.maxShare * 100, 2)} of that ` +
+            `chain's total at the time. Small then, and the whole thing now: after the Asset Hub Migration on ${NET.migratedOn} it is where ` +
             `essentially all of it sits. The series above sums both legs; the comparison above uses only the relay leg, ` +
             `so this is stated rather than hidden inside a residual.`,
         )
       : null,
-    body ? worstTable(body.worst, `The five widest disagreements outside ${check.finalDay}`) : null,
-    tail ? worstTable(tail.worst, `${check.finalDay}, the archive's partial final day`) : null,
+    body
+      ? worstTable(
+          body.worstGap,
+          `The five largest ABSOLUTE gaps outside ${check.finalDay}. Absolute, because the archive's two-decimal storage ` +
+            `bounds the gap and not the percentage: the same half-hundredth is 0.25% of 1.23 ${token} and 7.3% of 0.03 ${token}.`,
+        )
+      : null,
+    tail ? worstTable(tail.worstGap, `${check.finalDay}, the archive's partial final day`) : null,
   )
 }
 
 /* ------------------------------------------------------------------------------- rank ---- */
 
-function rankCard(series, amount) {
+function rankCard(series, format) {
   const max = series.chains[0]?.peak ?? 1
   const list = el('div.rows')
 
   series.chains.slice(0, 24).forEach((chain, i) => {
     const retired = retiredOf(chain.paraId)
-    const label = chainOf(chain.paraId, 'polkadot')?.name ?? `para ${chain.paraId}`
+    const label = nameOf(chain.paraId)
     append(
       list,
       el(
         'div.row.rank-row',
-        { title: retired ? `${sovereignAddress(chain.paraId, { on: 'relay' })}\n\n${retired.why}` : sovereignAddress(chain.paraId, { on: 'relay' }) },
+        { title: retired ? `${addressOf(chain.paraId, 'relay')}\n\n${retired.why}` : addressOf(chain.paraId, 'relay') },
         el('div.rank', { text: String(i + 1) }),
         el(
           'div.name',
@@ -506,7 +591,7 @@ function rankCard(series, amount) {
           null,
           el('div.fill', { style: `width:${Math.max(0.5, (chain.peak / max) * 100)}%;background:${seriesColor(i)}` }),
         ),
-        el('div.amt', { text: amount(chain.peak) }),
+        el('div.amt', { text: format(chain.peak) }),
         el('div.amt', null, el('span.cnt', { text: `ended ${compact(chain.last ?? 0)}` })),
       ),
     )
@@ -535,7 +620,7 @@ function rankCard(series, amount) {
 function table(series) {
   const body = el('tbody')
   for (const chain of series.chains) {
-    const entry = chainOf(chain.paraId, 'polkadot')
+    const entry = chainOf(chain.paraId, NETWORK)
     append(
       body,
       el(
@@ -547,8 +632,8 @@ function table(series) {
         el('td.mono', { text: chain.peakOn ?? '—' }),
         el('td.num', { text: compact(chain.last ?? 0) }),
         el('td', { text: !entry ? 'not in this site’s registry' : entry.retired ? `left ${entry.retired.on}` : 'still registered' }),
-        el('td.mono', { text: sovereignAddress(chain.paraId, { on: 'relay' }) }),
-        el('td.mono', { text: sovereignAddress(chain.paraId, { on: 'sibling' }) }),
+        el('td.mono', { text: addressOf(chain.paraId, 'relay') }),
+        el('td.mono', { text: addressOf(chain.paraId, 'sibling') }),
       ),
     )
   }
@@ -574,8 +659,8 @@ function table(series) {
             el('th', { text: 'On' }),
             el('th.num', { text: 'Last day' }),
             el('th', { text: 'Since' }),
-            el('th', { text: '`para` on the relay chain' }),
-            el('th', { text: '`sibl` on Asset Hub' }),
+            el('th', { text: `\`para\` on ${NET.relayName}` }),
+            el('th', { text: `\`sibl\` on ${NET.assetHubName}` }),
           ),
         ),
         body,
@@ -664,8 +749,9 @@ const wrapAnywhere = (node) => (node ? style(node, 'overflow-wrap:anywhere') : n
 
 function notes({ series, check, archive, network, lastWholeMonth, tail }) {
   const latest = series.latest
-  const retired = series.chains.map((c) => ({ chain: c, entry: chainOf(c.paraId, 'polkadot') })).filter((row) => row.entry?.retired)
-  const unnamed = series.chains.filter((c) => !chainOf(c.paraId, 'polkadot'))
+  const token = NET.token
+  const retired = series.chains.map((c) => ({ chain: c, entry: chainOf(c.paraId, NETWORK) })).filter((row) => row.entry?.retired)
+  const unnamed = series.chains.filter((c) => !chainOf(c.paraId, NETWORK))
 
   return el(
     'section.meta',
@@ -681,9 +767,10 @@ function notes({ series, check, archive, network, lastWholeMonth, tail }) {
     el('h3', { text: 'What this measures' }),
     el('p', {
       text:
-        `A parachain's DOT is the SUM of two accounts on two chains: \`para\` on the relay chain and \`sibl\` on Asset Hub. ` +
-        `Both are read on every day of this series, at that day's LAST BLOCK on each chain — two different blocks, because ` +
-        `they are two different chains. ${latest ? `The most recent day, ${latest.date}, was read at relay #${formatCount(latest.relay.block)} and Asset Hub #${formatCount(latest.assetHub.block)}.` : ''}`,
+        `A ${NET.label} parachain's ${token} is the SUM of two accounts on two chains: \`para\` on ${NET.relayName} and ` +
+        `\`sibl\` on ${NET.assetHubName}. Both are read on every day of this series, at that day's LAST BLOCK on each ` +
+        `chain — two different blocks, because they are two different chains. ` +
+        `${latest ? `The most recent day, ${latest.date}, was read at relay #${formatCount(latest.relay.block)} and ${NET.assetHubName} #${formatCount(latest.assetHub.block)}.` : ''}`,
     }),
     wrapAnywhere(
       el(
@@ -698,29 +785,37 @@ function notes({ series, check, archive, network, lastWholeMonth, tail }) {
         }),
         el('li', {
           text:
-            `THE SERIES CROSSES TWO CHAINS. The Asset Hub Migration on ${MIGRATED_ON.polkadot} moved every parachain's DOT ` +
-            `reserve from the relay chain to Asset Hub. Both legs are read on every day here and the second chart draws the ` +
-            `handover, so the per-chain lines are continuous without hiding that the accounts underneath them changed chain. ` +
-            `The migration was progressive rather than atomic: at relay #28,493,861→862 Acala's relay account fell from ` +
-            `3,137,094.16 DOT to 341.00 DOT while Moonbeam still held 1,465,523 DOT there and Hydration, Bifrost, Astar and ` +
-            `Interlay were already down to 281–481 DOT.`,
+            `THE SERIES CROSSES TWO CHAINS. The Asset Hub Migration on ${NET.migratedOn} moved every parachain's ${token} ` +
+            `reserve from ${NET.relayName} to ${NET.assetHubName}. Both legs are read on every day here and the second chart ` +
+            `draws the handover, so the per-chain lines are continuous without hiding that the accounts underneath them ` +
+            `changed chain. No storage item records that date; it was established here by bisecting the relay chain itself, ` +
+            `and it was progressive rather than atomic. ${NET.migrationEvidence}`,
         }),
         el('li', {
           text:
-            `WHICH CHAINS ARE READ is the union of four enumerations, taken at each day's own block: the relay's ` +
-            `\`Paras::ParaLifecycles\`, its \`Registrar::Paras\`, this site's own topology registry, and every chain already ` +
-            `seen holding an account earlier in the same fetch. No single one of them is complete — para 2004 is in neither ` +
-            `relay item today and still holds DOT. A chain that both left the registry and is absent from this site's ` +
-            `registry would still be missed; nothing here can rule that out.`,
+            `${token} IS ${NET.decimals} DECIMALS, and that is the divisor every figure on this page is scaled by. Both of ` +
+            `${NET.label}'s chains say so in \`system_properties\` and the server refuses to read a day from a chain that ` +
+            `disagrees — because DOT is 10 and KSM is 12, and the other network's divisor is a factor of 100 that draws a ` +
+            `correctly shaped line on a correctly shaped axis. Addresses here are SS58 prefix ${NET.ss58}.`,
+        }),
+        el('li', {
+          text:
+            `WHICH CHAINS ARE READ is the union of four enumerations, taken at each day's own block: ${NET.relayName}'s ` +
+            `\`Paras::ParaLifecycles\`, its \`Registrar::Paras\`, this site's own topology registry for ${NET.label}, and ` +
+            `every chain already seen holding an account earlier in the same fetch. No single one of them is complete — on ` +
+            `Polkadot, para 2004 is in neither relay item today and still holds DOT. A chain that both left the registry and ` +
+            `is absent from this site's registry would still be missed; nothing here can rule that out.`,
         }),
         el('li', {
           text:
             `SMALL HOLDINGS ARE SUMMED, NOT NAMED. A chain is listed individually on a day only if it held at least ` +
-            `${DUST_DOT} DOT and is among that day's ${formatCount(series.coverage.listedMax)} largest; everything else goes ` +
+            `${series.coverage.dustFloor} ${token} — the floor the server actually applied, read back out of the stored day rather ` +
+            `than restated here, because it is a fixed planck amount and so a different figure on each network — and is among ` +
+            `that day's ${formatCount(series.coverage.listedMax)} largest; everything else goes ` +
             `into that day's single \`dust\` aggregate` +
             `${series.coverage.dustDaysMax ? ` — up to ${formatCount(series.coverage.dustDaysMax)} chains on one day` : ''}. ` +
             `The day's totals still include them EXACTLY, so no sum on this page is affected: the most that aggregate ever ` +
-            `reached on any single day here is ${compact(series.coverage.dustDotMax)} DOT. What is lost is only the ability ` +
+            `reached on any single day here is ${compact(series.coverage.dustMax)} ${token}. What is lost is only the ability ` +
             `to name those chains. A chain that has appeared and then drops into the aggregate is drawn at zero rather than ` +
             `as a gap, because that is what it is at this scale — it is not a missing reading.`,
         }),
@@ -738,19 +833,22 @@ function notes({ series, check, archive, network, lastWholeMonth, tail }) {
                 `THE ARCHIVE AGREES, AND WHERE IT DOES NOT IS ITSELF A FINDING. Over ${check.from} to ${check.to} the 2023 ` +
                 `Polkalytics dataset and the \`para\` leg of this series were compared on ${formatCount(check.pairs)} ` +
                 `chain-days. Outside the archive's final day: median deviation ${percent(check.body.median * 100, 7)}, ` +
-                `worst ${percent(check.body.max * 100, 3)} — and that worst case is a chain holding ` +
-                `${compact(check.body.worst[0].archived)} DOT, where the file's two decimal places are the entire ` +
-                `difference. ON ${check.finalDay} all ${formatCount(check.tail.pairs)} chains disagree, by up to ` +
-                `${percent(check.tail.max * 100, 1)}: that file's captures stop mid-day, so its last row is not a day's ` +
-                `close and its published closing figures are mid-day readings.`,
+                `largest ABSOLUTE gap ${check.body.maxGap.toFixed(6)} ${token}, and ` +
+                `${check.body.beyondQuantum === 0 ? `NOT ONE chain-day` : `${formatCount(check.body.beyondQuantum)} chain-days`} ` +
+                `differ${check.body.beyondQuantum === 1 ? 's' : ''} by more than the ${ARCHIVE_QUANTUM} ${token} the file's ` +
+                `two decimal places can produce. The verdict is taken on that absolute gap rather than on the percentage, ` +
+                `because the percentage is dominated by the smallest balance in the overlap and the two networks' smallest ` +
+                `balances are three orders of magnitude apart — the worst relative deviation here is ` +
+                `${percent(check.body.max * 100, 3)}, on a chain holding ${compact(check.body.worst[0].archived)} ${token}.` +
+                `${check.tail ? ` ON ${check.finalDay} all ${formatCount(check.tail.pairs)} chains disagree, by up to ${percent(check.tail.max * 100, 1)}: that file's captures stop mid-day, so its last row is not a day's close and its published closing figures are mid-day readings.` : ''}`,
             })
           : null,
         check?.assetHub?.pairs
           ? el('li', {
               text:
-                `THE 2023 STUDY MEASURED ONE OF THE TWO ACCOUNTS. It read \`para\` on the relay chain only. On ` +
+                `THE 2023 STUDY MEASURED ONE OF THE TWO ACCOUNTS. It read \`para\` on ${NET.relayName} only. On ` +
                 `${formatCount(check.assetHub.pairs)} of the ${formatCount(check.pairs)} chain-days in the overlap the ` +
-                `same chain also held DOT in its \`sibl\` account on Asset Hub — up to ` +
+                `same chain also held ${token} in its \`sibl\` account on ${NET.assetHubName} — up to ` +
                 `${percent(check.assetHub.maxShare * 100, 2)} of its total at the time. That is why the comparison above ` +
                 `is against the relay leg alone, and why the lines are drawn from the sum.`,
             })
@@ -781,7 +879,7 @@ function notes({ series, check, archive, network, lastWholeMonth, tail }) {
           text: 'The original study called these "netflows". Strictly they are balances over time — the term is kept because the study is published under it.',
         }),
         el('li', {
-          text: `${network.token} only. A parachain's sovereign accounts also hold USDC, USDT and every bridged asset; that decomposition is on the /bridged/ page and the two must not be added together.`,
+          text: `${token} only. A parachain's sovereign accounts also hold USDC, USDT and every bridged asset; that decomposition is on the /bridged/ page and the two must not be added together.`,
         }),
       ),
     ),
@@ -801,114 +899,37 @@ function notes({ series, check, archive, network, lastWholeMonth, tail }) {
   )
 }
 
-/* ══════════════════════════════════════════════════════════ Kusama: the archive, as it was ═════ */
+/* ══════════════════════════════════════════════════════ the archive's own clipping caveat ═════ */
 
 /**
- * Kusama has no re-derived series and this page does not pretend otherwise.
+ * The 2023 dataset resamples, and some of its lines understate their own peak.
  *
- * `netflows-daily` and `sovereign-dot-recent` read the Polkadot relay chain and Polkadot Asset
- * Hub. Kusama's sovereign accounts sit on two chains this site does not read, so the KSM view is
- * the 2023 archive and nothing else — said out loud, at the top, rather than left to be noticed.
+ * This used to live only on the Kusama toggle, because Kusama was the archive and nothing else.
+ * Now that both networks draw a re-derived series it belongs beside the cross-check on both: a
+ * chain whose ARCHIVED line is clipped will disagree with the series above for a reason that is
+ * the archive's, not this site's, and saying which is which is the whole point of drawing them
+ * together.
  */
-function renderArchiveOnly(host, { network, archive }) {
-  const token = network.token
-  const amount = amountOf(token)
-  const totalPeak = network.chains.reduce((sum, chain) => sum + chain.peak, 0)
-  const clipped = network.chains.filter((chain) => chain.clipped > CLIP_THRESHOLD)
-
-  const card = el(
-    'section.card',
-    null,
-    el(
-      'header',
-      null,
-      el('h2', { text: `${token} held in parachain sovereign accounts, ${network.first} → ${network.last}` }),
-      el('p.note', {
-        text: `One shared scale. A line begins where that chain first appears in the data — before that it is absent, not zero. Nothing on it has moved since ${network.last}.`,
-      }),
-    ),
-  )
-  const legend = el('ul.legend')
-  network.chains.forEach((chain, i) => {
-    append(
-      legend,
-      el(
-        'li',
-        null,
-        el('span.swatch', { style: `background:${seriesColor(i)}` }),
-        document.createTextNode(`${chain.name} `),
-        el('span.amt', { text: compact(chain.dailyPeak) }),
-      ),
-    )
-  })
-  const plot = el('div.plot')
-  append(card, legend, plot)
-  queueMicrotask(() =>
-    multiLine(plot, {
-      days: network.days,
-      series: network.chains.map((chain) => ({ label: chain.name, values: chain.series })),
-      format: compact,
-      height: 380,
-    }),
-  )
-
-  append(
-    host,
-    card,
-    statRow([
-      statTile('Chains tracked', String(network.chains.length), `sovereign accounts above the study's floor`),
-      statTile('Largest holding', amount(network.chains[0].peak), `${network.chains[0].name}, at its peak`),
-      statTile('Sum of peaks', amount(totalPeak), 'not simultaneous — each chain at its own high'),
-      statTile('Held at the end', amount(network.chains.reduce((sum, chain) => sum + chain.last, 0)), `across all ${network.chains.length}, on ${network.last}`),
-    ]),
-    notice(
-      'warning',
-      'This is the 2023 archive, and it is all there is for Kusama',
-      `The continuous 2022 → today series on this page is Polkadot only: it is read from the Polkadot relay chain and Polkadot Asset Hub, and this site reads neither Kusama chain. Nothing here has moved since ${network.last}, and the Asset Hub Migration on ${MIGRATED_ON.kusama} means these \`para\` accounts are no longer where a Kusama parachain's KSM sits.`,
-      `That ${MIGRATED_ON.kusama} date is transcribed from this repo's notes and was NOT re-derived the way Polkadot's was.`,
-    ),
-    clipped.length
-      ? notice(
-          'warning',
-          `${clipped.length} of these lines understate their own peak`,
-          dataset.source.caveats.resampling,
-          `Affected here: ${clipped.map((chain) => `${chain.name} (−${percent(chain.clipped * 100, 1)})`).join(', ')}.`,
-        )
-      : null,
-    discrepanciesCard(),
-    el(
-      'section.meta',
-      null,
-      el('h2', { text: 'Data notes' }),
-      livenessNotes([archive]),
-      wrapAnywhere(
-        el(
-          'ul',
-          null,
-          el('li', { text: dataset.source.caveats.coverage }),
-          el('li', { text: dataset.source.caveats.filter }),
-          el('li', {
-            text: `Every address in this dataset is a \`para\` account ON THE RELAY CHAIN, which in 2023 was where a parachain's KSM sat. Re-running this measurement against Kusama today would return a few hundred ${token} per parachain and look entirely reasonable.`,
-          }),
-        ),
-      ),
-      el(
-        'p',
-        null,
-        document.createTextNode('The Polkadot series: '),
-        el('a', { href: '/netflows/', text: '/netflows/' }),
-        document.createTextNode('. Original study and source code: '),
-        el('a', { href: dataset.source.repo, text: dataset.source.repo }),
-        document.createTextNode('.'),
-      ),
-    ),
+function archiveClipNotice(network) {
+  const clipped = (network.chains ?? []).filter((chain) => chain.clipped > CLIP_THRESHOLD)
+  if (!clipped.length) return null
+  return notice(
+    'warning',
+    `${clipped.length} of the archive's own lines understate their peak`,
+    dataset.source.caveats.resampling,
+    `Affected in the ${NET.label} archive: ${clipped.map((chain) => `${chain.name} (−${percent(chain.clipped * 100, 1)})`).join(', ')}. ` +
+      `That is a limit of the 2023 capture, not of the series above, which reads every UTC day's close.`,
   )
 }
 
 renderPage({
   page: pageByKey('netflows'),
   intro:
-    'When DOT moves to a parachain it is locked in that parachain’s sovereign account and minted on the other side. This is that lock, drawn day by day from 2022 to yesterday: one line per chain, read from the chains themselves at the close of every UTC day, across both accounts a parachain owns — `para` on the relay chain and `sibl` on Asset Hub. The 2023 Polkalytics study that first measured these accounts is still here, as the independent second reading this series is checked against.',
+    `When ${NET.token} moves to a ${NET.label} parachain it is locked in that parachain’s sovereign account and minted on ` +
+    `the other side. This is that lock, drawn day by day from ${NET.firstMonth} to yesterday: one line per chain, read from ` +
+    `the chains themselves at the close of every UTC day, across both accounts a parachain owns — \`para\` on ` +
+    `${NET.relayName} and \`sibl\` on ${NET.assetHubName}. The 2023 Polkalytics study that first measured these accounts is ` +
+    `still here, as the independent second reading this series is checked against.`,
   controls: [
     choiceControl({
       label: 'Network',
@@ -918,7 +939,7 @@ renderPage({
         { value: 'polkadot', label: 'Polkadot · DOT' },
         { value: 'kusama', label: 'Kusama · KSM' },
       ],
-      hint: 'Polkadot is read from the chains, day by day, to yesterday. Kusama is the 2023 archive only — this site reads neither Kusama chain.',
+      hint: 'Both are read from their own chains, day by day, to yesterday — Polkadot from 2022-01, Kusama from 2021-07, each starting at the first month its Asset Hub has a clock.',
     }),
   ],
   // The shape this page actually lands: the chart, the four tiles under it, then the second

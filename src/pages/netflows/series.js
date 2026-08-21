@@ -15,14 +15,27 @@
 //   · Empty days are drawn, not dropped. The axis spans the whole series, not the part that
 //     happens to be present, so a half-filled store reads as half-filled rather than as short.
 
-const PLANCK = 1e10
 const DAY_MS = 86_400_000
 
 export const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10)
 export const dayMs = (day) => Date.parse(`${day}T00:00:00Z`)
 
-/** Planck (a decimal string, exact) to whole DOT. `null` stays `null`. */
-export const dot = (raw) => (raw === null || raw === undefined ? null : Number(BigInt(raw)) / PLANCK)
+/**
+ * Planck (a decimal string, exact) to whole tokens. `null` stays `null`.
+ *
+ * `decimals` is an ARGUMENT and not a module constant, and that is the one thing in this file
+ * that is worth a paragraph. DOT is 10 decimals and KSM is 12 — both chains of each network say
+ * so in `system_properties`, and the server asserts it on every read — so a divisor baked in
+ * here is a factor of 100 on every Kusama figure on the page, in the direction that makes the
+ * numbers bigger and no less plausible. Karura's 2022 peak is 169,884 KSM; with the DOT divisor
+ * it draws as 17.0 M, with a correctly shaped line, a correctly shaped axis and a correct
+ * ranking.
+ */
+export const units = (raw, decimals) => {
+  if (raw === null || raw === undefined) return null
+  if (!Number.isInteger(decimals)) throw new Error(`units: decimals must be an integer, got ${decimals}`)
+  return Number(BigInt(raw)) / 10 ** decimals
+}
 
 /** Every month from `first` to `last` inclusive, as `YYYY-MM`. */
 export function monthsBetween(first, last) {
@@ -53,8 +66,13 @@ export function monthsBetween(first, last) {
  * @param {Array<{month: string, body: object}>} args.months  store envelopes, one per month
  * @param {object|null} args.tail                             the live `sovereign-dot-recent` payload
  * @param {string} args.firstDay                              ISO date the axis starts at
+ * @param {number} args.decimals                              10 for DOT, 12 for KSM — required
  */
-export function buildSeries({ months, tail, firstDay }) {
+export function buildSeries({ months, tail, firstDay, decimals }) {
+  if (!Number.isInteger(decimals)) {
+    throw new Error(`buildSeries: decimals must be an integer, got ${decimals}. DOT is 10 and KSM is 12; a wrong one is a factor of 100 that renders perfectly.`)
+  }
+  const amount = (raw) => units(raw, decimals)
   const byDate = new Map()
   const coverage = { complete: 0, partial: 0, jobs: [], months: months.length }
 
@@ -79,7 +97,8 @@ export function buildSeries({ months, tail, firstDay }) {
   const assetHubLeg = []
   const totalLine = []
   let dustDaysMax = 0
-  let dustDotMax = 0
+  let dustMax = 0
+  let dustFloor = null
   let listedMax = 0
 
   days.forEach((date, i) => {
@@ -90,11 +109,15 @@ export function buildSeries({ months, tail, firstDay }) {
       totalLine.push(null)
       return
     }
-    relayLeg.push(dot(day.totals.relay))
-    assetHubLeg.push(dot(day.totals.assetHub))
-    totalLine.push(dot(day.totals.total))
+    relayLeg.push(amount(day.totals.relay))
+    assetHubLeg.push(amount(day.totals.assetHub))
+    totalLine.push(amount(day.totals.total))
     dustDaysMax = Math.max(dustDaysMax, day.dust?.chains ?? 0)
-    dustDotMax = Math.max(dustDotMax, (dot(day.dust?.relay ?? '0') ?? 0) + (dot(day.dust?.assetHub ?? '0') ?? 0))
+    dustMax = Math.max(dustMax, (amount(day.dust?.relay ?? '0') ?? 0) + (amount(day.dust?.assetHub ?? '0') ?? 0))
+    // The floor the SERVER actually used, read back out of the day rather than restated here.
+    // It is a fixed planck amount, so it is 1 DOT and 0.01 KSM, and a page constant would be
+    // wrong on one of the two networks while looking right on both.
+    if (day.dust?.floor !== undefined && dustFloor === null) dustFloor = amount(day.dust.floor)
     listedMax = Math.max(listedMax, day.chains?.length ?? 0)
     for (const [paraId, relayRaw, ahRaw] of day.chains ?? []) {
       let entry = byPara.get(paraId)
@@ -111,8 +134,8 @@ export function buildSeries({ months, tail, firstDay }) {
         }
         byPara.set(paraId, entry)
       }
-      const relay = relayRaw === null ? 0 : dot(relayRaw)
-      const assetHub = ahRaw === null ? 0 : dot(ahRaw)
+      const relay = relayRaw === null ? 0 : amount(relayRaw)
+      const assetHub = ahRaw === null ? 0 : amount(ahRaw)
       entry.relayValues[i] = relay
       entry.assetHubValues[i] = assetHub
       entry.values[i] = relay + assetHub
@@ -152,7 +175,7 @@ export function buildSeries({ months, tail, firstDay }) {
     byDate,
     chains,
     legs: { relay: relayLeg, assetHub: assetHubLeg, total: totalLine },
-    coverage: { ...coverage, days: days.length, present, missing: days.length - present, dustDaysMax, dustDotMax, listedMax },
+    coverage: { ...coverage, days: days.length, present, missing: days.length - present, dustDaysMax, dustMax, dustFloor, listedMax },
     first: days[0] ?? null,
     firstPresent,
     last,
@@ -161,15 +184,33 @@ export function buildSeries({ months, tail, firstDay }) {
 }
 
 /**
+ * How much absolute error the archive's own storage can produce, in whole tokens.
+ *
+ * `src/data/netflows.json` stores every balance rounded half-up to TWO decimal places, on both
+ * networks, so any single value can be out by up to half of the last place. That is the entire
+ * explanation for most of the disagreement below, and it has to be measured in ABSOLUTE terms:
+ * a relative verdict is dominated by the smallest balance in the overlap, and the two networks'
+ * smallest balances are three orders of magnitude apart. Polkadot's is 1.23 DOT, where 0.005
+ * rounds to a 0.25% deviation; Kusama's is 0.03 KSM, where the SAME 0.005 rounds to 7.3%. Two
+ * readings that agree to the planck therefore score as "agrees" on one network and "disagrees on
+ * a third of the chain-days" on the other, and the number that moved was the denominator.
+ */
+export const ARCHIVE_QUANTUM = 0.005
+
+/**
  * The archive, checked against the re-derived series day by day.
  *
  * This is the reason the 2023 file is still compiled into the page. Two independent readings of
  * the same past — one taken in 2023 by different code, one taken now from the chain — either
  * agree or they do not, and the answer belongs on the page either way.
  *
- * Deviation is relative and the ARCHIVE is the denominator. A chain-day where the archive is
- * `null` (that chain had not appeared yet) is skipped rather than scored: it is not a
- * disagreement, it is one of the two readings declining to say anything.
+ * TWO measures come out of it, and the page needs both. `deviation` is relative, with the
+ * ARCHIVE as the denominator, and it is what a reader wants to see on a row. `gap` is the
+ * absolute difference in whole tokens, and it is what the VERDICT is taken on, because it is the
+ * only one of the two that the archive's rounding bounds — see `ARCHIVE_QUANTUM` above.
+ *
+ * A chain-day where the archive is `null` (that chain had not appeared yet) is skipped rather
+ * than scored: it is not a disagreement, it is one of the two readings declining to say anything.
  *
  * @param {ReturnType<typeof buildSeries>} series
  * @param {object} network             the archive's network block from netflows.json
@@ -198,7 +239,7 @@ export function crossCheck(series, network, paraIdOf) {
         if (share > assetHubMaxShare) assetHubMaxShare = share
       }
       const deviation = archived === 0 ? (relay === 0 ? 0 : 1) : Math.abs(relay - archived) / archived
-      rows.push({ date: network.days[i], name: chain.name, archived, value: relay, assetHub, deviation })
+      rows.push({ date: network.days[i], name: chain.name, archived, value: relay, assetHub, deviation, gap: Math.abs(relay - archived) })
     }
   }
   if (!rows.length) return null
@@ -214,13 +255,21 @@ export function crossCheck(series, network, paraIdOf) {
   const summarise = (list) => {
     if (!list.length) return null
     const sorted = [...list].sort((a, b) => a.deviation - b.deviation)
+    const byGap = [...list].sort((a, b) => b.gap - a.gap)
     return {
       pairs: list.length,
       median: sorted[Math.floor(sorted.length / 2)].deviation,
-      // 0.01% is the ceiling the archive's own two-decimal rounding can produce on the smallest
-      // balance it records. Anything past it is a real difference between the two readings.
+      // Relative, and reported rather than judged on: 0.01% is roughly what two-decimal
+      // rounding produces on a mid-sized balance, but on a 0.03-token one it produces 7%.
       over: list.filter((row) => row.deviation > 0.0001).length,
       max: sorted[sorted.length - 1].deviation,
+      // Absolute, and what the verdict is taken on. `beyondQuantum` is the count of chain-days
+      // whose difference is LARGER than the archive's own two-decimal storage can explain —
+      // i.e. the ones that are a real disagreement between two readings rather than an artefact
+      // of the file's precision.
+      maxGap: byGap[0].gap,
+      beyondQuantum: list.filter((row) => row.gap > ARCHIVE_QUANTUM).length,
+      worstGap: byGap.slice(0, 5),
       worst: [...list].sort((a, b) => b.deviation - a.deviation).slice(0, 5),
     }
   }

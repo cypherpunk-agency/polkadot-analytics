@@ -207,16 +207,16 @@ export const PAGES = [
     kind: 'dashboard',
     href: '/netflows/',
     nav: 'Netflows',
-    title: 'Parachain netflows, 2022 → today',
+    title: 'Parachain netflows, 2021 → today',
     blurb:
-      'DOT held in parachain sovereign accounts, every UTC day from January 2022 to yesterday — read from the chains themselves at each day’s last block, across both accounts a parachain owns: `para` on the relay chain and `sibl` on Asset Hub. The 2023 Polkalytics study that first measured these accounts is drawn against it as an independent second reading, and where the two disagree the page says why.',
+      'The relay token held in parachain sovereign accounts, every UTC day — Polkadot from January 2022 and Kusama from July 2021, each starting at the first month its Asset Hub has a clock. Read from the chains themselves at each day’s last block, across both accounts a parachain owns: `para` on its relay chain and `sibl` on its Asset Hub. The 2023 Polkalytics study that first measured these accounts is drawn against both as an independent second reading.',
     // `live: true`, and this time it stays. It went false for one day between the /sovereign/
     // split and the backfill, which was correct for that day: the page read nothing. The
     // archive-only era ended when `netflows-daily` filled the 2023→2026 hole — the page now
     // reads a store-backed job for whole past months and a TTL-cached operation for the
-    // current one. Kusama is still the archive alone, because nothing here reads a Kusama
-    // chain, and the page says so on that toggle rather than in this flag.
-    source: 'Polkadot relay chain + Asset Hub',
+    // current one. Both networks are read now: Kusama joined on 2026-08-21 and the
+    // archive-only branch is gone.
+    source: 'Polkadot and Kusama relay + Asset Hub RPC',
     live: true,
   },
   {

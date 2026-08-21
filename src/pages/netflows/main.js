@@ -48,12 +48,13 @@ import { choiceControl, renderPage } from '../../design/page.js'
 import { pageByKey } from '../../sources/pages.js'
 import { append, clear, el, notice, statRow, statTile, style } from '../../design/dom.js'
 import { multiLine, seriesColor } from '../../design/charts.js'
-import { read, readStore } from '../../core/client.js'
+import { read } from '../../core/client.js'
+import { followStore } from '../../core/follow.js'
 import { liveness } from '../../core/liveness.js'
 import { livenessNotes } from '../../design/liveness.js'
 import { compact, formatCount, percent } from '../../core/format.js'
 import { chainOf, resolveChain, sovereignAddress } from '../../core/topology.js'
-import { ARCHIVE_QUANTUM, buildSeries, crossCheck, units, isoDay, monthsBetween } from './series.js'
+import { ARCHIVE_QUANTUM, buildSeries, crossCheck, units } from './series.js'
 import dataset from '../../data/netflows.json'
 
 /**
@@ -124,9 +125,6 @@ const CLIP_THRESHOLD = 0.03
 /** How many chains get a line. Everything else is in the ranking and the table beneath it. */
 const CHART_LINES = 10
 
-/** Months fetched at once. Each is one HTTP request against this origin. */
-const MONTH_CONCURRENCY = 6
-
 const amountOf = (token) => (value) => `${compact(value)} ${token}`
 
 /** This network's chain registry entry for a para id, or null. Keyed by RELAY, never globally:
@@ -173,22 +171,6 @@ const retiredOf = (paraId) => chainOf(paraId, NETWORK)?.retired ?? null
 
 /* ═════════════════════════════════════════════════════════════════════════════════ load ═════ */
 
-/** Bounded-concurrency map. Fifty-five requests at once is a self-inflicted queue. */
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length)
-  let next = 0
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const index = next
-      next += 1
-      if (index >= items.length) return
-      out[index] = await fn(items[index], index)
-    }
-  })
-  await Promise.all(workers)
-  return out
-}
-
 async function load({ progress }) {
   const network = dataset.networks[NETWORK]
   if (!network) throw Object.assign(new Error(`The archived dataset has no \`${NETWORK}\` network.`), { kind: 'decode' })
@@ -209,61 +191,133 @@ async function load({ progress }) {
 
   const archive = archiveLiveness(network)
 
-  // "Now" comes from the reader's clock, which is the only clock the browser has. It is used
-  // for ONE thing — deciding which months are whole — and the server refuses any month that is
-  // not, so a wrong clock produces a 400 rather than a wrong number.
-  const now = new Date()
-  const currentMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
-  const lastWholeMonth = isoDay(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).slice(0, 7)
-  const months = monthsBetween(NET.firstMonth, lastWholeMonth)
+  // ONE request for every stored month — decision 0020. This page used to make one request per
+  // month, and fifty-six at once through the edge's 30-per-minute rate limit was the page
+  // answering its own tail with 429s. Which months exist is now the SERVER's clock's decision;
+  // the reader's clock decides only how many tail days to ask for, and the server refuses any
+  // day it cannot verify, so a wrong clock costs a shorter tail rather than a wrong number.
+  const tailDays = Math.max(0, new Date().getUTCDate() - 1)
+  const total = 1 + (tailDays > 0 ? 1 : 0)
+  progress({ stage: 'Reading the stored series', done: 0, total })
+  const series = await read('asset-hub', 'netflows-series', { network: NETWORK })
+
+  if (series?.token !== NET.token || series?.decimals !== NET.decimals) {
+    // The same tripwire as the archive gate above, pointed at the server: every figure the
+    // aggregate carries was scaled by ITS divisor, and drawing it under this page's would be
+    // the factor-of-100 that renders perfectly.
+    throw Object.assign(
+      new Error(
+        `The server calls ${NETWORK} \`${series?.token}\`/${series?.decimals} and this page calls it ` +
+          `\`${NET.token}\`/${NET.decimals}. Every figure below would be scaled by the wrong divisor.`,
+      ),
+      { kind: 'decode' },
+    )
+  }
+
+  // The per-month `{data, coverage, job}` entries are byte-compatible with the single-month
+  // envelope, so the series shaper reads them unchanged — and a month arriving later over the
+  // stream (the same envelope again) replaces its entry without translation.
+  const months = (series.months ?? []).map((entry) => ({ month: entry.month, body: entry }))
+  const lastWholeMonth = months.length ? months[months.length - 1].month : null
 
   // The tail: the days of the current month that have already closed. On the 1st there are
   // none, and the stored months already reach yesterday.
-  const tailDays = Math.max(0, now.getUTCDate() - 1)
-
-  let fetched = 0
-  const total = months.length + (tailDays > 0 ? 1 : 0)
-  const step = (stage) => progress({ stage, done: fetched, total })
-  step('Reading stored months')
-
-  // One month that will not answer must not take the other fifty-four down with it. The two
-  // realistic causes are a reader whose clock puts them in next month (the server refuses a month
-  // that has not ended, correctly) and an ordinary transport failure; both are far better served
-  // by a chart with a hole and a note than by an error page. The failures are counted and shown.
-  const failures = []
-  const answers = await mapLimit(months, MONTH_CONCURRENCY, async (month) => {
-    try {
-      const body = await readStore('asset-hub', 'netflows-daily', { month, network: NETWORK })
-      return { month, body }
-    } catch (problem) {
-      if (problem?.name === 'AbortError') throw problem
-      failures.push({ month, message: problem?.message ?? String(problem) })
-      return { month, body: null }
-    } finally {
-      fetched += 1
-      step(`Reading stored months — ${month}`)
-    }
-  })
-
   let tail = null
   if (tailDays > 0) {
-    step('Reading the current month from the chains')
+    progress({ stage: 'Reading the current month from the chains', done: 1, total })
     tail = await read('asset-hub', 'sovereign-dot-recent', { days: Math.min(tailDays, 40), network: NETWORK })
-    fetched += 1
-    step('Reading the current month from the chains')
   }
+  progress({ stage: 'Drawing', done: total, total })
 
-  return { network, archive, months: answers, tail, currentMonth, lastWholeMonth, failures }
+  return {
+    network,
+    archive,
+    months,
+    tail,
+    lastWholeMonth,
+    live: !series.coverage?.complete,
+    // The month that ended but has not settled yet — the server names it so this page can say
+    // why, for one hour a month, the series is a month shorter than a reader expects.
+    pending: series.coverage?.pending ?? null,
+    // Set by followMissing's onSettled when the live subscription ends for any reason other
+    // than completion; flips the gap notice from a promise to a truthful past tense.
+    followEnded: null,
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════ render ═════ */
 
+/**
+ * The one follow this page load ever starts, or null. Module-level because `render` runs once
+ * per UPDATE, not once per page: the harness renders once by design (src/design/dom.js), and
+ * this page re-invokes its own `render` into the same host as months land — so the guard that
+ * stops every re-render from opening another EventSource has to outlive the render call.
+ */
+let following = null
+
 function render(host, data) {
   clear(host)
   renderSeries(host, data)
+  followMissing(host, data)
 }
 
-function renderSeries(host, { network, archive, tail, months, lastWholeMonth, failures }) {
+/**
+ * Subscribe for the months the aggregate could not answer, and re-render as each lands.
+ *
+ * The stream hands over the same envelope the HTTP endpoint answers, so applying one is a keyed
+ * replacement into `data.months` — idempotent, because a reconnecting stream re-delivers and a
+ * fallback poll overlaps with it. The fallback (a slow re-read of the aggregate) replaces the
+ * whole list the same way. Either way the page redraws from `data`, which keeps every chart,
+ * notice and data note derived from one payload — rule 3 survives the page becoming live.
+ */
+function followMissing(host, data) {
+  if (following !== null) return
+  const missing = data.months.filter((m) => !m.body?.coverage?.complete).map((m) => m.month)
+  if (!missing.length) return
+  following = followStore({
+    source: 'asset-hub',
+    operation: 'netflows-daily',
+    query: { network: NETWORK, months: missing.join(',') },
+    event: 'month',
+    poll: async () => {
+      const series = await read('asset-hub', 'netflows-series', { network: NETWORK })
+      if (series?.token !== NET.token || series?.decimals !== NET.decimals) return { complete: false }
+      data.months = (series.months ?? []).map((entry) => ({ month: entry.month, body: entry }))
+      data.live = !series.coverage?.complete
+      render(host, data)
+      return { complete: Boolean(series.coverage?.complete) }
+    },
+    onUpdate: (update) => {
+      if (update.kind === 'stalled') {
+        // The fetch for this month surrendered; it will not land without a maintainer. Record
+        // the gave-up job on the entry so the notice can COUNT it — a stalled month silently
+        // left "in flight" is a promise the page cannot keep.
+        const entry = data.months.find((m) => m.month === update.data?.params?.month)
+        if (!entry || !update.data?.job) return
+        entry.body = { ...(entry.body ?? {}), job: update.data.job }
+        render(host, data)
+        return
+      }
+      if (update.kind !== 'event') return
+      const envelope = update.data
+      const entry = data.months.find((m) => m.month === envelope?.params?.month)
+      if (!entry) return
+      entry.body = envelope
+      data.live = data.months.some((m) => !m.body?.coverage?.complete)
+      render(host, data)
+    },
+    onSettled: (why) => {
+      // 'done' and 'complete' need nothing: the last event or poll already re-rendered a full
+      // series. Any other reason means the follow gave up with months still missing, and the
+      // page must stop claiming it is subscribed — the copy flips to a truthful past tense.
+      if (why === 'done' || why === 'complete') return
+      data.followEnded = why
+      render(host, data)
+    },
+  })
+}
+
+function renderSeries(host, { network, archive, tail, months, lastWholeMonth, live, pending, followEnded }) {
   const series = buildSeries({ months, tail, firstDay: `${NET.firstMonth}-01`, decimals: NET.decimals })
   const check = crossCheck(series, network, (name) => resolveChain(name, NETWORK)?.paraId ?? null)
   const token = NET.token
@@ -275,10 +329,10 @@ function renderSeries(host, { network, archive, tail, months, lastWholeMonth, fa
       notice(
         'warning',
         `Nothing is stored yet for ${NET.label}, and the fetch has just been started`,
-        'This page is drawn from a store that fills on demand: the first reader of a month is what starts its fetch. Reload in a minute and the chart will have days in it.',
+        'This page is drawn from a store that fills on demand: this request is what started the fetch. The page stays subscribed and draws each month the moment it lands — no reload needed.',
         coverageSentence(series.coverage),
       ),
-      notes({ series, check, archive, network, lastWholeMonth, tail }),
+      notes({ series, check, archive, network, lastWholeMonth, tail, pending }),
     )
   }
 
@@ -299,14 +353,13 @@ function renderSeries(host, { network, archive, tail, months, lastWholeMonth, fa
       statTile('Held on the last day', totalNow === null ? '—' : format(totalNow), series.last ? `across every chain, at the close of ${series.last}` : 'nothing stored'),
     ]),
 
-    failures.length ? failureNotice(failures) : null,
-    series.coverage.missing > 0 ? gapNotice(series) : null,
+    series.coverage.missing > 0 ? gapNotice(series, { live, followEnded }) : null,
     legsCard(series, token),
     check ? crossCheckCard(check, token) : null,
     archiveClipNotice(network),
     rankCard(series, format),
     discrepanciesCard(),
-    notes({ series, check, archive, network, lastWholeMonth, tail }),
+    notes({ series, check, archive, network, lastWholeMonth, tail, pending }),
   )
 }
 
@@ -676,23 +729,24 @@ const coverageSentence = (coverage) =>
   (coverage.jobs.length ? `, and ${formatCount(coverage.jobs.length)} fetch${coverage.jobs.length === 1 ? ' is' : 'es are'} in flight` : '') +
   '.'
 
-/** A month that would not answer, named rather than absorbed into the gap count. */
-function failureNotice(failures) {
-  return notice(
-    'critical',
-    `${formatCount(failures.length)} month${failures.length === 1 ? '' : 's'} could not be read at all`,
-    `${failures.map((f) => f.month).join(', ')} — the days in ${failures.length === 1 ? 'it' : 'them'} are drawn as gaps rather than as zeros, and everything else on this page is unaffected. This is a failure of this site, not of the chains.`,
-    failures[0].message,
-  )
-}
-
-function gapNotice(series) {
+function gapNotice(series, { live, followEnded } = {}) {
   const { coverage } = series
+  const stalled = coverage.jobs.filter((job) => job?.state === 'gave-up').length
   return notice(
     'warning',
     `${formatCount(coverage.missing)} of the ${formatCount(coverage.days)} days in this span are not drawn`,
-    'This series is served from a store that fills on demand, one calendar month per fetch — the first reader of a month is what starts it. A day that has not been fetched is a break in the line, never a zero: the chart says nothing at all about it rather than saying it was empty.',
-    `${coverageSentence(coverage)} Reloading this page continues the fill.`,
+    'This series is served from a store that fills on demand, one calendar month per fetch — reading this page is what starts the missing ones. A day that has not been fetched is a break in the line, never a zero: the chart says nothing at all about it rather than saying it was empty.',
+    `${coverageSentence(coverage)}${
+      stalled
+        ? ` ${formatCount(stalled)} month${stalled === 1 ? "'s fetch has" : "s' fetches have"} surrendered after repeated failures and will NOT land without a maintainer — ${stalled === 1 ? 'that gap' : 'those gaps'} will outlive this visit.`
+        : ''
+    } ${
+      followEnded
+        ? 'The live subscription this page opened has ended with months still missing — reload to continue the fill.'
+        : live
+          ? 'This page stays subscribed and draws each month the moment it lands — no reload needed.'
+          : 'Reloading this page continues the fill.'
+    }`,
   )
 }
 
@@ -747,7 +801,7 @@ function discrepanciesCard() {
 
 const wrapAnywhere = (node) => (node ? style(node, 'overflow-wrap:anywhere') : node)
 
-function notes({ series, check, archive, network, lastWholeMonth, tail }) {
+function notes({ series, check, archive, network, lastWholeMonth, tail, pending }) {
   const latest = series.latest
   const token = NET.token
   const retired = series.chains.map((c) => ({ chain: c, entry: chainOf(c.paraId, NETWORK) })).filter((row) => row.entry?.retired)
@@ -824,7 +878,9 @@ function notes({ series, check, archive, network, lastWholeMonth, tail }) {
             `WHAT IS MISSING IS A GAP, NOT A ZERO. ${series.coverage.missing === 0 ? 'Every day in this span is present.' : `${formatCount(series.coverage.missing)} of ${formatCount(series.coverage.days)} days are not fetched yet and break the line rather than dropping it to zero.`} ` +
             `Whole past months come from a store that keeps them forever once fetched; ${lastWholeMonth ? `everything after ${lastWholeMonth} ` : 'the current month '}` +
             `is read live on request and cached for thirty minutes, because a store bucketed by calendar month cannot serve a ` +
-            `month that has not ended. Today itself is never here: a day's value is its close, and today has not closed. ` +
+            `month that has not ended. ` +
+            `${pending ? `${pending} is currently in NEITHER: it ended less than an hour ago, which is too recent for the store's settle delay and already outside the live tail — for that one hour the series is a month shorter than it will be, and this sentence is the only trace of it. ` : ''}` +
+            `Today itself is never here: a day's value is its close, and today has not closed. ` +
             `What these accounts hold at this minute is on /sovereign/.`,
         }),
         check

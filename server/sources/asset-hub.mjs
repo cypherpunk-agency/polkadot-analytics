@@ -166,6 +166,7 @@
 // chain name, so that question cannot be settled from these two endpoints.
 
 import { callUpstream, jsonRpc, UpstreamError } from '../lib/upstream.mjs'
+import { serveFromStore } from '../lib/demand.mjs'
 import { liveness } from '../../src/core/liveness.js'
 import { CHAINS, chainOf, sovereignAccountHex, sovereignAddress, structuralLabel } from '../../src/core/topology.js'
 import { twox128, xxhash64 } from '../../src/core/codec/xxhash.js'
@@ -1883,6 +1884,28 @@ export function netflowsMonthIsSettled(params, now = Date.now()) {
   return now >= monthEndMs(month) + NETFLOWS_SETTLE_MS
 }
 
+/**
+ * Every month the store can answer for on one network, oldest first: the network's own floor up
+ * to the last month `netflowsMonthIsSettled` accepts. This is THE month list — `warm()` enqueues
+ * it, `netflows-series` reads it, and the identity-watch stream validates against the same
+ * predicate — derived in one place because two derivations of "which months exist" that disagree
+ * by one entry produce a page that is permanently missing its newest month with no error anywhere.
+ */
+function netflowsSettledMonths(networkId, now = Date.now()) {
+  const net = netflowNetwork(networkId)
+  const months = []
+  const ceiling = new Date(now).getUTCFullYear()
+  for (let year = Number(net.firstMonth.slice(0, 4)); year <= ceiling; year += 1) {
+    for (let index = 1; index <= 12; index += 1) {
+      const month = `${year}-${String(index).padStart(2, '0')}`
+      if (month < net.firstMonth) continue
+      if (!netflowsMonthIsSettled({ month, network: net.id }, now)) continue
+      months.push(month)
+    }
+  }
+  return months
+}
+
 /* ------------------------------------------------------------------ batched JSON-RPC ---- */
 
 /**
@@ -2594,9 +2617,105 @@ function netflowsNotes({ net, payloads, first, last, live }) {
   return notes
 }
 
+/* --------------------------------------------- operation: the whole series, one request ---- */
+
+/**
+ * Every settled month of one network's daily series, in ONE response — the read-layer answer to
+ * research queue O41 (decision 0020). The month bucket stays the storage identity, exactly as
+ * decision 0012 chose it; what changes is that a page no longer turns that identity into one
+ * HTTP request per month. Fifty-six requests per load was fine until the edge rate limit
+ * (30/min per IP, docs/architecture/security.md) started answering the page's own tail with
+ * 429s — the page was DoSing itself, politely, through its own front door.
+ *
+ * Each month is served through `serveFromStore` — a function call now instead of an HTTP
+ * request, and deliberately the SAME function: find-or-create, the reader-priority raise, the
+ * gave-up refusal, the live-jobs cap and the settle predicate all apply to this one GET exactly
+ * as they applied to the fifty-six. One aggregate read can therefore mint at most
+ * MAX_LIVE_JOBS_PER_OPERATION jobs, same as one page load could before.
+ *
+ * The per-month entry carries `{ data, coverage, job }` byte-compatible with the single-month
+ * envelope, so the page's series shaper reads both shapes with one code path — and so a month
+ * that later arrives over the identity-watch stream (the same envelope again) drops into place
+ * without translation.
+ */
+async function netflowsSeries({ network }, { store, queue, startWorker }) {
+  const net = netflowNetwork(network)
+  const months = []
+  let incomplete = 0
+  let stalled = 0
+  for (const month of netflowsSettledMonths(network)) {
+    const answer = await serveFromStore({
+      store,
+      queue,
+      sourceId: 'asset-hub',
+      operationId: 'netflows-daily',
+      params: { month, network },
+      handler: NETFLOWS_DAILY,
+      startWorker,
+    })
+    if (answer.status !== 200) {
+      // Defensive only: the settle predicate admitted this month moments ago, so a refusal here
+      // needs the clock to have crossed backwards between the two reads. Kept because the cost
+      // of the branch is nil and the cost of an uncaught non-envelope answer is a page that
+      // cannot draw. (The REAL month-boundary behaviour is the `pending` field below, not this.)
+      months.push({ month, data: [], coverage: { complete: false, segments: 0, note: answer.body?.error?.message ?? 'Refused.' }, job: null })
+      incomplete += 1
+      continue
+    }
+    const { data, coverage, job } = answer.body
+    months.push({ month, data, coverage, job })
+    if (!coverage.complete) incomplete += 1
+    if (job?.state === 'gave-up') stalled += 1
+    // A month under 512 rows never trips readFacts' own yield, so without this the whole
+    // composition — fifty-five reads and their decoding — runs as ONE macrotask on the HTTP
+    // thread. One yield per month keeps every other request interleaved.
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+
+  // The month that has ENDED but not yet SETTLED — for one hour after each month boundary the
+  // newest whole month is in nobody's list: too old for the live tail (which serves only the
+  // current month's days), too young for the store. Saying so is what stops that hour reading
+  // as "the series just got a month shorter". The page prints this; it must not infer it.
+  const now = Date.now()
+  const lastEnded = isoDay(now - DAY_MS).slice(0, 7)
+  const pending =
+    lastEnded !== isoDay(now).slice(0, 7) && !netflowsMonthIsSettled({ month: lastEnded, network }, now) ? lastEnded : null
+
+  const complete = incomplete === 0
+  return {
+    complete,
+    body: {
+      network: net.id,
+      token: net.token,
+      decimals: net.decimals,
+      firstMonth: net.firstMonth,
+      migratedOn: net.migratedOn,
+      months,
+      coverage: {
+        complete,
+        months: months.length,
+        incomplete,
+        stalled,
+        pending,
+        note: complete
+          ? `Complete: all ${months.length} settled months of the ${net.token} series are stored. Immutable data is fetched once and never again.` +
+            (pending ? ` ${pending} ended less than an hour ago and is not yet fetchable; it will appear here once it settles.` : '')
+          : `Partial: ${months.length - incomplete} of ${months.length} settled months are stored.` +
+            (stalled
+              ? ` ${stalled} of the missing month${stalled === 1 ? '' : 's'} ${stalled === 1 ? 'has' : 'have'} surrendered after repeated failures and will NOT land without a maintainer — the rest are being fetched.`
+              : '') +
+            ` Each incomplete month's own coverage says what is being done about it; subscribe to /api/stream/asset-hub/netflows-daily to be handed each month as it lands, or re-ask this endpoint.`,
+      },
+      // Where to subscribe for the rest. Published in the payload rather than documented,
+      // so the page never has to derive the stream URL — rule: the server names its own doors.
+      stream: complete ? null : '/api/stream/asset-hub/netflows-daily',
+    },
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════ registry ═════ */
 
-export default {
+const REGISTRY = {
   id: 'asset-hub',
   label: LABEL,
   homepage: 'https://polkadot.com/',
@@ -2657,6 +2776,24 @@ export default {
       },
       run: ({ days, network }) => sovereignDotRecent({ days, network }),
     },
+
+    'netflows-series': {
+      summary:
+        'Every settled month of the `netflows-daily` series for one network, in one response — each month carrying the same `{data, coverage, job}` envelope the single-month endpoint answers, plus an overall coverage statement. Reading this is the demand that fills missing months (same bounds as reading them one by one); subscribe to `/api/stream/asset-hub/netflows-daily` for the ones that are not stored yet.',
+      // No `ttlMs`, deliberately: this is served from the persistent store, not the TTL cache.
+      // `store: true` routes it through `serveStoreRead` (server/index.mjs), where completeness
+      // IS the cache policy — a complete series is immutable and held for five minutes, an
+      // incomplete one is `no-store` so a reader polling for progress is never handed their own
+      // browser cache. A TTL here would freeze "3 months missing" for its whole duration.
+      store: true,
+      schema: {
+        // Required and not defaulted, same reasoning as everywhere else in this file: a default
+        // would make `/netflows-series` and `/netflows-series?network=polkadot` two answers for
+        // one question, and a URL that does not say which chain its numbers came from.
+        network: { type: 'string', required: true, oneOf: NETFLOW_NETWORK_IDS },
+      },
+      run: (params, ctx) => netflowsSeries(params, ctx),
+    },
   },
 
   /**
@@ -2696,15 +2833,45 @@ export default {
       immutable: (params) => netflowsMonthIsSettled(params),
 
       /**
+       * The identity-watch contract for `/api/stream/asset-hub/netflows-daily` (server/index.mjs
+       * `serveStream`, decision 0020). A reader who was answered a partial series subscribes with
+       * the months it is missing and is handed each one's complete envelope as it lands — the
+       * same envelope the HTTP endpoint answers, so the two arrival paths are one decoding path.
+       *
+       * The watch is READ-ONLY by contract: it observes jobs, it never creates or raises one.
+       * The aggregate read (or the per-month read) is what turns a reader into demand; holding a
+       * connection open must not be a way to hold a job open.
+       */
+      watch: {
+        event: 'month',
+        schema: {
+          network: { type: 'string', required: true, oneOf: NETFLOW_NETWORK_IDS },
+          // Comma-separated months still wanted. Capped well above any real series (Kusama is 61
+          // months in 2026-08 and grows by twelve a year) but capped, because an uncapped list
+          // parameter is a free way to make one GET cost N store probes per poll tick.
+          months: { type: 'list', required: true, pattern: NETFLOWS_MONTH_RE, maxItems: 200 },
+        },
+        // Only months the settle predicate admits. A month that can never land — the current
+        // one, a future one, one below the network's floor — would otherwise sit in the wanted
+        // set for the watch's whole lifetime, and 32 such requests would pin the global watch
+        // cap doing nothing. Filtered here rather than refused, so a client whose clock is
+        // slightly ahead loses one month from its watch instead of the whole subscription; an
+        // all-filtered list closes immediately with `done`.
+        identities: ({ network, months }) =>
+          months.filter((month) => netflowsMonthIsSettled({ month, network })).map((month) => ({ month, network })),
+      },
+
+      /**
        * Fill this without waiting for a reader — see server/lib/warm.mjs and decision 0014.
        *
        * Every settled month of every network, which is the same set `/netflows/` asks for and
        * must stay the same set: a warm identity that differs from a requested one by so much as
        * a key is a SECOND identity, so the backfill runs twice, both copies are correct, and the
-       * page still starts empty. Both lists are therefore derived from `firstMonth` and the
-       * clock rather than written down twice, and `netflowsMonthIsSettled` — the same predicate
-       * `immutable` uses, and the same one warmStore re-applies — decides which of them are real,
-       * so the current month falls out on its own without this function knowing the rule.
+       * page still starts empty. Warming, the `netflows-series` aggregate and the identity-watch
+       * stream therefore all read `netflowsSettledMonths` — one derivation of "which months
+       * exist", built on `netflowsMonthIsSettled`, the same predicate `immutable` uses and the
+       * one warmStore re-applies — so the current month falls out on its own without this
+       * function knowing the rule.
        *
        * BOTH NETWORKS, deliberately, and the deciding argument is not the one about cost.
        * `MAX_LIVE_JOBS_PER_OPERATION` is counted per (source, operation) ACROSS ALL PARAMS
@@ -2720,24 +2887,13 @@ export default {
        * Safe to leave as "everything, forever": warmStore skips an identity that is already
        * complete, so once the series is filled this costs one indexed lookup per month per boot.
        */
-      warm: () => {
-        const out = []
-        const now = new Date()
-        for (const net of Object.values(NETFLOW_NETWORKS)) {
-          // From the network's own floor to the current month. Per network, because Kusama can
-          // answer for 2021-07 and Polkadot cannot — a shared floor would either lock Kusama out
-          // of five readable months or mint a Polkadot job for a month with no clock.
-          for (let year = Number(net.firstMonth.slice(0, 4)); year <= now.getUTCFullYear(); year += 1) {
-            for (let index = 1; index <= 12; index += 1) {
-              const month = `${year}-${String(index).padStart(2, '0')}`
-              if (month < net.firstMonth) continue
-              if (!netflowsMonthIsSettled({ month, network: net.id })) continue
-              out.push({ month, network: net.id })
-            }
-          }
-        }
-        return out
-      },
+      warm: () =>
+        Object.values(NETFLOW_NETWORKS).flatMap((net) =>
+          // From each network's own floor to its last settled month. Per network, because Kusama
+          // can answer for 2021-07 and Polkadot cannot — a shared floor would either lock Kusama
+          // out of five readable months or mint a Polkadot job for a month with no clock.
+          netflowsSettledMonths(net.id).map((month) => ({ month, network: net.id })),
+        ),
 
       // Knowable without asking anybody. The engine records it before the first batch so the
       // coverage bar has a denominator from the start.
@@ -2801,3 +2957,13 @@ export default {
     },
   },
 }
+
+/**
+ * The `netflows-daily` handler, by name. `netflowsSeries` serves each month through the SAME
+ * handler object the registry resolves for HTTP requests — captured from the registry rather
+ * than defined beside it, so there is exactly one handler and no way for the two paths to
+ * drift. Assigned before export, used only at request time, so the reference is always live.
+ */
+const NETFLOWS_DAILY = REGISTRY.jobs['netflows-daily']
+
+export default REGISTRY

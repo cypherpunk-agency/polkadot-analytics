@@ -82,7 +82,12 @@ denial of service against unrelated things.
 - Every upstream call has a timeout.
 - A rate limit on `/api/*` is requested at the edge — 30 req/min per IP, burst 60. With the cache
   in place a legitimate full page load is a handful of `/api` hits, so that is generous for a
-  human and useless for a scraper.
+  human and useless for a scraper. That premise was quietly broken once and repaired rather than
+  abandoned: `/netflows/` grew to ~56 requests per load and the edge cut its own page off
+  mid-fan-out. [Decision 0020](../decisions/0020-the-series-is-read-in-one-request.md) folded the
+  fan-out into one aggregate read plus one SSE watch, so the premise holds again — and any page
+  whose request count scales with history length is this bug waiting to recur; give it an
+  aggregate before the limiter finds it.
 
 ## Being a good citizen upstream
 

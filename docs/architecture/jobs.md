@@ -350,6 +350,30 @@ resolved, does not implement `immutable` and `nextBatch`, declares its params mu
 batch without a `rows` array, or returns an unfinished batch with no cursor. All of those are
 design errors, and retrying a design error is only a slower error.
 
+### When one page needs many identities: compose at the read layer
+
+The month bucket is right for *storing* and wrong for a page that needs every month: `/netflows/`
+grew to ~56 requests per load and the edge rate limit cut it off mid-fan-out
+([decision 0020](../decisions/0020-the-series-is-read-in-one-request.md)). The answer is never a
+coarser second identity over the same days (the duplication warned about above) — it is two
+read-layer pieces that leave storage untouched:
+
+- **A store-read operation** (`store: true` in `operations`, served by `serveStoreRead` in
+  `server/index.mjs`): `run(params, {store, queue, startWorker})` composes many identities into
+  one response, calling `serveFromStore` per identity so every abuse bound holds for the
+  aggregate exactly as for the parts. No `ttlMs` — completeness is the cache policy, because a
+  mode-B TTL becomes a browser `max-age` that would hand a progress-polling reader their own
+  cache.
+- **A `watch` declaration on the handler** (`{event, schema, identities}`): readers of a partial
+  aggregate subscribe at `/api/stream/<source>/<operation>` and receive each identity's complete
+  envelope as one Server-Sent Event when it lands. Read-only by contract — it observes via
+  `storedAnswer` and never enqueues. The client side is `followStore` (`src/core/follow.js`),
+  which owns the subscribe-then-fall-back-to-polling choreography.
+
+`asset-hub/netflows-series` plus `netflows-daily`'s watch is the worked example;
+`hydration/swaps-daily` has the same disease and is the intended second adopter (research queue
+O83).
+
 ## The CLI
 
 `scripts/job.mjs` is not a second implementation. It opens the same store, the same queue and the

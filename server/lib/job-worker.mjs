@@ -36,6 +36,15 @@
 //         // a warm list may safely be "every month of the series" and stay that way forever.
 //         // May be async. Omitted means "nothing to warm", which is the right answer for an
 //         // operation whose useful params are not knowable in advance.
+//       watch: { event, schema, identities: (params) => [identityParams, …] },
+//         // OPTIONAL, and it is a READ concern rather than a fetching one: declaring it opens
+//         // /api/stream/<source>/<operation> (server/index.mjs `serveStream`), where a reader
+//         // subscribes with watch params and is handed each identity's complete envelope as
+//         // one Server-Sent Event named `event` when it lands. The watch observes and never
+//         // enqueues. `identities` should filter out any identity that can never complete, or
+//         // it pins a watch slot for the stream's whole lifetime; `event` must not collide
+//         // with the stream's control events or EventSource built-ins — `npm run check`
+//         // enforces the list. See decision 0020.
 //       plan: async ({ params, gate }) => ({ totalUnits }),
 //         // Optional. Runs once, before the first batch, to size the work. `totalUnits: null`
 //         // means "not knowable" — null, never 0.

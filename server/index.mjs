@@ -47,7 +47,7 @@ import { ParamError, cacheKey, readParams } from './lib/params.mjs'
 import { openStore, defaultDataDir } from './lib/store.mjs'
 import { JobQueue } from './lib/jobs.mjs'
 import { ensureWorker as spawnWorker } from './lib/job-worker.mjs'
-import { describeJob, serveFromStore } from './lib/demand.mjs'
+import { describeJob, serveFromStore, storedAnswer } from './lib/demand.mjs'
 import { warmStore } from './lib/warm.mjs'
 import { runCanaries } from './lib/canary.mjs'
 import { describe, resolve as resolveOperation, resolveJob } from './sources/index.mjs'
@@ -116,14 +116,20 @@ const EMIT_CSP = process.env.NODE_ENV !== 'production'
  */
 const CANARY_INTERVAL_MS = 15 * 60_000
 
-function send(res, status, body, headers = {}) {
-  res.writeHead(status, {
+/** The headers every response carries, streaming or not. One derivation, because a streaming
+ *  path that rebuilt them by hand would drift from `send()` the first time either changed. */
+function baseHeaders(headers = {}) {
+  return {
     ...(EMIT_CSP ? { 'content-security-policy': CSP } : {}),
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'strict-origin-when-cross-origin',
     'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     ...headers,
-  })
+  }
+}
+
+function send(res, status, body, headers = {}) {
+  res.writeHead(status, baseHeaders(headers))
   res.end(body)
 }
 
@@ -174,7 +180,7 @@ async function notFound(res) {
 
 /* ------------------------------------------------------------------------------ api ---- */
 
-async function serveApi(ctx, res, segments, query) {
+async function serveApi(ctx, req, res, segments, query) {
   if (segments.length === 0) return sendJson(res, 200, describe())
 
   if (segments.length === 1 && segments[0] === 'health') {
@@ -219,6 +225,11 @@ async function serveApi(ctx, res, segments, query) {
   // called "jobs".
   if (segments[0] === 'jobs') return serveJobStatus(ctx, res, segments)
 
+  // `stream` is the second RESERVED first segment, claimed for the same reason `jobs` is:
+  // /api/stream/<source>/<operation> holds an identity-watch open over Server-Sent Events, and
+  // that meaning must not change on the day someone adds a source called "stream".
+  if (segments[0] === 'stream') return serveStream(ctx, req, res, segments.slice(1), query)
+
   if (segments.length !== 2) {
     return sendJson(res, 404, { error: { kind: 'request', message: 'Expected /api/<source>/<operation>.' } })
   }
@@ -232,6 +243,14 @@ async function serveApi(ctx, res, segments, query) {
 
   const { source, operation, error } = ctx.registry.resolve(sourceId, operationId)
   if (error) return sendJson(res, 404, { error: { kind: 'request', message: error } })
+
+  // Store-read operations — the third shape, between the two modes. Like mode A it answers from
+  // the persistent store and is cached by completeness; like mode B it is an `operations` entry
+  // with a `run`. The difference from mode B is the contract: `run(params, ctx)` receives the
+  // store context, returns `{ complete, body }`, and is NEVER put behind the TTL cache — a
+  // cached "3 months missing" would outlive the months landing, and the browser would be handed
+  // a max-age that turns its own polling into a mirror.
+  if (operation.store === true) return serveStoreRead(ctx, res, sourceId, operationId, { source, operation }, query)
 
   let params
   try {
@@ -337,6 +356,260 @@ async function serveStoreBacked(ctx, res, sourceId, operationId, { handler }, qu
 }
 
 /**
+ * A store-read operation: `run(params, {store, queue, startWorker})` composes an answer out of
+ * the persistent store — many identities in one response, where mode A serves exactly one. The
+ * first user is `asset-hub/netflows-series` (decision 0020), which folded a page's fifty-six
+ * per-month requests into this one.
+ *
+ * Completeness decides the caching, exactly as it does for mode A: a complete answer is
+ * immutable data and may be held; an incomplete one is `no-store`, because it is the thing a
+ * reader polls while the store fills and a cached partial would strand them on a chart that
+ * never gains its months.
+ *
+ * SINGLE-FLIGHT, because the composition is not free: the first user reads ~55 identities and
+ * serialises the result to the better part of a megabyte, all on the HTTP thread. N identical
+ * concurrent requests — the edge's burst limit admits 60 — must cost one composition, not N
+ * heaps of it. Identical requests share the promise; the params space is enum-bound, so the
+ * in-flight map cannot be grown by an attacker.
+ */
+const storeReadsInFlight = new Map()
+
+async function serveStoreRead(ctx, res, sourceId, operationId, { source, operation }, query) {
+  if (!ctx.store) {
+    return sendJson(
+      res,
+      503,
+      {
+        error: {
+          kind: 'server',
+          source: sourceId,
+          message:
+            'This operation is served from the persistent store, which this instance could not ' +
+            'open. Cached (mode B) operations are unaffected.',
+        },
+      },
+      { 'cache-control': 'no-store' },
+    )
+  }
+
+  let params
+  try {
+    params = readParams(Object.fromEntries(query), operation.schema ?? {})
+  } catch (problem) {
+    if (problem instanceof ParamError) {
+      return sendJson(res, 400, { error: { kind: 'request', message: problem.message } })
+    }
+    throw problem
+  }
+
+  try {
+    const key = cacheKey(sourceId, operationId, params)
+    let flight = storeReadsInFlight.get(key)
+    if (!flight) {
+      flight = Promise.resolve().then(() => operation.run(params, { store: ctx.store, queue: ctx.queue, startWorker: ctx.startWorker }))
+      storeReadsInFlight.set(key, flight)
+      // Both arms, not .finally(): a .finally() chain re-throws the rejection into a promise
+      // nobody awaits, which Node treats as an unhandled rejection even though every actual
+      // caller handled theirs.
+      const evict = () => storeReadsInFlight.delete(key)
+      flight.then(evict, evict)
+    }
+    const answer = await flight
+    return sendJson(
+      res,
+      200,
+      { source: source.id, operation: operationId, params, data: answer.body },
+      {
+        'cache-control': answer.complete ? 'public, max-age=300' : 'no-store',
+        'x-store': answer.complete ? 'complete' : 'partial',
+      },
+    )
+  } catch (problem) {
+    console.error(`[api] ${sourceId}/${operationId} (store-read) failed:`, problem)
+    return sendJson(
+      res,
+      500,
+      { error: { kind: 'server', source: sourceId, message: 'The request failed inside this service.' } },
+      { 'cache-control': 'no-store' },
+    )
+  }
+}
+
+/* --------------------------------------------------------------------------- streaming ---- */
+
+/**
+ * GET /api/stream/<source>/<operation> — an identity watch over Server-Sent Events.
+ *
+ * A reader who was answered a partial series holds this open and is handed each identity's
+ * complete envelope as it lands, instead of re-fetching the whole aggregate on a timer. The
+ * envelope is the SAME one the mode-A endpoint answers for that identity, so arrival over the
+ * stream and arrival over HTTP are one decoding path on the page.
+ *
+ * What this endpoint deliberately is NOT:
+ *
+ *   · NOT DEMAND. It calls `storedAnswer` — the read-only sibling of `serveFromStore` — and
+ *     never enqueues, raises, or spawns. The aggregate (or per-month) read is what turns a
+ *     reader into demand; holding a connection open must not be a way to hold a job open, or an
+ *     idle tab becomes a standing order against a volunteer-run RPC.
+ *   · NOT A NOTIFICATION BUS. There is no pub/sub anywhere in this service (the drain worker
+ *     writes SQLite and exits; nothing emits events), so this polls the store on a slow tick.
+ *     That is a deliberate ceiling: the freshness a human watching a chart needs is seconds,
+ *     and a poll every few seconds against a local indexed SQLite aggregate costs microseconds.
+ *   · NOT UNBOUNDED. Concurrent watches are capped, the watch itself has a lifetime cap, and a
+ *     `gave-up` identity is reported as `stalled` and dropped from the watch — a surrendered
+ *     job will not resolve on its own (decision 0018's cousin: waiting on it politely is still
+ *     waiting forever), so keeping it in the wanted set would pin every such stream at its
+ *     lifetime cap for nothing.
+ *
+ * Wire shape: `retry:` hint first, then per landed identity one `event: <handler.watch.event>`
+ * whose `id` is the canonical params and whose `data` is the envelope; `event: stalled` for a
+ * surrendered identity; a comment heartbeat every few ticks so proxies keep the pipe open; and
+ * `event: done` (then a clean end) once nothing is left to watch. A client that misses events
+ * and reconnects re-sends its wanted list, and re-delivered envelopes are idempotent to apply.
+ */
+async function serveStream(ctx, req, res, segments, query) {
+  const config = ctx.streamConfig
+  if (segments.length !== 2) {
+    return sendJson(res, 404, { error: { kind: 'request', message: 'Expected /api/stream/<source>/<operation>.' } })
+  }
+  const [sourceId, operationId] = segments
+  const job = ctx.registry.resolveJob(sourceId, operationId)
+  if (!job.handler) {
+    return sendJson(res, 404, { error: { kind: 'request', message: `No store-backed operation \`${sourceId}/${operationId}\` to watch.` } })
+  }
+  const watch = job.handler.watch
+  if (!watch) {
+    return sendJson(res, 404, { error: { kind: 'request', message: `\`${sourceId}/${operationId}\` does not declare a watch.` } })
+  }
+  if (!ctx.store) {
+    return sendJson(
+      res,
+      503,
+      { error: { kind: 'server', source: sourceId, message: 'The persistent store is not available on this instance.' } },
+      { 'cache-control': 'no-store' },
+    )
+  }
+
+  let params
+  try {
+    params = readParams(Object.fromEntries(query), watch.schema ?? {})
+  } catch (problem) {
+    if (problem instanceof ParamError) {
+      return sendJson(res, 400, { error: { kind: 'request', message: problem.message } })
+    }
+    throw problem
+  }
+
+  if (ctx.streams.size >= config.maxConcurrent) {
+    return sendJson(
+      res,
+      503,
+      {
+        error: {
+          kind: 'server',
+          source: sourceId,
+          message: `This instance is already holding ${ctx.streams.size} watches open, which is the cap. Poll the aggregate endpoint instead, or ask again shortly.`,
+        },
+      },
+      { 'cache-control': 'no-store' },
+    )
+  }
+
+  // The wanted set. Keyed by the canonical identity so a duplicate in the request collapses.
+  const wanted = new Map()
+  for (const identityParams of watch.identities(params)) {
+    wanted.set(JSON.stringify(identityParams), identityParams)
+  }
+
+  res.writeHead(
+    200,
+    baseHeaders({
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      // Tells nginx-family proxies not to buffer. Caddy streams `text/event-stream` on its own;
+      // this header is for whatever else ends up in the path, and costs nothing where it is
+      // ignored. The client keeps a polling fallback either way — a proxy that buffers this
+      // stream downgrades the page to polling, it does not break it.
+      'x-accel-buffering': 'no',
+    }),
+  )
+  // A HEAD probe gets the headers and a clean end — never a held-open connection with no body.
+  if (req.method === 'HEAD') return res.end()
+
+  res.write(`retry: ${config.retryMs}\n\n`)
+
+  const stream = { res, timer: null }
+  ctx.streams.add(stream)
+  const startedAt = Date.now()
+  let ticks = 0
+  let pumping = false
+
+  const stop = () => {
+    if (stream.timer) clearInterval(stream.timer)
+    stream.timer = null
+    ctx.streams.delete(stream)
+  }
+  // `reason` is MACHINE-READABLE and the client dispatches on it: only `complete` means "close
+  // and stop following". Anything else ('lifetime', 'failure') tells the client the watch ended
+  // for the server's reasons while months are still pending, and the client falls back to
+  // polling. A prose-only note here was the first confirmed finding of this change's review —
+  // the client cannot read prose, so every redeploy and every lifetime cap read as "finished"
+  // and permanently orphaned a mid-fill page.
+  const finish = (reason, note) => {
+    if (res.writableEnded || res.destroyed) return stop()
+    res.write(`event: done\ndata: ${JSON.stringify({ reason, note })}\n\n`)
+    stop()
+    res.end()
+  }
+
+  const pump = async () => {
+    if (pumping || res.writableEnded || res.destroyed) return
+    pumping = true
+    try {
+      // A client that has stopped reading is not a client — it is a buffer filling on this
+      // process's heap. The frames a watch delivers are bounded (each identity once), but a
+      // stalled socket must not hold what it will never drain: past this high-water mark the
+      // watch is ended, and the client's reconnect or polling fallback picks it back up.
+      if (res.writableLength > 4 * 1024 * 1024) {
+        return finish('failure', 'This connection stopped reading and was dropped. Re-subscribe or poll.')
+      }
+      for (const [key, identityParams] of wanted) {
+        const answer = await storedAnswer({
+          store: ctx.store,
+          queue: ctx.queue,
+          sourceId,
+          operationId,
+          params: identityParams,
+        })
+        if (res.writableEnded || res.destroyed) return
+        if (answer.state === 'complete') {
+          res.write(`event: ${watch.event}\nid: ${key}\ndata: ${JSON.stringify(answer.body)}\n\n`)
+          wanted.delete(key)
+        } else if (answer.state === 'stalled') {
+          res.write(`event: stalled\nid: ${key}\ndata: ${JSON.stringify({ params: identityParams, job: answer.job })}\n\n`)
+          wanted.delete(key)
+        }
+      }
+      if (wanted.size === 0) return finish('complete', 'Everything watched has landed or stalled.')
+      if (Date.now() - startedAt >= config.maxMs) {
+        return finish('lifetime', `Watch lifetime reached with ${wanted.size} identities still pending.`)
+      }
+      ticks += 1
+      if (ticks % config.heartbeatEvery === 0) res.write(`: watching ${wanted.size}\n\n`)
+    } catch (problem) {
+      console.error(`[stream] ${sourceId}/${operationId} failed:`, problem)
+      finish('failure', 'The watch failed inside this service.')
+    } finally {
+      pumping = false
+    }
+  }
+
+  res.on('close', stop)
+  stream.timer = setInterval(pump, config.pollMs)
+  await pump()
+}
+
+/**
  * GET /api/jobs/:id — the poll target a partial answer hands out.
  *
  * What is deliberately absent:
@@ -398,6 +671,19 @@ export function createApp({
   queueOptions,
   deferStore = false,
   cache = new TtlCache({ maxEntries: 400, maxBytes: 48 * 1024 * 1024 }),
+  // The identity-watch stream's clocks and caps (serveStream). Injectable so a test can tick in
+  // milliseconds; the defaults are the production numbers and each is a decision:
+  //   pollMs 3s      — the store is local SQLite and a coverage probe is an indexed aggregate,
+  //                    so the cost of a tick is microseconds; 3s is well inside "feels live" for
+  //                    a chart that fills over minutes.
+  //   heartbeatEvery — a comment frame every 8th quiet tick (~24s), inside every proxy's idle
+  //                    timeout that matters here.
+  //   maxMs 15min    — longer than any warm month backlog a reader realistically waits out
+  //                    (a netflows month is ~45s), shorter than an abandoned tab's afternoon.
+  //   maxConcurrent  — watches are cheap but they hold sockets; 32 is far above the readership
+  //                    of this site and far below anything that hurts.
+  //   retryMs        — the reconnect hint EventSource honours after a drop.
+  stream: streamOptions,
 } = {}) {
   const sweeper = setInterval(() => cache.sweep(), 60_000)
   sweeper.unref?.()
@@ -418,6 +704,16 @@ export function createApp({
     // Never checked yet. `ok: null` is not `ok: false` and is certainly not `true` — see
     // server/lib/canary.mjs, and CLAUDE.md on null never standing in for a value.
     canaries: { ok: null, checkedAt: null, reports: [] },
+    // Open identity watches (serveStream), so shutdown can end them instead of waiting them out.
+    streams: new Set(),
+    streamConfig: {
+      pollMs: 3_000,
+      heartbeatEvery: 8,
+      maxMs: 15 * 60_000,
+      maxConcurrent: 32,
+      retryMs: 5_000,
+      ...streamOptions,
+    },
   }
 
   function startWorker() {
@@ -518,7 +814,7 @@ export function createApp({
       }
       if (pathname === '/api' || pathname.startsWith('/api/')) {
         const segments = pathname.slice(5).split('/').filter(Boolean)
-        return await serveApi(ctx, res, segments, url.searchParams)
+        return await serveApi(ctx, req, res, segments, url.searchParams)
       }
       if (dev) {
         // In dev, Vite owns the documents and proxies /api here. Anything else reaching this
@@ -528,6 +824,10 @@ export function createApp({
       return await serveStatic(res, pathname)
     } catch (problem) {
       console.error('[server]', problem)
+      // A response that already started streaming cannot take a 500 status line — writing one
+      // throws ERR_HTTP_HEADERS_SENT out of the catch, which is how an error page becomes a
+      // crashed handler. Ending the stream is the whole of what can still be done for it.
+      if (res.headersSent) return res.end()
       return send(res, 500, 'Internal error', { 'content-type': 'text/plain; charset=utf-8' })
     }
   }
@@ -623,9 +923,34 @@ export function createApp({
       return { warmed, resumed, canaries: ctx.canaries }
     },
 
+    /**
+     * End every open identity watch. Called on shutdown BEFORE `server.close()` waits for
+     * in-flight requests, because an SSE response is an in-flight request that never finishes on
+     * its own — without this, every redeploy rides the 5-second force-exit timer instead of
+     * closing cleanly.
+     *
+     * Deliberately NO `done` frame: `done` is the protocol's "stop following" and a redeploy is
+     * the opposite of that. Ending the response mid-stream is precisely the case EventSource's
+     * reconnection exists for — the browser waits out the `retry:` hint and re-subscribes, and
+     * the NEW instance answers it. The wire protocol hands us instance-handover for free; a
+     * farewell frame would have suppressed it.
+     */
+    endStreams() {
+      for (const stream of [...ctx.streams]) {
+        try {
+          if (stream.timer) clearInterval(stream.timer)
+          if (!stream.res.writableEnded && !stream.res.destroyed) stream.res.end()
+        } catch {
+          // A socket that died mid-write is already what we wanted: closed.
+        }
+        ctx.streams.delete(stream)
+      }
+    },
+
     close() {
       clearInterval(sweeper)
       if (poller) clearInterval(poller)
+      this.endStreams()
       if (!givenStore) ctx.store?.close()
     },
   }
@@ -705,6 +1030,9 @@ if (invokedDirectly) {
   // of being cut, which otherwise shows up in monitoring as a blip on every single deploy.
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.on(signal, () => {
+      // Streams first: an open identity watch is an in-flight request that never ends on its
+      // own, so `server.close()` would otherwise sit on it until the force-exit timer fires.
+      app.endStreams()
       server.close(() => {
         app.close()
         process.exit(0)

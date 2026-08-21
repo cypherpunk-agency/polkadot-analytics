@@ -78,7 +78,10 @@ export function describe() {
         id,
         path: `/api/${source.id}/${id}`,
         summary: op.summary,
-        cacheSeconds: Math.round(op.ttlMs / 1000),
+        // A store-read operation (server/index.mjs `serveStoreRead`) has no TTL to publish —
+        // completeness is its cache policy — so it says what it is instead of publishing a
+        // number that would be a lie in both directions.
+        ...(op.store === true ? { mode: 'store-read' } : { cacheSeconds: Math.round(op.ttlMs / 1000) }),
         parameters: parametersOf(op.schema),
       })),
       // Mode A, listed SEPARATELY rather than folded in beside the cached operations. They
@@ -93,13 +96,20 @@ export function describe() {
         summary: handler.summary,
         mode: 'store',
         parameters: parametersOf(handler.schema),
+        // A handler that declares a watch can be subscribed to: each identity's complete
+        // envelope arrives as one Server-Sent Event as it lands. Published here because the
+        // stream URL is not guessable from the operation's own path.
+        ...(handler.watch ? { stream: { path: `/api/stream/${source.id}/${id}`, parameters: parametersOf(handler.watch.schema) } } : {}),
       })),
     })),
   }
 }
 
 /** Parameter descriptions, shared by both modes: a job handler declares a schema in exactly the
- *  same shape an operation does, and readParams validates both against it. */
+ *  same shape an operation does, and readParams validates both against it. `pattern` is
+ *  published as source text and `maxItems` as itself — without them a `list` parameter (the
+ *  watch's `months`) is advertised as accepting anything, and nobody could construct a valid
+ *  subscription from /api alone. */
 function parametersOf(schema) {
   return Object.entries(schema ?? {}).map(([name, spec]) => ({
     name,
@@ -109,5 +119,7 @@ function parametersOf(schema) {
     min: spec.min ?? null,
     max: spec.max ?? null,
     oneOf: spec.oneOf ?? null,
+    pattern: spec.pattern ? String(spec.pattern) : null,
+    maxItems: spec.maxItems ?? null,
   }))
 }

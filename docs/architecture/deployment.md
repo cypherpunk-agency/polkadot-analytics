@@ -344,7 +344,14 @@ What is still owed:
    for the `--ssh-key-file` box above.
 2. **Caddy** terminating TLS for `analytics.cypherpunk.agency` and proxying to the container. The
    server sets its own security headers including `connect-src 'self'`, so the edge and the origin
-   agree even if one of them is ever bypassed.
+   agree even if one of them is ever bypassed. One behaviour of that proxy is asserted but
+   unverified from here: `/api/stream/*` is Server-Sent Events
+   ([decision 0020](../decisions/0020-the-series-is-read-in-one-request.md)) and must reach the
+   browser unbuffered. Caddy 2 streams `text/event-stream` by default and the response also sends
+   `x-accel-buffering: no` for anything nginx-shaped in the path — and the client falls back to
+   polling if the pipe is dead, so a buffering edge degrades the page rather than breaking it.
+   Still worth one probe after a deploy: `curl -N` the stream URL and watch for the `retry:` line
+   arriving immediately rather than at connection close.
 3. **A 1 GB persistent volume mounted at `/data`**, in the compose file on the VM — the one thing
    this repository cannot do for itself. The exact change is in
    [the section below](#the-volume-and-the-change-an-operator-has-to-make). Until it exists,

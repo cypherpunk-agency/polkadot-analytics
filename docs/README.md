@@ -60,6 +60,7 @@ written account of what it is querying.
 | [0017](decisions/0017-a-control-sits-with-what-it-changes.md) | a control belongs to the smallest thing it changes; the global row is for load parameters only |
 | [0018](decisions/0018-a-readers-job-outranks-a-warm-one.md) | a reader's job outranks a warm one — priority orders the claim, and a batch is the unit of fairness |
 | [0019](decisions/0019-the-store-canaries-its-own-derivability.md) | the store canaries its own derivability, because "no backup" is a claim about upstreams |
+| [0020](decisions/0020-the-series-is-read-in-one-request.md) | the series is read in one request, and late months arrive over a stream — the read layer composes, the storage identity never changes |
 
 ## `concept/` — working notes, deliberately not published
 

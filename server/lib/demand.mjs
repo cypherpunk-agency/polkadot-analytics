@@ -108,10 +108,7 @@ export async function serveFromStore({ store, queue, sourceId, operationId, para
         stored,
         complete: true,
         job: null,
-        note:
-          `Complete: the fetch for this request finished, and the store holds all ` +
-          `${stored.segments} ${plural(stored.segments, 'segment')} it produced${range(stored)}. ` +
-          `Immutable data is fetched once and never again.`,
+        note: completeNote(stored),
       }),
     }
   }
@@ -260,6 +257,49 @@ export async function serveFromStore({ store, queue, sourceId, operationId, para
 }
 
 /**
+ * The read-only sibling of `serveFromStore`: what does the store hold for this identity, RIGHT
+ * NOW, without becoming demand for it. No enqueue, no priority raise, no worker spawn — the one
+ * caller is the identity-watch stream (server/index.mjs `serveStream`), which exists to be held
+ * open by an anonymous reader for minutes at a time. A watch that created jobs would be the
+ * amplification path `serveFromStore` spends five bounds preventing, multiplied by a poll tick.
+ *
+ * Three states, not two, because "not finished" splits into facts a watcher must treat
+ * differently: `pending` resolves on its own and is worth waiting for; `stalled` (`gave-up`) is
+ * a persisted surrender that will NOT resolve without a maintainer, so a watcher that kept
+ * waiting on it would wait forever by design.
+ *
+ * The `complete` body is byte-identical to what `serveFromStore` answers for the same identity,
+ * deliberately: a month that arrives over the stream must be indistinguishable from one fetched
+ * over HTTP, or the page has two decoding paths and one of them is only exercised on cold
+ * stores.
+ */
+export async function storedAnswer({ store, queue, sourceId, operationId, params }) {
+  const identity = queue.describeIdentity(sourceId, operationId, params)
+  if (!identity.live && identity.done) {
+    const stored = store.coverage(sourceId, operationId, params)
+    return {
+      state: 'complete',
+      body: await envelope({
+        store,
+        sourceId,
+        operationId,
+        params,
+        stored,
+        complete: true,
+        job: null,
+        note: completeNote(stored),
+      }),
+    }
+  }
+  if (identity.latest?.state === 'gave-up') {
+    const job = identity.latest
+    return { state: 'stalled', job: { id: job.id, state: job.state, progress: progressOf(job) } }
+  }
+  const job = identity.live
+  return { state: 'pending', job: job ? { id: job.id, state: job.state, progress: progressOf(job) } : null }
+}
+
+/**
  * Job status, for polling. The same object the partial envelope's `job` field carries, plus
  * the coverage it is filling and the timestamps a reader needs to tell "working" from "stuck".
  */
@@ -347,6 +387,14 @@ async function envelope({ store, sourceId, operationId, params, stored, complete
     },
     job: job === null ? null : { id: job.id, state: job.state, progress: progressOf(job) },
   }
+}
+
+function completeNote(stored) {
+  return (
+    `Complete: the fetch for this request finished, and the store holds all ` +
+    `${stored.segments} ${plural(stored.segments, 'segment')} it produced${range(stored)}. ` +
+    `Immutable data is fetched once and never again.`
+  )
 }
 
 function partialNote(stored, job) {

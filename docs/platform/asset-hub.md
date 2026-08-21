@@ -735,7 +735,9 @@ This site reads all of the above through one source module, `server/sources/asse
 | `/api/asset-hub/bridged-holders` | each bridged supply decomposed across the parachain sovereign accounts, as one flat row per (chain, asset), plus the supply reconciliation above |
 | `/api/asset-hub/sovereign-dot` | DOT in every enumerated chain's `para` and `sibl` accounts, two flat rows per chain, plus the chains the relay's own enumeration does not name |
 | `/api/asset-hub/sovereign-dot-recent` | the same reading for the most recent CLOSED UTC days — the tail a month-bucketed store cannot serve |
-| `/api/asset-hub/netflows-daily` (job) | one stored fact per UTC day, a calendar month at a time: both sovereign legs for every enumerated parachain at that day's last block on each chain. This is what `/netflows/` draws |
+| `/api/asset-hub/netflows-daily` (job) | one stored fact per UTC day, a calendar month at a time: both sovereign legs for every enumerated parachain at that day's last block on each chain |
+| `/api/asset-hub/netflows-series` (store-read) | every settled month of the above in ONE response, each month carrying the same `{data, coverage, job}` envelope. This is what `/netflows/` draws — one request instead of one per month (decision 0020) |
+| `/api/stream/asset-hub/netflows-daily` (SSE) | the identity watch: given `network` and a list of `months`, hands each month's complete envelope over as one Server-Sent Event when it lands. Read-only — it observes fetches, it never starts one |
 
 Operational detail for these endpoints — rate limits, caching policy, and the known
 quirks of each — lives in [data-sources.md](data-sources.md).

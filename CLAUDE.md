@@ -497,3 +497,12 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   nobody reads is indistinguishable from no alarm. The discriminator is the stored payload's own
   `coverage`: only a day holding INDEXED content that now sits below the floor has actually been
   lost. See `docs/decisions/0019-the-store-canaries-its-own-derivability.md`.
+- **A page's request count must not scale with history length, and an endpoint a page polls for
+  progress must not be mode B.** Both halves failed silently once (2026-08-21): `/netflows/` grew
+  to ~56 per-month requests per load and the edge's 30-req/min limit cut it off mid-fan-out — a
+  429 with an empty body, page half-drawn, nothing wrong server-side. And the obvious fix, a
+  mode-B aggregate, would have failed silently too: `ttlMs` becomes the browser's `max-age`, so a
+  reader polling for fill-in progress is handed their own cache and the page freezes at "3 months
+  missing" for the TTL. The shape that works is the store-read operation (`store: true`, cached by
+  completeness) plus the `/api/stream/` identity watch — decision 0020, worked example
+  `asset-hub/netflows-series`. `/hydration/` still has the disease (O83).

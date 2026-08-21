@@ -341,6 +341,15 @@ async function checkRegistry() {
   for (const [key, source] of Object.entries(sources)) {
     const where = `source \`${key}\``
     if (typeof source?.id !== 'string' || !source.id) fail('registry', `${where} has no \`id\`.`, 'It is the first path segment of /api/<source>/<operation>.')
+    // The reserved first segments under /api (server/index.mjs serveApi): each is claimed
+    // BEFORE the registry is consulted, so a source with one of these ids would register
+    // cleanly, list itself at /api, and be unreachable at every one of its URLs — nothing
+    // throws, nothing logs, every page it backs renders empty.
+    else if (['jobs', 'stream', 'health'].includes(source.id)) {
+      fail('registry', `${where} uses the reserved id \`${source.id}\`.`,
+        '/api/jobs, /api/stream and /api/health are claimed before the registry resolves (server/index.mjs),\n' +
+        'so this source would be registered, described, and unreachable. Rename it.')
+    }
     else if (source.id !== key) fail('registry', `${where} is registered under a key that is not its \`id\` (\`${source.id}\`).`, 'Requests resolve by key, /api describes by id — they must agree.')
     if (typeof source?.label !== 'string' || !source.label) fail('registry', `${where} has no \`label\`.`, 'It is what the public API listing shows a human.')
     if (!source?.operations || typeof source.operations !== 'object' || Object.keys(source.operations).length === 0) {
@@ -358,7 +367,16 @@ async function checkRegistry() {
       if (typeof op?.summary !== 'string' || !op.summary.trim()) {
         fail('registry', `${opWhere} has no \`summary\`.`, 'It is the only description a caller of /api ever sees.')
       }
-      if (typeof op?.ttlMs !== 'number' || !Number.isFinite(op.ttlMs) || op.ttlMs <= 0) {
+      if (op?.store === true) {
+        // A store-read operation (server/index.mjs `serveStoreRead`): completeness is its cache
+        // policy, so a TTL on it is not merely unused — it is a claim the HTTP layer will never
+        // honour, sitting in the registry waiting to be believed.
+        if (op.ttlMs !== undefined) {
+          fail('registry', `${opWhere} declares both \`store: true\` and a \`ttlMs\`.`,
+            'A store-read answer is cached by completeness (max-age when complete, no-store when partial);\n' +
+            'a ttlMs here is dead configuration that will read as a promise. Remove one of them.')
+        }
+      } else if (typeof op?.ttlMs !== 'number' || !Number.isFinite(op.ttlMs) || op.ttlMs <= 0) {
         fail('registry', `${opWhere} has no positive \`ttlMs\`.`, 'It sets both the server cache TTL and the cache-control we hand the browser; without it every request hits somebody else\'s free endpoint.')
       }
       if (typeof op?.run !== 'function') {
@@ -398,6 +416,35 @@ async function checkRegistry() {
           fail('registry', `${jobWhere} declares \`${optional}\` but it is not a function.`,
             'It is called from a background tick (server/lib/warm.mjs, server/lib/canary.mjs) whose only\n' +
             'signal is the value it returns, so a wrong type here is silence rather than an error.')
+        }
+      }
+      // The optional identity-watch contract (server/index.mjs `serveStream`). Shape-checked
+      // because each malformed field fails at a DIFFERENT distance from its cause: a missing
+      // `event` makes every frame anonymous and the client's listener never fires; a missing
+      // `schema` makes readParams reject every request as carrying unknown parameters (a 400
+      // whose message blames the caller); a broken `identities` is a 500 on first subscribe.
+      // None of those errors names the registry entry that caused it — this is the place that can.
+      if (handler?.watch !== undefined) {
+        const w = handler.watch
+        if (typeof w?.event !== 'string' || !w.event.trim()) {
+          fail('registry', `${jobWhere} declares a \`watch\` with no \`event\` name.`,
+            'It is the SSE event type the client subscribes to; without it every frame is anonymous.')
+        } else if (['done', 'stalled', 'error', 'open', 'message'].includes(w.event)) {
+          // `done` and `stalled` are the stream's own control events, and `error`/`open`/
+          // `message` are EventSource's built-ins. A payload event named after any of them is
+          // heard by the wrong listener — the client would treat every landed identity as a
+          // control frame, silently, on every browser.
+          fail('registry', `${jobWhere} names its watch event \`${w.event}\`, which is reserved.`,
+            "'done' and 'stalled' are the stream's control events (server/index.mjs serveStream); 'error',\n" +
+            "'open' and 'message' are EventSource built-ins. Pick a name that describes the payload — 'month', 'day'.")
+        }
+        if (!w?.schema || typeof w.schema !== 'object') {
+          fail('registry', `${jobWhere} declares a \`watch\` with no \`schema\`.`,
+            'The stream validates its query against it exactly as an operation does; no schema means no parameters.')
+        }
+        if (typeof w?.identities !== 'function') {
+          fail('registry', `${jobWhere} declares a \`watch\` with no \`identities\` function.`,
+            'It maps the validated watch params to the store identities being watched.')
         }
       }
     }

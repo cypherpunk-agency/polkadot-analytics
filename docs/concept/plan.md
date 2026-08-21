@@ -1023,3 +1023,47 @@ Ordered. The first is small and the second is the one with a number attached.
    real question left in it is whether `bridged-holders` has a Kusama meaning.
 
 Not urgent, and not worth promoting yet: 64 open O-items, a fair number of them small.
+
+## 15. Session record — 2026-08-21, third: the page stops racing its own edge
+
+Production 429'd `/netflows/` — its ~56 per-month requests crossed the edge's 30-req/min limit,
+which was O41 arriving early and angry. Fixed at the read layer, storage identity untouched:
+**decision 0020**. One aggregate (`netflows-series`, the new `store: true` dispatch shape), an
+SSE identity watch (`/api/stream/<source>/<operation>`, declared per job handler as `watch`),
+and the client's `followStore` with a polling fallback. Two requests per load in steady state.
+Reviewed by a 31-agent adversarial pass (six confirmed findings, all fixed — the protocol ones:
+`done` carries a machine-readable reason, and shutdown severs the stream frameless so
+EventSource reconnects to the new instance). Deployed and probed same day: the edge passes SSE
+unbuffered (136 ms first bytes of 176 ms total) and gzips the aggregate; a push demonstrably
+ships in ~90 s (O59 closed by observation). O41 closed; O83 opened for `/hydration/`, the
+second adopter.
+
+### 15.1 Next — direction from Tommi, 2026-08-21
+
+Three asks, recorded before compaction so they survive it:
+
+1. **Top holders on a chain** — by (a) native token value and (b) all-tokens value, at least for
+   Asset Hub, Hydration and Hyperbridge. What exists today is adjacent, not this:
+   `/bridged/` decomposes each bridged asset across *sovereign* accounts, and
+   `/hydration-capital/` decomposes what the protocol holds — neither ranks arbitrary holder
+   accounts. The open questions are per chain and belong to research first: enumerating
+   `System::Account` / `Assets::Account` / `ForeignAssets::Account` at scale (paged iteration as
+   a store job vs an indexer), whether Hyperbridge's holders are enumerable at all through its
+   indexer, and valuation through the existing `prices` source with unpriced assets stated, not
+   dropped. → **O84**.
+2. **Netflows for the top 100 DOT-holding accounts** on Polkadot relay + Asset Hub — the
+   sovereign-account treatment, generalised to people. Two halves: the snapshot (who are the
+   top 100 now — post-migration that is mostly an Asset Hub question) and the history (a daily
+   balance series per account; the netflows machinery fits, but 100 accounts × ~1,700 days is a
+   backfill with a real cost that must be measured before it is promised). The account set also
+   CHANGES over time — "top 100 today, traced backwards" and "top 100 at each point in time"
+   are different products and the difference must be stated on the page. → **O85**.
+3. **"Follow the value of money"** — asked whether it is already live. **Partially.**
+   `/account/` is live in production: one account's counterparties on Asset Hub and the relay,
+   walkable hop by hop, plus its Hydration trades. What it is NOT yet: the window is a few
+   days (O63 — extending below the Asset Hub Migration is unmeasured), and there is no
+   multi-hop aggregate view (O64 — the two-hop counterparty matrix; hop 2 is already free
+   server-side). Those two O-items ARE the roadmap for this ask.
+
+Sequencing note: O84 before O85 — the top-100 snapshot O85 needs is a byproduct of O84's
+Asset Hub half.

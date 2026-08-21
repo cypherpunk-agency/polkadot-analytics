@@ -350,8 +350,14 @@ What is still owed:
    browser unbuffered. Caddy 2 streams `text/event-stream` by default and the response also sends
    `x-accel-buffering: no` for anything nginx-shaped in the path — and the client falls back to
    polling if the pipe is dead, so a buffering edge degrades the page rather than breaking it.
-   Still worth one probe after a deploy: `curl -N` the stream URL and watch for the `retry:` line
-   arriving immediately rather than at connection close.
+   **Probed 2026-08-21, minutes after the deploy that shipped it:** `curl -N` against
+   `/api/stream/asset-hub/netflows-daily?network=polkadot&months=2022-01` answered
+   `text/event-stream` with first bytes at 136 ms of a 176 ms total — the `retry:` hint and the
+   month's full envelope arrived immediately, not at connection close. The edge passes SSE
+   through. (The long-lived heartbeat path is unobservable while the store is full — every
+   watchable month completes instantly — so that half of the question waits for the first cold
+   month; the client's polling fallback covers it meanwhile.) The same probe showed the edge
+   gzips the aggregate: ~2.75 MB of JSON travels compressed.
 3. **A 1 GB persistent volume mounted at `/data`**, in the compose file on the VM — the one thing
    this repository cannot do for itself. The exact change is in
    [the section below](#the-volume-and-the-change-an-operator-has-to-make). Until it exists,

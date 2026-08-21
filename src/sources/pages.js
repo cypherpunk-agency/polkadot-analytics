@@ -80,10 +80,13 @@ export const PAGES = [
     group: 'asset-hub',
     href: '/sovereign/',
     nav: 'Sovereign DOT',
-    title: 'Parachain sovereign holdings, then and now',
+    title: 'Parachain sovereign holdings, right now',
     blurb:
-      'What every parachain holds in its sovereign accounts today, read live from both legs — the relay and Asset Hub — set beside the archived study that ends in April 2023. The three years between them are drawn as the silence they are, not joined by a line.',
-    source: 'Polkadot relay + Asset Hub RPC, and an archived dataset',
+      'What every parachain holds in its sovereign accounts at this minute, read live from both legs — the `para` account on the relay chain and the `sibl` account on Asset Hub — including the chains the relay’s own enumeration no longer lists. The daily series behind it is on /netflows/.',
+    // `live: true` and unchanged: the page still reads an upstream on every visit, and as of
+    // 2026-08-21 reads nothing else — the bundled 2023 archive half moved out when `netflows-daily`
+    // filled the gap that half existed to describe.
+    source: 'Polkadot relay + Asset Hub RPC',
     live: true,
   },
   {

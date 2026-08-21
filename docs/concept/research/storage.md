@@ -2,6 +2,29 @@
 
 **Sweep:** storage architecture for v2. **Date:** 2026-08-19. **Status:** research, no code written.
 
+> ### ⚠️ Its two headline claims are both refuted. Read it for the SQLite work, not for the sizing.
+>
+> Marked 2026-08-21. This sweep was influential and is worth keeping, but two of its load-bearing
+> conclusions did not survive contact with a measurement:
+>
+> 1. **"Hydration history is unobtainable, so we must persist now or lose it"** — **false, and
+>    refuted the same day** by an endpoint a sibling sweep had already found. orca
+>    (`orca-prod-pool-01.orca.hydration.cloud`) serves the whole 19-month history, live, already
+>    leg-grouped. This sweep measured `explorer.hydradx.cloud` timing out at depth and generalised
+>    from one endpoint to the data. `docs/concept/plan.md` §1 has the comparison;
+>    `docs/concept/research/critique.md` is the pass that caught it.
+> 2. **"Ask infra for 10 GB pd-balanced"** — **wrong by ~1,000×, and the question was badly posed.**
+>    The projection assumed raw legs and trades. The store holds *daily summaries*, which cost
+>    **14–17 kB per source-day** and grow in **days, not in rows**: a full nineteen-month Hydration
+>    backfill is **9 MB**, and the whole 2022 → 2026 netflows series is **2.33 MB**. Measured, not
+>    estimated, by actually filling `store.sqlite` on 2026-08-20. The settled ask is **1 GB** —
+>    `docs/concept/plan.md` §12 and [jobs.md](../../architecture/jobs.md#what-the-store-actually-costs).
+>
+> **What did survive, and is why this file is still here:** SQLite through `node:sqlite` over
+> DuckDB, with the reasoning and the benchmarks; the `worker_threads` placement and its +17 MB
+> measurement; WAL behaviour and the read/write split; `pd-balanced` over `pd-standard` and the
+> IOPS arithmetic behind it; and the backup/snapshot argument. All of that was built as specified.
+
 Everything numeric below came from a request or a benchmark run on this machine today. Where a
 number is extrapolated from a measurement, the measurement and the arithmetic are both shown.
 Where something could not be verified it is in [Unverified](#unverified).
@@ -709,8 +732,15 @@ Written to be answerable. Every number has a derivation above.
 
 ### 6.1 Disk
 
-> **We need one 10 GB zonal `pd-balanced` persistent disk, attached to the existing `e2-small`,
-> mounted at `/srv/polkadot-analytics/data` on the host.**
+> ⚠️ **Superseded 2026-08-20 — the size below is wrong by about a thousandfold.** The projection
+> assumes raw legs and trades; the store holds daily summaries at 14–17 kB per source-day, so a
+> gigabyte is roughly 160,000 source-days. **The ask is now 1 GB**, itemised at
+> [deployment.md](../../architecture/deployment.md#what-is-still-owed) item 7 and derived in
+> `docs/concept/plan.md` §12. The `pd-balanced`-over-`pd-standard` argument in the table below is
+> unaffected and still the right call — it is about IOPS, which do not scale down with the ask.
+
+> ~~**We need one 10 GB zonal `pd-balanced` persistent disk, attached to the existing `e2-small`,
+> mounted at `/srv/polkadot-analytics/data` on the host.**~~
 
 | item | ask | justification |
 |---|---|---|

@@ -746,6 +746,12 @@ A rates/pegs/NAV **time series** is far cheaper: ~23 reserves × 8 fields + ~40 
 baskets ≈ 300 values per snapshot. At one snapshot per 5 minutes that is 86k values/day — under
 1 MiB/day uncompressed, a few MiB/year in Parquet or SQLite.
 
+> **Marked 2026-08-21: this two-tier split is the one the measurement confirmed**, and it is the
+> only sweep that got the sizing right. Tier 1 is what shipped — daily summaries at 14–17 kB per
+> source-day, 9 MB for nineteen months of Hydration — and Tier 2 was priced and refused: raw trades
+> are 268 B each, **~190×** the summary, and unservable besides. See `docs/concept/plan.md` §12.2
+> and [jobs.md](../../architecture/jobs.md#what-the-store-actually-costs).
+
 **So the persistence ask is two-tier:**
 - **Tier 1 — derived time series** (rates, pegs, NAV, deviations, aggregate flow): a few hundred
   MiB for *years*. This could live in a committed dataset in-repo (this repo already does exactly

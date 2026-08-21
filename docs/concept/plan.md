@@ -11,7 +11,7 @@ completeness critique; then revised against Tommi's decisions on Q1–Q9. Workin
 The storage sweep's central claim — *Hydration history is unobtainable, so we must persist now or
 lose it* — **is false**, and was refuted the same day by an endpoint a sibling sweep had found.
 
-| | `explorer.hydradx.cloud` (what we use) | SQD Portal `hydradx` | orca `routedTrades` |
+| | `explorer.hydradx.cloud` (what we used until 2026-08-20) | SQD Portal `hydradx` | orca `routedTrades` (**what we read now**) |
 |---|---|---|---|
 | 1 day at block 8,000,000 | 7,160 ms once, then 3× 12 s timeout | **381 ms**, 1.57 MB | **276 ms**, 181 KB |
 | coverage | tail only, ~3 days reliably | block 0 → 12,344,549 (**frozen since 2026-05-08**) | block 6,837,788 → head, **live** |
@@ -269,7 +269,7 @@ needed. Size it after C1 exists and we can measure real fill rates.
 |---|---|
 | HOLLAR supply reported as 20,631; actual **11,489,093.53**. `Tokens::TotalIssuance` is meaningless for `Erc20` assets. | `/hydration/` |
 | A naive `Tokens::Accounts` Omnipool sweep **silently drops HDX and every `Erc20` asset** (5 of 19, including the two largest) — understates TVL by ~half. | any TVL work |
-| Dotlake `total_value_usd` over two years sums to **$39,917,060,621,977,640** — rows where an 18-decimal amount is labelled `asset_decimals: 6`. The exact 10¹² bug we already document for HyperFX. `CLAUDE.md` calls it "a floor"; it is actively wrong. | `CLAUDE.md`, `/xcm/` |
+| Dotlake `total_value_usd` over two years sums to **$39,917,060,621,977,640** — rows where an 18-decimal amount is labelled `asset_decimals: 6`. The exact 10¹² bug we already document for HyperFX. ~~`CLAUDE.md` calls it "a floor"; it is actively wrong.~~ **Both fixed 2026-08-20:** CLAUDE.md and `data-sources.md` now say "neither a floor nor a ceiling", and `/xcm/` reads row-level records under three exclusion rules and names every excluded row on the page. | `CLAUDE.md`, `data-sources.md`, `/xcm/` |
 | Dotlake has a **7-day hole** (2026-07-09…07-15) and 10 of the last 53 days report $0 while carrying 500–1,350 messages. | `/xcm/` |
 | Our Hydration page silently starts mid-2025 (first `Swapped3` ≈ block 7,567,547). | `/hydration/` |
 | `RetentionPeriod` is **storage, not a constant** — governance-mutable, no version bump. | `bulletin-chain.js:42` |
@@ -444,7 +444,7 @@ flows dwarf every bridge here** — "value bridged in" is not "value that arrive
 |---|---|---|
 | **E1** | **`server/sources/asset-hub.mjs`** — `bridged-inventory`, `bridged-holders`, `sovereign-dot`. ~30 requests per TTL, two hosts, no key, no store | — |
 | E2 | **`/bridged/`** — the bridged-value page. Stacked bars per asset, segments = holding chain, summing to supply by construction; issuer-minted USDC/USDT in a separate labelled tile; Moonbeam band separate | E1 |
-| E3 | **Netflows v2, current value only** — ~~second series on `/netflows/`~~ **shipped 2026-08-20, then split into its own page `/sovereign/` the same day**: eight blocks had accumulated above the archive's chart. The comparison, the gap strip and the live read live there; `/netflows/` is the archive alone and is `live: false` again. See [decision 0011](../decisions/0011-a-page-has-one-subject.md) | E1 (`sovereign-dot`) |
+| E3 | **Netflows v2** — ~~current value only~~ ~~second series on `/netflows/`~~ **DONE, and it went further than this row asked.** Three moves on 2026-08-20: the live read shipped as a second series on `/netflows/`; it was split into its own page `/sovereign/` the same day, because eight blocks had accumulated above the archive's chart ([decision 0011](../decisions/0011-a-page-has-one-subject.md)); and then the 2023 → 2026 hole was filled from the chains themselves, so `/netflows/` draws a continuous daily series 2022-01 → yesterday and the 2023 archive became a cross-check against it ([decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md)). Both pages are `live: true`. Kusama is still archive-only on both — research queue O26/O39 | E1 (`sovereign-dot`), then `netflows-daily` + `sovereign-dot-recent` |
 | E4 | **`moonbeam.mjs` + `interlay.mjs`** — the separate band, and BTC-in. Interlay is one `state_getStorage`; Moonbeam is `eth_call totalSupply()` over `pallet_moonbeam_foreign_assets` | E1 |
 | E5 | `docs/platform/bridges.md`, the trap entries in `CLAUDE.md`, and the `check.mjs` local-path gap | — |
 | E6 | Call Dotlake's `defi-tvl` / `daily-usdc` / `daily-usdt` — **registered since v1 and never called by anything.** Cross-check column only, never the lead figure | — |
@@ -610,7 +610,7 @@ predicate is trivial (a UTC day whose last block is below `head − k`), orca is
 cursor-paginated with a stable `Broadcast::IncrementalId` for idempotent inserts, and day-chunking
 is exactly what §2.1 asked for.
 
-That single handler closes **C1, C2, C3, C7 and B1's unmet cap promise at once** — and converts the
+That single handler closes **C1, C2, C3, C7 and Wave B's B1 unmet cap promise at once** — and converts the
 disk ask from an abstract request into a measured number, which is what §4 said to wait for.
 
 ### 9.4 Orphans: 16 of 27 registered operations have no page
@@ -637,7 +637,7 @@ most accurate description of what is actually blocked — more so than this file
 | 3 | ~~**`jobs.swaps` on `hydration.mjs`**~~ **SHIPPED 2026-08-20 as `jobs.swaps-daily`** | §9.3 — unstranded ~2,430 lines and produced the disk number. See §12 | done |
 | 4 | **`interlay.mjs`** | One `state_getStorage`. Unblocked: the canary band is settled (reject thousands of BTC; actual issuance 2.118) | hours |
 | 5 | **The disk conversation** | §9.2. Blocks nothing else, blocks everything after | decision |
-| 6 | **E4 `moonbeam.mjs`** | Blocked on research-queue **B5** — whether a deregistered chain gets a band at all | decision first |
+| 6 | **E4 `moonbeam.mjs`** | ~~Blocked on research-queue **B5** — whether a deregistered chain gets a band at all~~ **The shape was decided in §11.4** the same day: a dated "stranded value" row frozen at 2026-08-10T11:36:12Z. What is left is the *number*, which is research-queue **B2**'s `eth_call` machinery over `EvmForeignAssets` | research (B2), not a decision |
 
 ---
 
@@ -724,7 +724,7 @@ Each was believed, recorded, and repeated before being checked.
   reaches the dollar through a 1:1 AAVE wrap to aDOT, over 200 routed trades a day.*
 - **"11 iBTC against 19 WBTC"** — those were asset **ids**, not amounts. iBTC chain-wide is
   **2.118 BTC** against tBTC's 71.08.
-- **B1's "removes the 7-day window cap immediately"** — the cap was **doubled to 14**, not removed.
+- **Wave B item B1's "removes the 7-day window cap immediately"** (§4 — *not* research queue B1) — the cap was **doubled to 14**, not removed.
 - **Centrifuge, Composable and Darwinia were written off as dead.** All three produce blocks. What
   died was the *business*: Centrifuge's $1.14bn book is a year-old photograph — tranche supply
   unchanged since 2025-08-19, pool NAV unrecalculated since 2025-08-22.
@@ -754,14 +754,33 @@ Each was believed, recorded, and repeated before being checked.
 
 ### 11.6 Next
 
-§9.6 items 1, 2 and 4 shipped. What remains, in order:
+§9.6 items 1, 2 and 4 shipped. What remains — **re-audited against the tree on 2026-08-21**, after
+two more commits landed on top of this section:
 
 1. ~~`jobs.swaps`~~ **Shipped as `jobs.swaps-daily`** — see §12. The name in this plan was wrong.
-2. ~~The disk conversation~~ **Settled in §12 on the measured number.**
-3. **O21 — the whole-network sweep.** 86 paras, `System::Account(sibl)` plus `Paras::Heads`
+2. ~~The disk conversation~~ **Settled in §12 on the measured number: 1 GB.** Not the same thing as
+   *provisioned* — the container still runs `--read-only` with no volume and CI asserts it, so mode
+   A is unavailable in production. The ask is now itemised in
+   [deployment.md](../architecture/deployment.md#what-is-still-owed) and tracked as research queue
+   **O46**.
+3. ~~E4 `moonbeam.mjs` is blocked on a decision~~ **the decision was §11.4's; the block is now
+   research** — see §9.6 item 6 and research queue **B2**.
+4. **A second store-backed handler shipped too**, unplanned by this list: `asset-hub/netflows-daily`
+   plus the `sovereign-dot-recent` tail, which is what turned `/netflows/` into a continuous
+   2022 → yesterday series (§12.4, [decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md)).
+5. **`/account/` shipped too**, also unplanned here: `hydration/account` plus a `kind: 'tool'` page,
+   the first drill-down on this site and the smallest version of Q5's "follow the money". Bounded to
+   one venue and one window, and it says so first — see
+   [hydration.md](../platform/hydration.md#one-account-what-account-answers-and-what-bounds-it).
+
+Still genuinely next, in order:
+
+1. **O21 — the whole-network sweep.** 86 paras, `System::Account(sibl)` plus `Paras::Heads`
    deltas, ~1 hour, and `asset-hub.mjs` already has most of the machinery. Highest leverage open.
-4. **E4 `moonbeam.mjs`** for the stranded-value row.
-5. **Liveness on the four sources and remaining pages still without it.**
+2. **E4 `moonbeam.mjs`** for the stranded-value row, once B2 gives it a number.
+3. **Liveness on the four sources still without it** — `arbs-bifrost`, `arbs-hydration`,
+   `hydration-evm`, `hyperbridge` (the last blocked on research queue O23) — **and on `/account/`,
+   whose payload already carries the assertion its page does not draw** (research queue O44).
 
 ---
 
@@ -827,5 +846,18 @@ measured 428 kB over the wire.
 `docs/concept/research-queue.md` **O34** is the one that matters: *does orca ever revise a day it
 has already indexed?* A stored day is never re-fetched, so a revision would be invisible forever.
 It is defended by three checks that refuse rather than annotate, but confirming it needs elapsed
-time, not cleverness. **O35** is the visible gap: nothing renders the stored history yet, and the
-seam between stored months and the live 14-day window needs a decision before anything does.
+time, not cleverness.
+
+**O35** was written here as "nothing renders the stored history yet, and the seam needs a decision
+before anything does". *Half of that closed within hours* — `/netflows/` renders a store-backed
+series over the second handler, `asset-hub/netflows-daily`, and the seam decision was taken and
+written down as [decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md): one
+chart, whole past months from the store, a TTL-cached tail for the current month, and the page
+saying which side of the join a day came from. What is still open is **Hydration's** history page
+specifically, where the tail is the 14-day `swaps` operation rather than a day-reader, so the two
+halves are not the same payload the way netflows' two halves are.
+
+Two more the backfill opened, both about the store rather than about Hydration: **O36**, because
+`/netflows/` asks for 55 month-identities on a cold store against a cap of 8 live jobs; and
+**O46**, because the production container still has nowhere to keep any of it — §12.2 settled the
+*size* at 1 GB and nobody has yet been asked for the volume.

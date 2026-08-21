@@ -2,9 +2,10 @@
 
 Public analytics dashboards over Polkadot ecosystem data, at
 [analytics.cypherpunk.agency](https://analytics.cypherpunk.agency). Also a knowledge base: the
-`docs/platform/` notes exist so questions about XCM, Asset Hub, contracts, the People Chain,
-Hydration, Hyperbridge, Bulletin and the bridges can be answered from this repo without going and
-reading a chain first.
+`docs/platform/` notes exist so a question about the relay chain, Asset Hub, XCM, contracts, the
+People Chain, Hydration, Hyperbridge, Bulletin, the bridges, how a parachain leaves, how an asset
+gets a dollar figure, or what every upstream costs can be answered from this repo without going and
+reading a chain first. `docs/README.md` is the index and lists every one of them.
 
 **This is not an app built on the Polkadot SDK.** It reads public chains, indexers and APIs and
 draws the result. It may use the SDK if something genuinely needs it; nothing does yet.
@@ -41,9 +42,11 @@ src/
   pages/<name>/main.js  one entry per dashboard, mostly ~20 lines
   data/                 committed derived datasets (netflows)
 docs/
+  README.md             the index. Every architecture, platform and decision doc is listed here
   architecture/         how this repo works
   platform/             how POLKADOT works — the knowledge base
   decisions/            why we chose what we chose
+  concept/              working notes, NOT published: plan.md, research-queue.md, dated sweeps
 <name>/index.html       one directory per page; the directory IS the URL
 ```
 
@@ -55,7 +58,9 @@ docs/
 | Add a dashboard | `src/sources/pages.js` + a `<name>/index.html` + `src/pages/<name>/main.js`. Vite discovers the directory. |
 | Change how anything looks | `src/design/tokens.css`. Nothing else names a colour or a size. |
 | Add a chart form | `src/design/charts.js`. Read `docs/architecture/design-system.md` first — the palette is validated, not chosen. |
-| Understand a chain | `docs/platform/` |
+| Store history rather than re-fetch it | A `jobs` entry on an existing source module. Read `docs/architecture/jobs.md` first — the fact's *identity* is the decision, and it is the expensive one to get wrong. |
+| Understand a chain | `docs/platform/`, indexed by `docs/README.md` |
+| Find out what is open | `docs/concept/research-queue.md`. Add to it before you finish. |
 | Deploy | `docs/architecture/deployment.md` |
 
 ## Working agreements
@@ -306,3 +311,12 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   essentially all of it now). And on 2023-04-08, its final row, all eight chains disagree with a
   fresh read by up to 23.6% — its captures stop mid-day, so its published "at the end" figures are
   mid-day readings, not day-end ones. Everywhere else the two agree to a median 4.0 × 10⁻⁹.
+- **`overflow-y: auto` silently turns on horizontal clipping too, so a page can measure clean while
+  a row inside it is broken.** CSS computes `overflow-x: visible` to `auto` whenever the other axis
+  is not `visible`, so `.scroll-y` (`max-height: 28rem; overflow-y: auto`) is also a horizontal
+  scroller. On 2026-08-21 the same over-wide `.rank-row` overflowed the document to 423px at a 390px
+  viewport on `/netflows/`, which appends its list straight to the card — and produced
+  `documentElement.scrollWidth === 390`, a perfect score, on `/hydration/` and `/hyperfx/`, which
+  put theirs inside `.scroll-y`. The only symptom left there was a `2fr` bar track squeezed to 9px
+  at 390 and 0px at 360: a chart of nothing, rendering perfectly. Measure the ROW, not the document
+  — `documentElement.scrollWidth` cannot see inside a scroll container.

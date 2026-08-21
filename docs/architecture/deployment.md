@@ -63,15 +63,40 @@ else about this deployment boring:
   single place any outbound request is made, and it attaches no credentials to anything — see
   `docs/decisions/0003-no-secrets.md`.
 - **No volumes.** Nothing is written to disk at runtime. The image is designed to run with
-  `--read-only`, and CI asserts that it does.
-- **No datastore.** No Postgres, no Redis, no object storage.
-- **No configuration** beyond three variables, none of which is sensitive:
+  `--read-only`, and CI asserts that it does. **This is now a constraint rather than a property**
+  — see the box below.
+- **No datastore.** No Postgres, no Redis, no object storage. The one persistence this repo has is
+  a single SQLite file it opens itself; there is still no server to run.
+- **No configuration** beyond four variables, none of which is sensitive:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8080` | listen port |
 | `HOST` | `0.0.0.0` | listen address |
 | `BUILD_STAMP` | `unknown` | the deployed git sha, reported by `/api/health` |
+| `ANALYTICS_DATA_DIR` | `<repo>/server/data` | where `store.sqlite` lives. **Unset in production today**, and the default is not writable on a read-only rootfs |
+
+> ### The store has nowhere to live, and that is deliberate-but-expired
+>
+> "Nothing is written to disk at runtime" was true of the whole service when it was written. Since
+> [decision 0006](../decisions/0006-demand-driven-store.md) it is true only of **mode B**. Mode A —
+> the store — writes `store.sqlite`, and on a `--read-only` rootfs with no volume `openStore()`
+> throws.
+>
+> **The service does not care, on purpose.** `createApp` catches it, logs `[store] mode A is
+> unavailable`, and boots with `store = null`; every mode-A operation then answers 503 while every
+> mode-B one answers normally. A site that refuses to start because a volume is missing is a worse
+> outage than a site with two of thirty-two endpoints down. But the consequence is worth saying
+> plainly: **`/netflows/` and `hydration/swaps-daily` do not work in production**, and they will not
+> until a volume exists.
+>
+> The size question is settled, on a measured fill rate rather than a guess: **1 GB**, which holds
+> roughly 160,000 source-days at the 14–17 kB/day this repo actually costs. A full 19-month
+> Hydration backfill is 9 MB; the 2022 → 2026 netflows series is 2.33 MB. The measurement, and what
+> would reverse it, is in [jobs.md](jobs.md#what-the-store-actually-costs) and `docs/concept/plan.md`
+> §12.
+>
+> What is *not* settled is the ask, which is item 7 in [what is still owed](#what-is-still-owed).
 
 `BUILD_STAMP` is what makes "is the new version actually live?" answerable by asking the service
 instead of inferring it from a container start time.
@@ -242,6 +267,23 @@ When all six exist, the enabling change is: set `DEPLOY_ENABLED=true`, replace t
 remote command, and flip `PINNED_COMMAND_SUPPLIED` in the preflight step — the last two in the same
 reviewed pull request. The preflight step refuses to run if the flag is flipped before the values
 are real, because a half-configured deploy that runs is worse than one that does not.
+
+**Added 2026-08-20, and independent of the six above** — the deploy works without it; two features
+do not:
+
+7. **One small persistent volume, and the two changes that go with it.**
+   **1 GB**, sized on a measured fill rate rather than a guess (`docs/concept/plan.md` §12.2 and
+   [jobs.md](jobs.md#what-the-store-actually-costs)): 14–17 kB per source-day, ~160,000 source-days
+   in a gigabyte, 9 MB for a full nineteen-month Hydration backfill. Mounted somewhere writable —
+   `/mnt/pd` was the shape discussed — with **`ANALYTICS_DATA_DIR`** pointed at it. The rootfs
+   stays read-only; **CI's assertion becomes "read-only rootfs *plus one writable mount*"** rather
+   than being dropped, because the property worth keeping is that the service cannot rewrite its
+   own code.
+   Until this exists, `/netflows/` and `hydration/swaps-daily` answer 503 in production while
+   working locally, which is the least obvious failure on this list — everything renders, two pages
+   are empty. Tracked as research queue **O46**. Eviction is still deliberately unbuilt
+   ([decision 0006](../decisions/0006-demand-driven-store.md)) and should become a stated decision
+   at the same time, not later.
 
 ## Running it locally
 

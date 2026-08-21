@@ -14,6 +14,14 @@ The short answers: **yes, trivially**; **yes, and the situation is worse than we
 the aggregate is not only a floor, it is sometimes a wildly inflated ceiling**; and **26 nodes /
 107 edges over 30 days, which wants a deterministic circular or matrix layout, not physics**.
 
+> **Marked 2026-08-21: all three shipped, and this sweep's second answer became the design.**
+> `/hyperfx/` has the order table and per-address filtering; `dotlake/xcm-value` reads row-level
+> records under three exclusion rules and names every excluded row on the page; `/xcm/` draws
+> `matrix` first and `flowGraph` second, both deterministic. The "not only a floor" finding is now
+> in CLAUDE.md's facts list and in
+> [data-sources.md](../../platform/data-sources.md#dotlake). Read the rest of this file as the
+> derivation rather than as a proposal.
+
 ---
 
 ## 1. HyperFX transaction-level view

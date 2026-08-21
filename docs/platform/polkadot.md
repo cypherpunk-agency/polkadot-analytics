@@ -110,6 +110,46 @@ chain can go from bulk to on-demand to nothing and back. Any dashboard that comp
 parachains" needs to define whether it means "has a core assigned", "produced a block today", or
 "has a registered head", and those three numbers differ.
 
+### `ParaLifecycles` says `Parathread` for almost everything, and it is not a description
+
+⚠️ **`Paras::ParaLifecycles` is a registration state machine, not an account of how a chain runs.**
+*Verified live 2026-08-21* on `https://rpc.polkadot.io`, finalized head **#32,648,511**, by sweeping
+the whole prefix and decoding every value:
+
+```
+89 keys · 0x01 Parathread ×86 · 0x02 Parachain ×3 → para 1002, 1004, 1005
+para 1000 (Asset Hub) -> Parathread
+```
+
+So Asset Hub, Collectives, Hydration, Acala, Bifrost and eighty-two others read **`Parathread`**,
+and the only three ids reading `Parachain` are **Bridge Hub (1002), People Chain (1004) and Coretime
+Chain (1005)**.
+
+That is the coretime model showing through the old vocabulary. `Parachain` in this map means "holds
+a lease slot in the sense the pre-coretime registrar understood"; under Agile Coretime a chain
+instead has a **broker-assigned core**, which the registrar records as `Parathread`. A chain reading
+`Parathread` may be producing a block every 6 seconds on a bulk region it owns outright — and the
+three that read `Parachain` are not the three busiest chains, they are three system chains whose
+registration happens to have been left in the older state.
+
+So the value is safe to *filter* on only if you know which question you are asking, and it is never
+safe to *print*. Rendered unqualified in a legend or a table it calls Hydration a parathread, which
+is wrong in the ordinary meaning of the word and looks authoritative because it came off the chain.
+Ask `Broker::Workplan` on the Coretime Chain, or `Paras::Heads` deltas, if the question is whether a
+chain is running.
+
+The values themselves are a seven-variant enum — `Onboarding`, `Parathread`, `Parachain`,
+`UpgradingParathread`, `DowngradingParachain`, `OffboardingParathread`, `OffboardingParachain` — and
+the byte encodings are written out in
+[moonbeam.md](moonbeam.md#paralifecycle-byte-values), which needed them to prove an absence rather
+than misread one.
+
+**And the map is not the roster.** Four enumerations of "which parachains exist" disagree — 89 from
+`ParaLifecycles`, 123 from `Registrar::Paras`, 90 from `Paras::Heads` — and none of them is
+complete: four chains hold sovereign DOT while appearing in no relay enumeration at all. The
+reconciliation, with the counts and the union, is in
+[asset-hub.md](asset-hub.md#four-enumerations-and-none-of-them-is-complete).
+
 ## System chains
 
 System chains are parachains whose runtimes are governed by Polkadot's own governance and whose

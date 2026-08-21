@@ -4,7 +4,24 @@ Some of what this site draws takes half an hour to fetch and then never changes 
 combination is what the store is for, and the job system is what makes a half-hour fetch
 survivable. Why it is shaped this way — demand-driven, no scheduler — is
 [decision 0006](../decisions/0006-demand-driven-store.md). This document is how it works, for
-somebody about to write the first real handler.
+somebody about to write a handler.
+
+**Two handlers exist**, and between them they are the whole worked example:
+
+| Handler | Identity | Segment | What it stores | Read it with |
+|---|---|---|---|---|
+| `hydration/swaps-daily` | `{ month }` | one ISO day | a day of routed trades, summarised: volumes, routes, accounts, derived rates, quality counters | [hydration.md](../platform/hydration.md#backfilling-the-whole-history-what-orca-actually-holds-and-what-it-costs) |
+| `asset-hub/netflows-daily` | `{ month }` | one ISO day | DOT in every parachain sovereign account at that UTC day's close, both legs, on two chains | [asset-hub.md](../platform/asset-hub.md#reading-sovereign-balances-day-by-day-back-to-2022) |
+
+They landed a few hours apart on 2026-08-20 and chose the same identity independently, which is
+the argument for the month bucket being right rather than merely first. Neither can serve the
+**current** month, so each has a TTL-cached partner for the tail — `hydration/swaps` and
+`asset-hub/sovereign-dot-recent` — and the page joins them and says which side of the seam a day
+came from. That pattern is [decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md).
+
+⚠️ **Neither of them works in production yet.** The container has no writable volume, so
+`openStore()` fails and mode A degrades to 503 while mode B answers normally — deliberately, and
+documented at [deployment.md](deployment.md#what-is-still-owed).
 
 Four files, and they do not overlap:
 
@@ -305,6 +322,17 @@ answer. The summary month is 428 kB over the wire, measured.
 **A backfill needs headroom beyond the data.** During the fill the WAL reached ~2.9 MB against
 ~1 MB of committed rows and settled back to zero when the last connection closed. Provision for
 the file plus a few MB, not for the file exactly.
+
+**The second handler is two orders of magnitude cheaper per day, and that is the useful comparison.**
+`asset-hub/netflows-daily` stores **1,392 B mean** per day against Hydration's 14–17 kB, because a
+day of sovereign balances is ~50 numbers while a day of trades is a summary with bounded lists. The
+whole 2022-01 → 2026-07 series is **1,673 days and 2.33 MB**, filled in about 50 minutes. Full
+figures, and the five months that failed once mid-run and succeeded on retry, are in
+[asset-hub.md](../platform/asset-hub.md#the-cost-measured).
+
+So the range a `jobs` handler costs is **0.5 kB to 17 kB per day** on this evidence, and the thing
+that moves it is how much summarising the payload does — not how busy the chain was. Both handlers
+are nearly flat in the underlying volume.
 
 ## What does not belong here
 

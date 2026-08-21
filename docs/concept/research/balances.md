@@ -14,6 +14,22 @@ Both are answerable, anonymously, with no API key. The costs are wildly differen
 and one of the three leaderboards is largely meaningless as a "top holders" list once you look at
 the distribution.
 
+> **Marked 2026-08-21: question 1 is built, and the estimates here were beaten.** `/sovereign/`
+> answers "today", `/netflows/` answers "every UTC day since 2022-01", and the day-by-day walk
+> costs **~2.2 HTTP requests per day per chain** — not the ~21.7 reads per day-point this sweep
+> measured — because JSON-RPC batching applies across **days** as well as across keys. The whole
+> 2022 → 2026 backfill was ~50 minutes and 2.33 MB stored, against the ~10 MB / ~25 MB this file's
+> §4 table projected for the same series. Question 2 (top holders) is still unbuilt.
+>
+> Two things this sweep could not have known, both established by comparing the re-derived series
+> against the 2023 archive over 2,442 chain-days: the archive measured **only the `para` leg**, and
+> its **final row is a mid-day reading**. Current account:
+> [asset-hub.md](../../platform/asset-hub.md#reading-sovereign-balances-day-by-day-back-to-2022)
+> and [decision 0012](../../decisions/0012-netflows-is-a-store-plus-a-live-tail.md).
+>
+> Its block-rate figures (§2.6, §4) are one-day measurements of a rate that has moved by a factor
+> of six across the range; do not carry them forward.
+
 ---
 
 ## 0. The finding that reorders everything: DOT no longer lives on the relay chain

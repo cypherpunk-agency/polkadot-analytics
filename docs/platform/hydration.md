@@ -837,6 +837,71 @@ Two other things worth knowing before writing a walker over this data:
   from a measured block count, never a block time; see
   [block time is a trailing average](#block-time-is-a-trailing-average-not-a-constant).
 
+### One account: what `account` answers, and what bounds it
+
+`/account/?address=…` is this site's first drill-down and the smallest version of "follow the
+money". It answers **one account, on one venue, inside one window**, and the bound is drawn at the
+top of the page rather than in a footnote — a drill-down that *looks* complete is worse than no
+drill-down.
+
+**orca filters by swapper server-side, which is the only reason this is affordable.**
+`RoutedTradeFilter.participantSwappers` is a `StringListFilter` (introspected 2026-08-20), so
+`contains: [$account]` is an indexed array-containment test rather than a download of the window
+followed by a filter in our process. Measured the same day against `orca-prod-pool-01`: **1,078
+trades for one account over the whole index in 1.0 s**, and 116 over a seven-day block range in
+0.6 s. Without it, drawing a hundred trades would mean pulling roughly sixty thousand.
+
+Six bounds, all of them deliberate and all of them stated in the payload rather than only in code:
+
+| Bound | Value | Why it is where it is |
+|---|---|---|
+| Venue | Hydration routed trades only | Not other parachains, not transfers, not the money market. Nothing joins across chains yet |
+| Window | `days` ∈ 1…**14**, default 7 | The same cap and the same 15-minute TTL as `swaps`, deliberately: `/account/` links to `/hydration/` and quotes the same fortnight, so different rhythms would show up as two pages disagreeing |
+| Floor | orca's `routedTrades` index, block **6,837,788** (2025-01-25) | Nothing before it exists to be found. A window reaching past it is clamped and `window.clamped` says so |
+| Ceiling | **40,000** routed trades in the window | It **refuses** rather than truncating. A silently short account is a net-flow figure that is simply wrong and looks fine |
+| Rows drawn | the newest **300** trades, **40** routes | Every figure on the page is computed over *all* the trades in the window; only the tables are cut |
+| Labelling | structural only — `modl`, `sibl`, `para`, `pallet:…`, plus orca's own `accountType` | Arithmetic over the account's own bytes. Nothing here names or profiles a person; plan §8.3 draws that line |
+
+**How much of the account the window is NOT showing is a number, not a hedge.** Every response
+carries `activity.tradesEver` (that account's trades across orca's whole index), `firstEverAt` /
+`lastEverAt`, and `windowShare`, so the page can always produce the sentence *"117 of 1,079 trades,
+of an account first seen on 2025-07-10"*. Those four fields are the point of the operation, not
+decoration on it.
+
+⚠️ **`contains` and `participantSwappers[0]` are not the same account.** The filter matches the
+account *anywhere* in the array; `valueTrades` attributes a trade to the **first** swapper. Those
+differ only on multi-swapper trades — 0 of 9,537 in a 24 h sample on 2026-08-20 — but "rare" is not
+"never", so the rows where the requested account is not the attributed trader are **counted**
+(`activity.notFirstSwapper`) and stated rather than dropped or silently folded in.
+
+⚠️ **The busiest accounts on this venue are pallet accounts, not people.** Measured over a
+seven-day block range on 2026-08-20: `pallet:py/trsry` 10,250 trades, `pallet:feeproc/` 9,165. A
+fourteen-day window on one of those is ~20,000 rows, which is what the 40,000 ceiling is sized
+against. `isPallet` is on every response.
+
+**Paging is bigger here than in the window pager, and that is measured too.** An orca page costs
+almost all fixed overhead — 1,000 rows in 1.71 s, 3,000 rows in 1.88 s (2026-08-20, busiest
+account) — so this operation pages at **3,000** rather than the window pager's 1,000: ten pages of a
+thousand is 17 s, four of three thousand is 7.5 s, for the same rows.
+
+**The address may be hex or SS58 in any network prefix.** `readParams` normalises it to the public
+key before anything is looked up (`server/lib/params.mjs`), which is both a correctness property and
+a cache property: the same account is one entry, not four. Joining on the display string instead
+would answer "this account never traded here" for a perfectly active account whose address the
+reader happened to copy off the relay chain. Responses echo the account back in Hydration's own
+prefix (**63**) alongside the hex.
+
+### This site's Hydration surface
+
+| Operation | What it answers |
+|---|---|
+| `/api/hydration/swaps` | routed trades over the last `days` (1–14), aggregated: volume, routes, assets, initiations, accounts, derived rates, and orca's own pool volume over the same blocks for comparison |
+| `/api/hydration/account` | one account inside that same window — flows by asset, the trades behind them, and how much of the account's history the window covers. Bounds above |
+| `/api/hydration/swaps-daily` (job) | the same daily summary as a stored fact, one UTC day per segment, a calendar month per job identity. Fetched once and never again. Costs and payload above |
+| `/api/hydration-evm/market` | the money market's 23 reserves and the USD oracle — a separate source module, because it speaks the `eth_*` namespace against the same RPC host |
+| `/api/arbs-hydration/wrap-map`, `/peg-state` | the wrap graph and the peg/HSM/OTC book, read from chain storage rather than from the indexer |
+| `/api/arbs-bifrost/vdot` | the vDOT redemption rate, from Bifrost rather than from Hydration. The one cross-chain dependency in this family, and research queue **O30** is about removing it |
+
 Operational detail for these endpoints — rate limits, caching policy, and the known
 quirks of each — lives in [data-sources.md](data-sources.md).
 

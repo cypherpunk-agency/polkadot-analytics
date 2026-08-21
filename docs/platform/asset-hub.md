@@ -398,7 +398,7 @@ Bifrost 2,170,781 · Astar 101,512 · Hyperbridge 46,201 · Zeitgeist 17,154 · 
 
 | Source | Count | What it means |
 |---|---|---|
-| `Paras::ParaLifecycles` (relay) | 89 | registered with a current lifecycle. 86 `Parathread`, 3 `Parachain` (1002, 1004, 1005) — under agile coretime almost everything is a parathread with a broker-assigned core |
+| `Paras::ParaLifecycles` (relay) | 89 | registered with a current lifecycle. 86 `Parathread`, 3 `Parachain` (1002, 1004, 1005) — under agile coretime almost everything is a parathread with a broker-assigned core, and the value must never be printed as a description. Re-verified 2026-08-21 at #32,648,511; see [polkadot.md](polkadot.md#paralifecycles-says-parathread-for-almost-everything-and-it-is-not-a-description) |
 | `Registrar::Paras` (relay) | 123 | holds a registration deposit. A strict superset of the 89 |
 | `Parachain(N)` junctions in Asset Hub's `ForeignAssets` keys | 14 | Asset Hub registers an asset issued by this para |
 | `src/core/topology.js` | 33 (Polkadot) | this repository names it |
@@ -441,8 +441,14 @@ The lesson generalises past Moonbeam: **enumerate from several sources, record o
 of them produced it, and name the ones the chain's own enumeration would have dropped.** Absent
 from an enumeration and holding nothing are different facts.
 
-Still open: *why* it deregistered, and whether it re-registered under another id. Nothing in relay
-state links a para id to a chain name, so neither question can be settled from these two endpoints.
+**Both of the questions this section left open have since been answered**, by going to the relay's
+*history* rather than to its current state. Moonbeam's own manager sent `Registrar.deregister(2004)`
+in relay block 32,489,786 (2026-08-10T07:29:24Z), and a re-registration under another id is ruled
+out — that manager account is the `manager` field of **zero** of the 123 current `Registrar::Paras`
+entries, and no live para carries Moonbeam's final code hash. Full derivation, the four departures
+it turned up, and what was ruled out and how, in [moonbeam.md](moonbeam.md). What remains genuinely
+unanswerable from these two endpoints is the mapping from a para id to a *chain name*: relay state
+does not carry one, which is why `src/core/topology.js` exists.
 
 ## Sufficient assets and the existential deposit
 

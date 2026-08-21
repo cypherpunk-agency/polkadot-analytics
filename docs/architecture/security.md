@@ -95,8 +95,11 @@ reads are run by other people, some of them volunteers, and none of them agreed 
   explorer's ~7,600-call signer resolution is deliberately **not** ported: it is a reasonable
   thing for one person to opt into in a local tool and an unreasonable thing to do on every load
   of a public page.
-- The Hydration window is capped at seven days for the same reason, and the page says so rather
-  than presenting it as a preference.
+- The Hydration window is capped at **fourteen days** for the same reason, and the page says so
+  rather than presenting it as a preference. Thirty days would be ~181,000 routed trades and about
+  a minute of somebody else's database. Longer windows go through the job queue instead, where the
+  politeness gate holds one in-flight request per host across every job — see
+  [jobs.md](jobs.md#the-politeness-gate).
 
 ## Untrusted input
 

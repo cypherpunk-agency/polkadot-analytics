@@ -36,9 +36,17 @@ stops answering its own title.
 or two.** Material that is interesting but is a different subject gets its own page rather than a
 position further down this one.
 
-Applied here: `/netflows/` is the 2021–2023 archive and opens on its chart. The live read, the
-gap drawn to scale, and the then/now comparison moved to `/sovereign/`, where they are the
+Applied here: `/netflows/` opens on its time series, and nothing else goes above it. The live read,
+the gap drawn to scale, and the then/now comparison moved to `/sovereign/`, where they are the
 subject rather than the preamble. Both pages point at each other in prose.
+
+> **Updated 2026-08-20, later the same day.** When this was written, the only time series
+> `/netflows/` had was the 2021–2023 archive, so "the page is the archive" and "the page opens on
+> its chart" were the same sentence. They are no longer: the 2023 → 2026 hole was filled from the
+> chains themselves, and `/netflows/` now draws 2022-01 → yesterday with the archive alongside it as
+> a cross-check. See [decision 0012](0012-netflows-is-a-store-plus-a-live-tail.md). **The decision
+> above is unchanged** — the page still has one subject and still opens on it. What changed is which
+> data draws that subject, and one of the consequences below, which is corrected in place.
 
 Rejected alternatives:
 
@@ -54,13 +62,21 @@ Rejected alternatives:
 
 - `src/sources/pages.js` gains an entry, and the site map is the only place that had to change:
   Vite discovers `sovereign/index.html` by directory, and the nav and home deck both read `PAGES`.
-- **`live` on a page entry becomes correct again.** `/netflows/` reads nothing at run time, so it
-  is `live: false` and its tile says *archive — fixed dataset*; `/sovereign/` is the live one.
-  This flag exists precisely so a reader cannot mistake a 2023 archive for today's numbers, and
-  for one day it said the wrong thing about both halves at once.
-- **The 2023 dataset is now drawn by two pages**, `/netflows/` in full and `/sovereign/` for its
-  "then" bars. Each asserts its own `frozen` liveness report about the same bundled file. That is
-  duplication, accepted knowingly at two pages and worth extracting at three.
+- ~~**`live` on a page entry becomes correct again.** `/netflows/` reads nothing at run time, so it
+  is `live: false`.~~ **Corrected 2026-08-20:** that held for about six hours. Once
+  [decision 0012](0012-netflows-is-a-store-plus-a-live-tail.md) filled the 2023 → 2026 hole,
+  `/netflows/` reads a store-backed job for whole past months and a TTL-cached operation for the
+  current one, so it is **`live: true` and stays there** — Kusama alone is still archive-only, and
+  the page says so on that toggle rather than in the flag. The *rule* the sentence was making is
+  the part that survives, and it is restated in
+  [design-system.md](../architecture/design-system.md#a-page-has-one-subject-and-it-goes-first):
+  `live` is part of a page's identity, and a page that stops reading an upstream goes back to
+  `live: false`. Getting it wrong in either direction is the same failure — for one day this flag
+  said the wrong thing about both halves at once.
+- **The 2023 dataset is now drawn by two pages**, `/netflows/` (as a cross-check against the
+  re-derived series, where the two overlap) and `/sovereign/` (for its "then" bars). Each asserts
+  its own `frozen` liveness report about the same bundled file. That is duplication, accepted
+  knowingly at two pages and worth extracting at three — it is research queue **O32**.
 - Splitting is not free: a reader who wanted the comparison now has to follow a link. That is the
   right trade when the two subjects are genuinely different questions asked of the same accounts,
   and the wrong one when a page is split merely because it got long.

@@ -8,6 +8,16 @@ Where something could not be verified it says so in a **Not verified** line. Num
 paragraphs by a few blocks because they were read minutes apart — that is block skew, not
 disagreement, and it is called out where it could be mistaken for one.
 
+> **Marked 2026-08-21: this sweep's headline was acted on and is no longer a description of the
+> repo.** Surface A (orca) is what `/hydration/`, `/account/` and `hydration/swaps-daily` read;
+> surface D (`explorer.hydradx.cloud`) is **not read by anything any more**, and re-probed on
+> 2026-08-20 it timed out after 12.3 s on the single oldest `Broadcast.Swapped3`. The window cap
+> was **doubled to 14 days rather than removed** — the reason is a cost argument in
+> `hydration.mjs`, and removing it needs the store rather than a bigger number. Current state:
+> [docs/platform/hydration.md](../../platform/hydration.md) and
+> [docs/platform/data-sources.md](../../platform/data-sources.md). Surfaces B and C are still
+> substantially unexploited, which is the part of this file still worth mining.
+
 The headline: our `hydration` page reads the generic Subsquid archive and reconstructs trades by
 hand. That is the most expensive way to get the least data. There are **four** anonymous surfaces,
 three of which we are not using, and between them they cover every item in the brief.

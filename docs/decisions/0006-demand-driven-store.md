@@ -13,7 +13,9 @@ expensive**. Hydration trades in a finalised block window will never change. XCM
 closed calendar day will never change. A balance at block N on an archive node will never change.
 Under a TTL cache those are refetched forever — a year of Hydration is roughly thirty-three
 minutes of upstream work, and a TTL cache either does it again every fifteen minutes or caps the
-window at seven days, which is what the site does today.
+window, which is what the site does: **fourteen days** on `/hydration/`, argued as a cost decision
+in `hydration.mjs` rather than as a property of the data. (Written as "seven days" when this was
+decided; the cap was doubled the same week, and the argument is unaffected by which number it is.)
 
 Two designs were on the table. Both had been sketched by earlier research sweeps, and both were
 called "the store", which hid the actual disagreement — which was never whether there is

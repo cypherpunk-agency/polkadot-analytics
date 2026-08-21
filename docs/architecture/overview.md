@@ -1,7 +1,8 @@
 # How this repo is put together
 
-One site, five dashboards, one data layer, one design system. This is the map; the pieces have
-their own documents.
+One site, ten dashboards and one drill-down tool, one data layer, one design system. This is the
+map; the pieces have their own documents. The authoritative list of pages is `src/sources/pages.js`
+— the nav and the home index both read it, so a page cannot exist without appearing there.
 
 ## Request path
 
@@ -13,8 +14,16 @@ visitor → Caddy (TLS, CSP, rate limit)
              ├─ GET /healthz         "ok" — never touches an upstream
              ├─ GET /api             the source registry, self-described
              ├─ GET /api/health      app layer wired + cache statistics
-             └─ GET /api/:src/:op    validate → cache → source module → upstream
+             ├─ GET /api/jobs/:id    progress on one store-fill job
+             └─ GET /api/:src/:op    mode A: store → { data, coverage, job }   ─┐
+                                     mode B: validate → cache → source module ─┴→ upstream
 ```
+
+**One URL shape, two modes.** `/api/:src/:op` resolves against the `jobs` half of a source module
+first and its `operations` half second, so a store-backed answer and a TTL-cached one are told
+apart by the registry rather than by the path. That precedence is load-bearing and it is a trap:
+naming a job after an existing operation does not add a mode beside it, it takes the URL away from
+it, silently. See [jobs.md](jobs.md#do-not-name-a-job-after-an-operation).
 
 The browser loads a document and one JavaScript bundle, then makes one or more `/api` calls.
 It never calls anything else — see [security.md](security.md).
@@ -72,6 +81,7 @@ in 2023". See [middleware.md](middleware.md#liveness-every-source-says-how-curre
 |---|---|
 | add a data source | one module in `server/sources/`, one line in its `index.mjs` |
 | add a dashboard | an entry in `src/sources/pages.js`, a `<name>/index.html`, a `src/pages/<name>/main.js` |
+| add a store-backed history series | a `jobs` entry on an existing source module, after reading [jobs.md](jobs.md) — the identity is the decision, not the fetch |
 | add a DEX to the swap dashboard | a normaliser that emits `Trade[]`; no page code |
 | change the look | `src/design/tokens.css` |
 | add a chart form | `src/design/charts.js`, after reading [design-system.md](design-system.md) |
@@ -82,6 +92,7 @@ conforming to the registry contract, and no third-party URL anywhere the browser
 ## Related documents
 
 - [middleware.md](middleware.md) — the shared data layer, transports, failure taxonomy
+- [jobs.md](jobs.md) — the store and the job system: facts, segments, identity, leases, the handler contract
 - [design-system.md](design-system.md) — tokens, palette validation, chart rules, the CSP trap
 - [security.md](security.md) — public exposure, CSP, not-an-open-proxy, resource limits
 - [deployment.md](deployment.md) — image, health checks, push-to-deploy

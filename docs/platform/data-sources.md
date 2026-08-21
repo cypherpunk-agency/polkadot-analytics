@@ -55,11 +55,26 @@ the same thing and the difference is where a wrong number comes from.
 
 **Cost.** Cheap — sub-second, pre-aggregated. Cached 2–60 minutes by operation.
 
-> ⚠️ **`total_value_usd` is a floor, not a total.** Dotlake prices only the assets it can
-> resolve and reports everything else as exactly `0.0`, which is indistinguishable from a message
-> that genuinely moved nothing. On a live check, one 24-hour window returned `total_value_usd: 0.0`
-> for 374 messages and a 7-day window returned $478k for 3,540. The `/xcm/` page therefore leads
-> with **message counts**, which are exact, and labels the dollar figure as a lower bound.
+> ⚠️ **`total_value_usd` is neither a floor nor a ceiling.** ~~It is a floor, not a total.~~
+> **Corrected 2026-08-20** — this said "a floor" and that was actively wrong in the dangerous
+> direction, because a floor is safe to publish and this is not.
+>
+> It is wrong in *both* directions at once. **Too low:** Dotlake prices only the assets it can
+> resolve and reports everything else as exactly `0.0`, indistinguishable from a message that
+> genuinely moved nothing — one 24-hour window returned `0.0` across 374 messages while a 7-day
+> window returned $478k for 3,540. **Too high:** it also carries decimals-corrupted rows, where an
+> 18-decimal amount is labelled `asset_decimals: 6`. Two years of it sums to
+> **$39,917,060,621,977,640**; one week of 2025-11 held thirteen rows over the ceiling summing to
+> **$108.6 billion**, two of them a single USDC corridor at $44.2B and $42.2B, against $25.6M of
+> believable value in the same four days.
+>
+> So the aggregate column is unusable and `/xcm/` does not use it. It reads **row-level records**
+> and applies three rules per row — `decimals-disagree`, `magnitude-outlier` (a *detached cluster*
+> at the top of a symbol's magnitude distribution, not a distance from the median, because the
+> median form threw out a genuine $1.05M USDT transfer and understated a week by 13%) and a
+> `$25,000,000` `over-ceiling` backstop. **Every excluded row comes back with the payload and is
+> named on the page**, with its value on it. An exclusion nobody can see is just a different silent
+> error. The page still leads with **message counts**, which are exact.
 
 > ⚠️ **"Matched" is not "delivered".** A matched message is one whose arrival was observed. An
 > unmatched one may have arrived and gone unrecorded, or may never have arrived — from the index
@@ -288,28 +303,51 @@ per 5-minute TTL. Roughly 750 orders as of August 2026, so a full sweep is about
 
 ---
 
-## Hydration — `explorer.hydradx.cloud` and `rpc.hydradx.cloud`
+## Hydration — `orca.hydration.cloud` and `rpc.hydradx.cloud`
 
-Two upstreams for one page. The Subsquid archive is the same indexer the official Hydration UI
-uses; the RPC is the chain itself, read for the asset registry — an indexer that hands you
-`asset: 1000624` and nothing else cannot tell you what was traded. See [hydration.md](hydration.md).
+Two upstreams for four pages. **orca** — `orca-prod-pool-01.orca.hydration.cloud/graphql`, with
+`orca-prod-pool-02.catfish.hydration.cloud/graphql` as an identical-schema second host — is
+Hydration's own liquidity-pools squid, self-hosted, CORS-open, live to the block. The RPC is the
+chain itself, read for the asset registry: an indexer that hands you `asset: 1000624` and nothing
+else cannot tell you what was traded. See [hydration.md](hydration.md).
 
-**What we read.** `Broadcast.Swapped3` events over a block-height range, keyset-paged 1,000 at a
-time; and `AssetRegistry::Assets` for exactly the asset ids that appeared.
+> ⚠️ **`explorer.hydradx.cloud` is no longer read by this repository**, and neither is the generic
+> SQD `hydradx` dataset. This section used to describe the first of those. The repoint to orca
+> landed on 2026-08-20 for three reasons: orca has **already done the leg-grouping** (5,538 routed
+> trades against 12,647 raw legs in 24 h), it reaches **730,000 blocks earlier** than the first
+> `Broadcast.Swapped3` because it indexes the older event versions too, and it answers. The
+> explorer returns `canceling statement due to statement timeout` on an unbounded `Swapped3` scan —
+> asking it for the single oldest one timed out after 12.3 s, re-checked 2026-08-20. The SQD
+> dataset was found **frozen 103 days** while answering every query in 381 ms with well-formed
+> rows, which is the reason every source here carries a liveness assertion.
 
-**Cost — the reason the window is capped.** About 11,000–13,000 swap legs per day. A three-day
-window is roughly 35,000 events and 25 MB from the archive, taking ~5 s warm. The `days` parameter
-is capped at 7 and cached 15 minutes, and the page states the cap rather than presenting it as a
-preference.
+**What we read.** `routedTrades` over a block-height range, keyset-paged on
+`[PARA_BLOCK_HEIGHT_ASC, ID_ASC]` with the connection's own `endCursor`; `AssetRegistry::Assets`
+over the RPC for exactly the asset ids that appeared; and `platformTotalVolumesByPeriod` over the
+same blocks, so the page can state how far it sits from the number Hydration publishes about
+itself.
+
+**Cost — the reason the window is capped.** About **11,050 routed trades a day** on average across
+orca's whole 19-month index, 468 bytes a row on the wire, ~330 ms per 1,000-row page. One day is
+~3 s; fourteen days ~24 s; thirty days is ~181,000 trades and about a minute, which is a page load
+nobody waits through. **The `days` parameter is capped at 14** — doubled from 7 when the repoint
+landed, not removed — and cached 15 minutes, and the page states the cap rather than presenting it
+as a preference. Longer windows go through the job queue instead: `hydration/swaps-daily` stores one
+UTC day at a time, measured at 9.0 s and ~15 kB per day
+([jobs.md](../architecture/jobs.md#what-the-store-actually-costs)).
 
 > ⚠️ **One event per swap LEG, not per trade.** A single router route through four pools emits
 > four events. Summing them multiplies volume by the hop count, and the result looks entirely
-> plausible. Legs of one trade share the first element of `operationStack`, which is what we group
-> on.
+> plausible. Legs of one trade share the first element of `operationStack`. orca's `routedTrades`
+> has already done that grouping; the raw-leg path is still described in
+> [hydration.md](hydration.md#broadcastswapped3-the-event-our-dashboard-reads) because the event
+> is what the chain emits and the grouping is what can be got wrong.
 
 > ⚠️ **Filter by block height, not timestamp.** A height-filtered count returns in 0.5 s; the same
 > count filtered by `block.timestamp` took 11 s. Buckets are then stamped from each event's own
-> timestamp, so the fast filter costs no accuracy.
+> timestamp, so the fast filter costs no accuracy. Resolving a UTC day to a height means bisecting
+> on the chain's own clock — **never** multiplying an assumed block rate, which on this chain has
+> ranged from 13.96 s to 4.88 s inside nineteen months.
 
 > ⚠️ **Two assets can share a ticker.** The page appends the asset id when a symbol is used by more
 > than one traded asset, otherwise a genuine arbitrage between two representations renders as a
@@ -357,6 +395,66 @@ thing to do on every load of a public page.
 
 ---
 
+## Polkadot relay chain and Asset Hub — `rpc.polkadot.io`, `polkadot-asset-hub-rpc.polkadot.io`
+
+Parity's public archive nodes for Polkadot's own two chains, read by one module,
+`server/sources/asset-hub.mjs`. Anonymous, no key, plain JSON-RPC over HTTPS. This is the only
+source here that reads Polkadot itself rather than somebody's index of it. See
+[asset-hub.md](asset-hub.md).
+
+**What we read.** `ForeignAssets::{Asset,Metadata,Account}` and `Assets::*` on Asset Hub;
+`Paras::{ParaLifecycles,Heads}` and `Registrar::Paras` on the relay; `System::Account` for the
+`para` and `sibl` sovereign accounts on both; `Balances::TotalIssuance`; `Timestamp::Now` at every
+pinned block, for liveness and for day boundaries. Enumeration is `state_getKeysPaged` over a
+prefix; reads are `state_queryStorageAt`, many keys at one block.
+
+**Cost.** `bridged-inventory` and `bridged-holders` are about thirty requests per 15-minute TTL
+across two hosts; `sovereign-dot` is roughly five per 10 minutes. The expensive one is history:
+`netflows-daily` walks days at **~2.2 requests per day per chain**, ~1.4 s a day, and the whole
+2022-01 → 2026-07 backfill was ~50 minutes and 2.33 MB stored. What makes that affordable is
+**JSON-RPC batching** — both endpoints accept an array of calls in one POST — applied across *days*
+as well as across keys.
+
+> ⚠️ **Match a batch response by `id`, never by position.** A server may reorder it, and reading it
+> positionally attributes one block's balances to another day. Silent, and plausible.
+
+> ⚠️ **Both endpoints are full archives to genesis** — but Asset Hub has state and **no clock**
+> below block #305,204 (2021-12-18), which is Statemint's pre-launch period and looks identical to
+> a pruned node. A pruned read and an empty account both answer `null`. Guard on `Timestamp::Now`,
+> which every real block has.
+
+> ⚠️ **Asset Hub's block rate has moved by a factor of six** across the range these series cover —
+> 12.51 s/block in 2022, 2.24 s in 2026. Never extrapolate a height from a date; measure locally
+> from the samples nearest the target and verify against the chain's own timestamps.
+
+> ⚠️ **`rpc-composable.luckyfriday.io` serves Centrifuge.** Resolves, answers, wrong chain, silently.
+> Recorded here because it was reached for during this work; it is not read by anything.
+
+## Interlay — `api.interlay.io/parachain`
+
+Interlay's public RPC, read by `server/sources/interlay.mjs` for one number: iBTC issuance, the
+BTC-bridged figure on `/bridged/`. One `state_getStorage` on `Tokens::TotalIssuance(Token(IBTC))`.
+See [bridges.md](bridges.md).
+
+> ⚠️ **iBTC's 8 decimals are a compile-time Rust constant**, not a registry entry — the one asset
+> here whose divisor cannot be read from the chain. It carries a plausibility canary instead:
+> chain-wide issuance was **2.118 iBTC** on 2026-08-20, and a decimals error is a factor of 10ⁿ, so
+> anything in the thousands of BTC is the constant being wrong rather than the protocol growing.
+
+> ⚠️ **The chain answers normally while weeks behind.** `Timestamp::Now` read 2026-07-27T12:13:01Z
+> on 2026-08-20 — 24 days stale — with the RPC serving state and its GraphQL squid answering with
+> 102 query fields. The module asserts liveness for exactly this reason.
+
+## Bifrost — `dapi.bifrost.io/api/site`
+
+Bifrost's public site API, read by `server/sources/arbs-bifrost.mjs` for the vDOT redemption rate
+that `/hydration-peg/` compares Hydration's on-chain peg against. It is the only **cross-chain
+dependency** in the Hydration family: the same rate is set on Hydration by two `MMOracle` peg
+sources named in `Stableswap::PoolPegs(690)`, and decoding those would remove it — research queue
+**O30**.
+
+---
+
 ## The archived netflows dataset
 
 Not an endpoint. `src/data/netflows.json` is 83 kB derived from 447,000 balance observations in
@@ -367,9 +465,28 @@ Committed rather than fetched because it is finished history: nothing in it has 
 2023. The original's 25 MB of plotly HTML is not used — it relies on inline script, which this
 site's CSP forbids, so the charts are redrawn from the source CSVs.
 
+**It is a cross-check now, not the series.** Until 2026-08-20 this file *was* `/netflows/`. It is
+now drawn against a daily series re-derived from the chains themselves over the same days, which is
+what turned three of its properties from assumptions into measurements — see
+[asset-hub.md](asset-hub.md#what-the-2023-study-measured-and-what-it-could-not) for the full
+comparison over 2,442 chain-days.
+
+> ⚠️ **It measured ONE of the two sovereign accounts.** The study read `para` on the relay chain
+> only. On **883 of the 2,442 chain-days** in its window the same chain also held DOT in its `sibl`
+> account on Asset Hub — at most 1.12% of that chain's total then, and essentially all of it now.
+> Compared against the `para` leg alone it agrees to a median **4.0 × 10⁻⁹**; compared against the
+> sum it scores the second leg as a disagreement it never claimed to measure.
+
+> ⚠️ **Its final row is not a whole day.** On 2023-04-08 all eight chains disagree with a fresh
+> read by up to **23.6%**, because its captures stop mid-day. Its published "at the end" figures
+> are mid-day readings.
+
 > ⚠️ **Daily resampling clips intraday spikes, unevenly.** Polkadot's Bifrost line understates its
 > true peak by 55%; Interlay and Equilibrium by nothing at all. Every series carries its own
 > `clipped` fraction and the page marks the affected ones.
+
+> ⚠️ **Kusama is still archive-only.** `/netflows/?network=kusama` draws this file and nothing
+> else, because no source module here reads a Kusama chain. Research queue **O26/O39**.
 
 Re-deriving it also surfaced three disagreements between the published report and the data. The
 page lists them rather than reconciling them, because the report is still online saying otherwise.

@@ -90,10 +90,14 @@ from `Registrar::Paras` give different sets, and neither is "the parachains".**
 | `0x05` | `OffboardingParathread` |
 | `0x06` | `OffboardingParachain` |
 
-**Every live para on Polkadot today reads `0x01`, including Asset Hub** — *verified live*. Since
-Agile Coretime there are no leases, so nothing is a `Parachain` in the lifecycle sense; cores come
-from the Coretime Chain's `Broker` pallet instead. Reading `0x01` as "this is only a parathread, not
-a real parachain" would be wrong about every chain on the network.
+**Almost every live para on Polkadot reads `0x01`, Asset Hub included** — 86 of the 89 keys, with
+only Bridge Hub (1002), People Chain (1004) and Coretime Chain (1005) reading `0x02`. *Verified live
+2026-08-21* by sweeping the whole prefix at finalized head #32,648,511; an earlier version of this
+line said "every live para", which the sweep disproves. Since Agile Coretime a chain's blockspace
+comes from the Coretime Chain's `Broker` pallet rather than from a lease, so `0x01` is the ordinary
+state and `0x02` is a residue of the older registration path. Reading `0x01` as "this is only a
+parathread, not a real parachain" would be wrong about almost every chain on the network — see
+[polkadot.md](polkadot.md#paralifecycles-says-parathread-for-almost-everything-and-it-is-not-a-description).
 
 ### The sequence Moonbeam actually went through
 

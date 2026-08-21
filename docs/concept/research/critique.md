@@ -13,6 +13,13 @@ history is unobtainable, therefore we need a 10 GB disk and must start ingest no
 an endpoint a sibling sweep found on the same day**, and nobody checked a production response
 header or noticed the site is returning 502 right now.
 
+> **Marked 2026-08-21.** This pass was right and its two operational findings were acted on: the
+> 502 was fixed and push-to-deploy is live, and the repoint to orca shipped on 2026-08-20. The disk
+> question was then *measured* rather than argued, and came out at **1 GB** rather than 10 —
+> smaller than either side of the argument recorded here, because both were sizing raw legs and the
+> store holds daily summaries (`docs/concept/plan.md` §12). Everything else below stands as an
+> accurate record of 2026-08-19, including the block-time measurements, which CLAUDE.md cites.
+
 ---
 
 ## 0. What I verified today, up front

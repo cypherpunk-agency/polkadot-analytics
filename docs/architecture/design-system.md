@@ -56,15 +56,29 @@ Seven, hand-rolled. The SVG ones:
 
 - `stackedBars` — daily volume by series. The default chart of this site.
 - `lineChart` — one line over an ordered index: cumulative totals, concentration curves.
-- `multiLine` — several series on one shared scale, for the netflows archive.
+- `multiLine` — several series on one shared scale, for the netflows daily series and the 2023
+  archive it is cross-checked against.
 - `matrix` — an n-by-n directed relation: origin down the side, destination across the top.
 - `flowGraph` — node/edge topology on a fixed circular layout, with value-weighted edges.
 
 And the row forms, which are DOM rather than SVG because a list of rows wants to be a list of
 rows — they get hover, focus, text selection and printing for free:
 
-- bar rows in CSS — rankings, breakdowns, routes.
-- `segmentedRows` — one bar per item, split by who holds it. See below.
+- `.rank-row` — bar rows in CSS: rankings, breakdowns, routes.
+- `.seg-row` (`segmentedRows`) — one bar per item, split by who holds it. See below.
+
+**Both restack at `36rem`, and the shared breakpoint is deliberate.** They are the same form with
+a different column count, so restacking them at different widths on a page that draws both would
+read as a bug rather than as a design. `.rank-row` was brought onto `.seg-row`'s breakpoint rather
+than onto its own measurement (which said 412–480px) for exactly that reason.
+
+⚠️ **Measure a row against its own container, never against the document.** `.scroll-y`
+(`max-height: 28rem; overflow-y: auto`) is *also* a horizontal scroller, because CSS computes
+`overflow-x: visible` to `auto` whenever the other axis is not `visible`. An over-wide row inside
+one produces `documentElement.scrollWidth === 390` at a 390px viewport — a perfect score over a
+broken row, with the only visible symptom a `2fr` bar track squeezed to 9px. That is how
+`.rank-row` stayed broken on two of three pages while being actively edited. The measurements are
+in CLAUDE.md's facts list; a check that would catch it in CI is research queue **O49**.
 
 ### `segmentedRows`, and why the kit grew
 
@@ -209,9 +223,14 @@ Two practical consequences for anyone adding to a page:
   names, under at most a lede and a control row? If not, the new material wants a page of its
   own — which costs one directory, one entry in `src/sources/pages.js`, and no config at all.
 - **`live` on the page entry is part of the page's identity, not metadata.** A page that stops
-  reading an upstream goes back to `live: false`, and its home tile goes back to saying
-  *archive — fixed dataset*. That flag is the only thing standing between a reader and taking a
-  2023 archive for today's numbers.
+  reading an upstream goes to `live: false` and its home tile says *archive — fixed dataset*; a
+  page that starts reading one goes back. That flag is the only thing standing between a reader
+  and taking a 2023 archive for today's numbers, and it is wrong in both directions: `/netflows/`
+  went `true → false → true` inside 24 hours on 2026-08-20 as it lost its live half to
+  `/sovereign/` and then gained a chain-read daily series of its own
+  ([decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md)). Each of those three
+  values was correct when it was set. Set it from what the page reads *today*, never from what the
+  page is named after.
 
 A lede is prose and prose grows. At 390px the page head is the whole first screen before anything
 is drawn, so a lede that runs past four lines is spending the reader's only screen on sentences.

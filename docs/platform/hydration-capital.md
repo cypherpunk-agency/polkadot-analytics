@@ -5,9 +5,17 @@ Aave-fork money market, HOLLAR — and how to price an asset from it. This note 
 question the `/hydration-capital/` page asks: **how much capital sits on this chain right now, and
 in which assets.**
 
-That is a stock question, not a flow question, and it has one dominant trap: **Hydration's venues
-hold each other's receipt tokens, several layers deep.** Adding the four venues together
-double-counts \$27.1 M of \$72.5 M — 37 % — and the result looks entirely reasonable.
+That is a stock question, not a flow question, and it has two traps rather than one. Adding the
+four venues together gave **\$90.02 M** on 2026-08-21, and **\$32.32 M of that — 36 % — is not
+there**:
+
+1. **Hydration's venues hold each other's receipt tokens, several layers deep** (\$27.19 M). The
+   Omnipool's third-largest position is an aToken *of a stableswap pool*.
+2. **The money market's `supplied` counts recursive deposits more than once** (\$5.13 M). This was
+   not assumed — it was caught by a check: at gross, four assets held **more than the whole chain's
+   supply** of themselves.
+
+Both intermediate figures look entirely reasonable and both render perfectly.
 
 Everything below was read live off `https://rpc.hydradx.cloud` (both planes) on **2026-08-21**,
 around block **13,715,470** (`Timestamp::Now` = 2026-08-21T08:21:21Z, 21 s behind the wall clock).
@@ -70,27 +78,59 @@ An asset is **derived** — a claim on another Hydration venue — if it is any 
 Everything else is **base**. All four tests come from the registry or from the contract itself, not
 from a symbol pattern — `GDOT` and `GETH` would both survive any name-based filter.
 
-## What double-counts, exactly
+## Two deductions, not one
 
 Verified live 2026-08-21:
 
-| Venue | Gross | Of which held in derived tokens |
-|---|---:|---:|
-| Money market (supplied) | \$43.80 M¹ | \$15.18 M — stableswap share tokens supplied as collateral |
-| Stableswap (17 pools) | \$15.94 M | \$7.62 M — aTokens sitting in pools |
-| Omnipool | \$12.69 M | \$4.26 M — aDOT, GETH, GSOL |
-| XYK (290 pools) | \$0.10 M | \$0 |
-| **Gross** | **\$72.54 M** | **\$27.05 M (37 %)** |
-| **Distinct** | **\$45.48 M** | |
+| Venue | Gross (what it says about itself) | Held in derived tokens | Lent back out |
+|---|---:|---:|---:|
+| Money market (supplied) | \$58.68 M | \$15.27 M — stableswap share tokens posted as collateral | \$5.13 M |
+| Stableswap (17 pools) | \$18.33 M | \$7.37 M — aTokens sitting in pools | — |
+| Omnipool | \$12.91 M | \$4.30 M — aDOT, GETH, GSOL | — |
+| XYK (290 pools) | \$0.10 M | \$0 | — |
+| **Gross** | **\$90.02 M** | **\$27.19 M (30.2 %)** | **\$5.13 M** |
+| **Distinct** (gross − receipts) | \$62.83 M | | |
+| **Net** (− money lent back out) | **\$57.70 M** | | |
 
-¹ \$43.80 M excludes `stHDX`, which the oracle does not price; see *what is not priced* below.
-`hydration-evm/market` reports \$57.92 M supplied because it values stHDX at the Omnipool's HDX
-spot as an explicit floor.
+### Deduction 1 — receipt tokens
 
-**The rule that removes the double count:** count a position only when the token is **base**. A
-position in a derived token is a claim on reserves that are counted where they physically sit. This
-is exact, not an estimate — the aDOT the Omnipool holds is *inside* the money market's
-`supplied` DOT figure, not beside it.
+**Count a position only when the token is base.** A position in a derived token is a claim on
+reserves counted where they physically sit. This is exact, not an estimate: the aDOT the Omnipool
+holds is *inside* the money market's `supplied` DOT, not beside it.
+
+### Deduction 2 — money lent back out, and the check that forced it
+
+This one was not planned; a reconciliation found it.
+
+**An Aave market lets a depositor borrow the same asset and re-deposit it, and `supplied` — the
+aToken supply — counts every turn of that loop.** So `supplied` is not a quantity of tokens in
+custody, and the way to see that is to compare it against the chain's own supply. Verified live
+2026-08-21, `Tokens::TotalIssuance` against what the venues hold:
+
+| Asset | Chain supply | In venues, gross | of supply | In venues, net | of supply |
+|---|---:|---:|---:|---:|---:|
+| EURC (44) | 360,623 | 493,954 | **137 %** | 348,337 | 97 % |
+| DOT (5) | 4,489,790 | 5,660,420 | **126 %** | 3,463,280 | 77 % |
+| SOL (1000752) | 5,155.87 | 6,162.47 | **120 %** | 4,672.03 | 91 % |
+| ETH (34) | 1,021.11 | 1,055.56 | **103 %** | 921.72 | 90 % |
+
+**At gross, four of the 28 checkable assets hold more than the whole chain has of them. After
+netting, none do.** Nothing else about the two figures distinguishes them; the supply comparison
+is the only thing that does, and without it a Hydration TVL that adds `supplied` to pool reserves
+looks entirely reasonable.
+
+`docs/platform/hydration.md` already said *"a chunk of Hydration's TVL is recursive rather than net
+new deposits — if you report TVL, say whether you are netting out loops."* This is the measurement
+behind that sentence.
+
+**The deduction is per reserve and floored at zero**, because HOLLAR is **minted** as debt rather
+than lent out of deposits: its `supplied` is 0 and its `borrowed` is \$12.28 M, so a global netting
+would remove \$12.28 M that was never added. Of the money market's \$17.37 M of total borrowings,
+\$5.13 M is lent out of deposits and is deducted; the rest is minted HOLLAR, which is counted where
+it sits — in the pools.
+
+`Erc20`-typed assets are excluded from the supply check: their orml row is a mirror residue, not a
+supply. HOLLAR's reads ~13,600 against a real ~12.6 M.
 
 ## The reconciliation that proves it
 
@@ -147,6 +187,13 @@ Four pricing paths, in the order they are tried, each labelled on the page:
    not in the money market.
 4. **The stableswap residual** above, for a pool with exactly one unpriced leg.
 
+**Cross-checked against a second implementation.** `server/sources/prices.mjs` reads the same
+oracle by an independent path, built by a different author on the same day. Across the **25 assets
+both value, the worst relative difference is 0.0004 %** (verified live 2026-08-21) — the largest
+being HDX at \$0.011346353 against \$0.011346309, which is the Omnipool spot computed twice. The
+chain above additionally resolves four assets `prices.mjs` does not — wstETH, jitoSOL, sUSDS and
+sUSDe — through the stableswap residual.
+
 What remains unpriced after all four is essentially the **XYK long tail**: of 580 XYK legs, 403 are
 unpriced and **150 of the 290 pools have no priced leg at all**. Their value is *unknown*, not zero,
 and the page says how many. It is bounded above by the priced side of the pools that have one: an
@@ -172,20 +219,26 @@ floor wherever it is used. It is *not* a double count of the Omnipool's HDX: the
 
 ## Numbers, 2026-08-21
 
-Distinct capital **\$45.5 M**, of which the ten largest base assets:
+Net capital **\$57.70 M** (gross \$90.02 M), of which the ten largest base assets. Amounts and values are
+the COUNTED ones — after both deductions:
 
-| Asset | USD | Units | Where | Priced by |
+| Asset | USD, counted | Units | Where | Priced by |
 |---|---:|---:|---|---|
-| PRIME | \$10.31 M | 9,810,200 | stableswap + money market | oracle |
-| HOLLAR | \$6.91 M | 6,909,510 | all four venues | oracle |
-| DOT | \$4.92 M | 5,661,650 | money market + XYK | oracle (\$0.86849) |
-| tBTC | \$4.57 M | 59.41 | Omnipool + money market | oracle |
-| vDOT | \$3.39 M | 2,353,870 | all four venues | oracle |
-| apyUSD | \$2.86 M | 2,093,950 | stableswap + money market | oracle |
-| ETH | \$2.52 M | 1,056.36 | money market + XYK | oracle |
-| USDT (10) | \$2.50 M | 2,501,660 | stableswap + XYK + money market | oracle |
-| USDC (22) | \$1.80 M | 1,800,750 | stableswap + XYK + money market | oracle |
-| HDX | \$1.42 M | 126,095,000 | Omnipool + XYK | Omnipool spot |
+| stHDX (670) | \$14.32 M | 1,258,390,000 | money market | Omnipool HDX spot — a **floor** |
+| PRIME (43) | \$10.08 M | 9,598,650 | stableswap + money market | oracle |
+| HOLLAR (222) | \$6.91 M | 6,910,910 | all four venues | oracle |
+| tBTC (1000765) | \$4.55 M | 58.81 | Omnipool + money market | oracle |
+| vDOT (15) | \$3.41 M | 2,336,740 | all four venues | oracle |
+| DOT (5) | \$3.05 M | 3,463,280 | money market + XYK | oracle (\$0.86849); gross \$4.98 M |
+| apyUSD (46) | \$2.84 M | 2,075,110 | stableswap + money market | oracle |
+| ETH (34) | \$2.21 M | 921.72 | money market + XYK | oracle |
+| wstETH (1000809) | \$1.91 M | 640.85 | stableswap | **implied** from 2-Pool-GETH's share price |
+| HDX (0) | \$1.43 M | 126,106,000 | Omnipool + XYK | Omnipool implied spot |
+
+`stHDX` is the largest single asset and its price is a **floor**: it is staked HDX, the oracle has
+no entry for it, and a staking receipt is worth at least one unit of what it wraps. It is *not* a
+double count of the Omnipool's 126 M HDX — the staking pallet and the Omnipool are different
+accounts.
 
 **Never sum by symbol.** Seven registry assets are called `USDC` or `USDT`
 ([hydration.md](hydration.md#one-ticker-seven-assets)); the table above keeps the id, and so does
@@ -198,7 +251,9 @@ the page.
 | the wrap graph (which `Erc20` asset wraps what) | **verified live** — `UNDERLYING_ASSET_ADDRESS()` / `asset()` on all 26, 2026-08-21 |
 | every balance and every price above | **verified live**, 2026-08-21, block ≈13,715,470 |
 | the stableswap share-price cross-check | **verified live**, 9 pools, 2026-08-21 |
+| agreement with `server/sources/prices.mjs` | **verified live** — 25 assets, worst 0.0004 %, 2026-08-21 |
 | aTokens are 1:1 with their underlying | **verified live** in [hydration.md](hydration.md) — 282 legs, deviation exactly 0 |
 | an ERC-4626 share is *not* 1:1 | **verified live** — `convertToAssets` = 1.00988 |
+| the money market's `supplied` exceeds chain supply for 4 assets, and netting fixes all 4 | **verified live**, `Tokens::TotalIssuance` against every base asset, 2026-08-21 |
 | the derived/base classification is complete | **inferred.** It is complete over the four registry/contract tests above; a future wrapper that answers neither `UNDERLYING_ASSET_ADDRESS()` nor `asset()` and is registry-typed `Token` would be counted as base and would double-count silently. There is no on-chain flag that says "this is a wrapper". |
 | the XYK long tail is not hiding significant value | **inferred** from pool symmetry, not measured |

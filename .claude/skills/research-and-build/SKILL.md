@@ -140,6 +140,32 @@ in-flight commit to recover a message is a worse risk than a mislabelled one. No
 the reasoning survives somewhere durable — a module header, a `docs/platform/` note — and move on.
 History is the cheapest of the things that could have been lost.
 
+### Never block on a background process you do not own
+
+An agent waiting on a long job is the most expensive mistake in this file, because it looks like
+diligence. On 2026-08-21 one spent **two and a half hours across nine `Bash` calls of 16–20
+minutes each**, sleeping while `scripts/job.mjs run` filled the store in a separate process. The
+drain ran at exactly the same rate throughout. The sleeps bought nothing at all; they spent the
+agent's turns and its context, and none of it reached the repo.
+
+Two rules, and the second matters more:
+
+- **A background process runs whether or not you watch it.** If you need a progress number, take
+  one short reading and carry on. Never sleep in a loop for something you did not spawn in the
+  foreground.
+- **Know what "done" means before you wait for it.** That agent was waiting for a complete
+  backfill, and this store is **demand-driven by design** — `docs/decisions/0006` fills it from
+  reads, `0012` renders partial coverage with a coverage bar rather than a spinner, and `0014`
+  warms and resumes the queue at boot. A complete store was never a precondition for shipping.
+  It was waiting for a state the architecture specifically says you do not have to wait for.
+
+The useful inversion: **partial coverage is the state a real visitor meets on a cold store**, so
+verifying the page against it is worth more than verifying the warm case. The thing the agent was
+waiting to avoid was the thing most worth testing.
+
+The orchestrator's share of this: say in the brief what "enough" looks like, and name any decision
+that landed *after* the agent was briefed. This one could not have known about `0014`.
+
 ### Briefing an agent well
 
 Hand over everything you already know so it does not re-derive it: storage prefixes you computed,

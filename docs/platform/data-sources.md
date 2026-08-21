@@ -53,6 +53,15 @@ other eleven — `daily-summary`, `daily-tps`, `daily-usdc`, `daily-usdt`, `defi
 reads them. Three of those are described below, because "registered" and "understood" are not
 the same thing and the difference is where a wrong number comes from.
 
+**What it cannot do: balances.** Probed for the top-holders work (full `paths` list read out of
+`openapi.json`, 50 endpoints, 2026-08-21): there is **no account-balance or holder-ranking endpoint
+of any kind**. The one per-account endpoint, `/api/explorer/account/{address}/summary`, is activity
+stats — its own description says *"total transactions, first/last seen timestamps, and top 3
+most-used pallets"* — and it answered `"Account … not found"` for both the Polkadot treasury and a
+parachain sovereign (verified live 2026-08-21), so it indexes signed activity, not state: the
+biggest balance-holders on the chain are exactly the accounts it has never heard of. Anything
+needing "who holds what" starts from chain state, not from Dotlake.
+
 **Cost.** Cheap — sub-second, pre-aggregated. Cached 2–60 minutes by operation.
 
 > ⚠️ **`total_value_usd` is neither a floor nor a ceiling.** ~~It is a floor, not a total.~~

@@ -7,6 +7,28 @@ endpoints, or read out of the named repo. Where I could not verify something I s
 Repos read (read-only): `parachain-netflows`, `subtrope`,
 `subscrape`, `subflow`, `tge-data-aggregation`.
 
+> ### Where this has been overtaken — marked 2026-08-21
+>
+> Most of this sweep held up and the netflows work was built on it. Four places to read against
+> something newer:
+>
+> - **The 2023 study's method (§2) is now measured rather than reconstructed.** A fresh read of
+>   every day it covers agrees with it to a median **4.0 × 10⁻⁹** over 2,442 chain-days — and turns
+>   up two things this sweep could not have known: it measured **only the `para` leg**, and its
+>   **final row is a mid-day reading**, not a day close. Neither is a fault in the study; both are
+>   fatal to using it as a ground truth without saying so.
+>   See [asset-hub.md](../../platform/asset-hub.md#what-the-2023-study-measured-and-what-it-could-not).
+> - **"The binary search is obsolete" (§0.3) is half right.** For *events* yes — see
+>   [sqd-portal.md](../../platform/sqd-portal.md). For a *balance at a day's close* the binary
+>   search is what shipped, and it costs ~2.2 requests per day per chain once JSON-RPC batching is
+>   applied across days as well as keys.
+> - **Block-rate figures here are from one day.** Asset Hub's rate has moved by a factor of six
+>   inside the range this repo queries; use the measured table in
+>   [asset-hub.md](../../platform/asset-hub.md#block-rates-are-not-constant-and-asset-hubs-has-sped-up-more-than-fivefold),
+>   never an average.
+> - **The endpoint inventory in §1 is a 2026-08-19 snapshot.** `docs/platform/data-sources.md` is
+>   the maintained list of what this site actually reads.
+
 ---
 
 ## 0. The three findings that reshape everything
@@ -684,7 +706,7 @@ Worth knowing before anyone estimates effort — the primitives are already here
 | SS58 for display | `src/core/codec/ss58.js` → `encodeSs58(accountId, prefix)`, `shortAddress()`. **Decode is missing** — we only ever encode today. A `decodeSs58` is ~30 lines and needs the same blake2b already imported. |
 | SCALE | `src/core/codec/scale.js` — `decodeCompact` and Bulletin-specific shapes only. `AccountInfo` (§2.4) is four `u32`s and four `u128`s, so it needs no general decoder, just fixed offsets and a length assertion. |
 | a JSON-RPC transport | `server/lib/upstream.mjs` `jsonRpc` — **single call only.** JSON-RPC *batching* (an array body) is what makes the binary search affordable (§2.6); it is a small addition to that file. |
-| a netflows page | `netflows/index.html` + `src/pages/netflows/main.js` + `src/data/netflows.json` (85 KB, committed) + `scripts/build-netflows-dataset.mjs`, which re-derives the dataset from the 2023 CSVs and already carries the resampling/coverage/filter caveats and a list of discrepancies against the original report. **A live netflows v2 was scoped as a second series on this page. It shipped that way on 2026-08-20 and was split back out the same day** — the archive keeps `/netflows/`, the live read is `/sovereign/`. See [decision 0011](../../decisions/0011-a-page-has-one-subject.md). |
+| a netflows page | `netflows/index.html` + `src/pages/netflows/main.js` + `src/data/netflows.json` (85 KB, committed) + `scripts/build-netflows-dataset.mjs`, which re-derives the dataset from the 2023 CSVs and already carries the resampling/coverage/filter caveats and a list of discrepancies against the original report. **All of this shipped on 2026-08-20, in three moves in one day** — a live second series on `/netflows/`; the live half split out to its own page `/sovereign/` ([decision 0011](../../decisions/0011-a-page-has-one-subject.md)); then the 2023 → 2026 hole filled from the chains, so `/netflows/` is a continuous daily series and the committed archive is now a **cross-check against it** rather than the series itself ([decision 0012](../../decisions/0012-netflows-is-a-store-plus-a-live-tail.md)). |
 
 So the build is: a persistent store, an ingest writer, a `sqd` source module, and two small codec
 additions. None of the cryptographic groundwork has to be redone.

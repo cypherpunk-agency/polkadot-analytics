@@ -26,11 +26,14 @@ written account of what it is querying.
 | [xcm.md](platform/xcm.md) | XCM as a language: the instruction model, reserve vs teleport, sovereign accounts, barriers, and a worked transfer |
 | [smart-contracts.md](platform/smart-contracts.md) | pallet-revive and PolkaVM, Ethereum RPC compatibility, address mapping, where ink! stands |
 | [people-chain.md](platform/people-chain.md) | identity off the relay chain, registrars and judgements, resolving an address to a name |
-| [hydration.md](platform/hydration.md) | the Omnipool, stableswap, the Router, DCA, the money market, HOLLAR — and the `Broadcast.Swapped3` event this site reads |
+| [hydration.md](platform/hydration.md) | the Omnipool, stableswap, the Router, DCA, the money market, HOLLAR — the routed trades this site reads, and what a single-account drill-down is bounded by |
+| [hydration-capital.md](platform/hydration-capital.md) | how much capital sits on Hydration, in which assets, and why adding its four venues together double-counts 37% |
+| [prices.md](platform/prices.md) | which assets can be given a dollar figure from chains alone, which cannot, and what a page says about the difference |
 | [hyperbridge.md](platform/hyperbridge.md) | consensus-proof interoperability, the nexus indexer, and HyperFX intent orders |
 | [bridges.md](platform/bridges.md) | every bridge that reaches Polkadot, what each one asks you to trust, and why their numbers cannot be added together |
 | [moonbeam.md](platform/moonbeam.md) | how a parachain leaves: Moonbeam's deregistration, the exact block, and the three other departures nobody noticed |
 | [bulletin.md](platform/bulletin.md) | content-addressed transaction storage, leases, Store vs Renew, the Products Devnet |
+| [sqd-portal.md](platform/sqd-portal.md) | the keyless archive gateway for decoded events from block 0 — the transfer graph's transport, and the four ways it fails silently |
 | [data-sources.md](platform/data-sources.md) | every endpoint this site reads, what it costs, and what is wrong with it |
 
 ## `decisions/` — why we chose what we chose
@@ -48,7 +51,8 @@ written account of what it is querying.
 | [0009](decisions/0009-pricing-is-a-composed-source.md) | pricing is a source others compose, not a library others import |
 | [0010](decisions/0010-unreachable-is-data.md) | an unreachable upstream returns a payload, it does not throw |
 | [0011](decisions/0011-a-page-has-one-subject.md) | a page has one subject, and it goes first |
-| [0012](decisions/0012-netflows-is-a-store-plus-a-live-tail.md) | netflows is a store plus a live tail, not one or the other |
+| [0012](decisions/0012-netflows-is-a-store-plus-a-live-tail.md) | the netflows series is a **month-bucketed** store plus a live tail — how a stored fact's identity gets chosen |
+| [0013](decisions/0013-the-pricer-and-the-valuation-share-a-module.md) | the pricer and the valuation share a module, and only one half may fetch |
 
 ## `concept/` — working notes, deliberately not published
 
@@ -56,6 +60,17 @@ written account of what it is querying.
 sweeps and working notes — inventories of other repositories, half-formed plans, notes on
 strategy — written while working out what a dashboard should be. Some of it concerns things
 that are not public analytics at all.
+
+Four of them are live working documents rather than sweeps, and they are the ones to read first
+(named rather than linked, because a link from a published page into a withheld one renders as
+plain text):
+
+| | |
+|---|---|
+| `concept/plan.md` | what we decided to build and why, twelve sections deep, with the audit of what actually shipped |
+| `concept/research-queue.md` | every question opened and not answered, blocking or opening, with what each one unblocks |
+| `concept/handoff-2026-08-20.md` | a dated snapshot written before a context compaction. Superseded in most of its particulars; it says which |
+| `concept/research/*.md` | seven sweeps from 2026-08-19, each dated at the top. Read them as *evidence from that day*, not as current state — several of their headline claims have since been refuted, and `concept/research/critique.md` is the adversarial pass that started that |
 
 The publication rule is an **allowlist**, in `PUBLISHED_SECTIONS` in `scripts/knowledge.mjs`:
 `architecture/`, `platform/` and `decisions/` are rendered to `/knowledge/`, and a directory

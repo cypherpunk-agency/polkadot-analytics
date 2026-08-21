@@ -2,8 +2,8 @@
 
 Public analytics dashboards over Polkadot ecosystem data, at
 [analytics.cypherpunk.agency](https://analytics.cypherpunk.agency). Also a knowledge base: the
-`docs/platform/` notes exist so a question about the relay chain, Asset Hub, XCM, contracts, the
-People Chain, Hydration, Hyperbridge, Bulletin, the bridges, how a parachain leaves, how an asset
+`docs/platform/` notes exist so a question about the relay chain, Asset Hub, Kusama, XCM, contracts,
+the People Chain, Hydration, Hyperbridge, Bulletin, the bridges, how a parachain leaves, how an asset
 gets a dollar figure, or what every upstream costs can be answered from this repo without going and
 reading a chain first. `docs/README.md` is the index and lists every one of them.
 
@@ -282,7 +282,32 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   fixed bucket many readers land on (`swaps-daily` uses `{month}`, segments = its ISO days). The
   opposite mistake is equally quiet: an identity of "everything up to now" can never be immutable,
   and if it completes anyway `serveFromStore` answers *complete* forever and no later day is ever
-  fetched. See `docs/architecture/jobs.md`.
+  fetched. **And the same rule bites backwards: ADDING a param to a filled job orphans everything
+  already in it.** `{"month":"2026-01"}` and `{"month":"2026-01","network":"polkadot"}` are
+  different canonical params, so making `network` required on `netflows-daily` re-derived all 1,673
+  stored Polkadot days and left the old rows as dead weight — correct answers, full coverage bar,
+  nothing reporting it. Pay it knowingly, or run the forward-only `UPDATE` in
+  `docs/decisions/0015-netflows-is-parameterised-by-network.md`. See
+  `docs/architecture/jobs.md`.
+- **`queue.enqueue` is find-or-create over LIVE states only, and `done` is not one of them.**
+  Enqueuing an identity that already finished does not join it — it mints a NEW job and refetches
+  every segment already stored. Anything that enqueues without asking `describeIdentity` first (a
+  boot warm-up, a cron, a retry loop) turns "immutable data is fetched once and never again" into
+  "refetched every time", with correct answers, a full coverage bar and nothing anywhere reporting
+  it. `server/lib/warm.mjs` checks; `server/test/warm.test.mjs` asserts it.
+- **`MAX_LIVE_JOBS_PER_OPERATION` is counted per `(source, operation)` ACROSS ALL PARAMS, so
+  warming half a page is worse than warming nothing.** `countLive` in `server/lib/jobs.mjs` does not
+  look at params. Warming is deliberately exempt from the cap, but a *reader* is not — so a boot
+  warm-up that enqueued only Polkadot's 55 netflows months would refuse a Kusama reader arriving
+  during the drain with "the queue is busy" for the whole of it, having made the half it did not
+  warm strictly harder to fetch than before. `netflows-daily` warms both networks for that reason,
+  not for a reason about cost.
+- **A job SIGKILLed mid-batch is not runnable for up to `leaseMs` afterwards.** Its lease was
+  heartbeated seconds before the process died, so at the instant a redeploy comes back up the row is
+  `running` with a lease still in the future — `hasRunnable()` is false, a one-shot check at boot
+  correctly finds nothing to do, and then never looks again. Reproduced 2026-08-21: a netflows
+  backfill sat at 30/31 across a restart. Anything that resumes work at boot needs a **tick**, not a
+  check; `failed` jobs backing off for up to an hour have the same shape.
 - **A daily balance series is labelled by its CLOSE, and the 2021–2023 netflows archive is too.**
   `src/data/netflows.json` defines a day as "the last balance observed at or before the end of that
   UTC day", and reading `System::Account` at the UTC day's LAST BLOCK reproduces it to the planck —
@@ -290,14 +315,17 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   2026-08-20). Reading at 00:00 of the same day instead shifts the whole series one day EARLY and
   reads as a genuine one-day lead. This is the mirror of the oracle-bar entry above: there a bar is
   labelled by its open, here by its close, and neither is guessable from the numbers.
-- **Asset Hub has state but NO CLOCK below block #305,204** (2021-12-18T18:52:54.582Z):
-  `state_getRuntimeVersion` there answers `statemint 601` while `Timestamp::Now` answers `null`
-  (verified live 2026-08-20). That is Statemint's pre-launch period, not pruning — but it looks
-  identical to a pruned archive, and a balance read against a pruned block also answers `null`,
-  which is indistinguishable from "this account holds nothing". Guard on `Timestamp::Now`, which
-  every real block has: refuse a day whose block cannot produce a timestamp inside that UTC day.
-  Both public endpoints (`rpc.polkadot.io`, `polkadot-asset-hub-rpc.polkadot.io`) are otherwise
-  full archives to genesis.
+- **Both Asset Hubs have state but NO CLOCK below a launch block** — Polkadot's **#305,204**
+  (2021-12-18T18:52:54.582Z, `statemint 601`) and Kusama's **#66,687** (2021-06-03T15:36:00.509Z,
+  `statemine 1`). Below those, `state_getRuntimeVersion` answers normally while `Timestamp::Now`
+  answers `null` (verified live 2026-08-20 and 2026-08-21). That is the pre-launch period, not
+  pruning — but it looks identical to a pruned archive, and a balance read against a pruned block
+  also answers `null`, which is indistinguishable from "this account holds nothing". Guard on
+  `Timestamp::Now`, which every real block has: refuse a day whose block cannot produce a timestamp
+  inside that UTC day. It is what sets each netflows series' floor — 2022-01 for Polkadot, 2021-07
+  for Kusama. All four public endpoints (`rpc.polkadot.io`,
+  `polkadot-asset-hub-rpc.polkadot.io`, `kusama-rpc.polkadot.io`,
+  `kusama-asset-hub-rpc.polkadot.io`) are otherwise full archives to genesis.
 - **Asset Hub's block rate has moved by a factor of six inside 2022–2026** — 12.51 s/block on
   2022-05-31, 12.80 on 2024-03-01, 6.57 on the migration day 2025-11-04, **2.24 on 2026-08-19**
   (all measured day-over-day from the chain, 2026-08-20). The relay chain sat at 6.00–6.10
@@ -306,11 +334,15 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   already recorded above. Measure the rate LOCALLY from the samples nearest the target, and verify
   every boundary against the chain's own timestamps. See `docs/platform/asset-hub.md`.
 - **The 2023 netflows study measured ONE of the two sovereign accounts, and its last day is not a
-  whole day.** It read `para` on the relay chain only; on 883 of the 2,442 chain-days in its window
-  the same chain also held DOT in its `sibl` account on Asset Hub (up to 1.12% of its total then,
-  essentially all of it now). And on 2023-04-08, its final row, all eight chains disagree with a
-  fresh read by up to 23.6% — its captures stop mid-day, so its published "at the end" figures are
-  mid-day readings, not day-end ones. Everywhere else the two agree to a median 4.0 × 10⁻⁹.
+  whole day.** It read `para` on the relay chain only; on 883 of the 2,442 Polkadot chain-days in its
+  window the same chain also held DOT in its `sibl` account on Asset Hub (up to 1.12% of its total
+  then, essentially all of it now). **On Kusama the same omission is not a footnote: 1,714 of 3,515
+  chain-days, and up to 96.77% of the holding** — Picasso on 2022-12-23 held 66.11 KSM on the relay
+  and 1,981.38 KSM in its `sibl` account on Statemine. And on its final row all chains disagree with
+  a fresh read by up to 23.6% (Polkadot, 2023-04-08) and 7.22% (Kusama, 2023-03-12) — its captures
+  stop mid-day, so its published "at the end" figures are mid-day readings, not day-end ones, on
+  both networks independently. Everywhere else the two agree to a median 4.0 × 10⁻⁹ (Polkadot) and
+  8.3 × 10⁻⁸ (Kusama).
 - **`overflow-y: auto` silently turns on horizontal clipping too, so a page can measure clean while
   a row inside it is broken.** CSS computes `overflow-x: visible` to `auto` whenever the other axis
   is not `visible`, so `.scroll-y` (`max-height: 28rem; overflow-y: auto`) is also a horizontal
@@ -320,3 +352,133 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   put theirs inside `.scroll-y`. The only symptom left there was a `2fr` bar track squeezed to 9px
   at 390 and 0px at 360: a chart of nothing, rendering perfectly. Measure the ROW, not the document
   — `documentElement.scrollWidth` cannot see inside a scroll container.
+- **KSM is 12 decimals and DOT is 10, and the netflows page divided planck by a module constant.**
+  A Kusama series drawn with the DOT divisor is exactly **100× too large** and renders perfectly —
+  Karura's 2022 peak reads 17.0 M KSM instead of 169,884. `series.js` now takes the divisor from the
+  network and throws without one, and `netflowsHeads` asserts token and decimals against
+  `system_properties` on every read rather than trusting its own table. Kusama's SS58 prefix is
+  **2**: a sovereign address rendered at prefix 0 is a valid-looking *Polkadot* address for a Kusama
+  account. See `docs/platform/kusama.md`.
+- **The Kusama Asset Hub Migration is 2025-10-07, and that is now bisected rather than
+  transcribed.** Karura's `para` account on the Kusama relay falls 40,394.8 → 160.0 KSM across
+  #30,424,405→#30,424,406 (2025-10-07T14:47:54Z), and it was **progressive, not atomic** — four
+  other chains had not moved at that block. The date decides which leg holds the money on which side
+  of it, so a wrong one silently misattributes the whole series; it was carried in two
+  `docs/platform/` files as an unchecked transcription until 2026-08-21, and the transcription
+  happened to be right. **No storage item says it** — bisect a large sovereign account, do not
+  transcribe. Afterwards each chain keeps a *round* number of KSM plus exactly one existential
+  deposit on the relay, so reading only the relay leg returns a few hundred KSM per chain and looks
+  entirely reasonable.
+- **A relative-deviation verdict against the 2023 netflows archive is set by the smallest balance in
+  the overlap, not by whether the two readings agree.** The archive rounds every balance half-up to
+  **two decimal places** on both networks, so a value can be out by 0.005 tokens whatever it is —
+  0.25 % of Polkadot's smallest overlapping balance (1.23 DOT) and **7.3 % of Kusama's (0.03 KSM)**.
+  Two readings agreeing to the planck therefore score "agrees" on Polkadot and "disagrees on 35 of
+  115 chain-days" on Kusama, and the only thing that changed was the denominator. Judge on the
+  **absolute** gap against `ARCHIVE_QUANTUM = 0.005` and report the relative figure beside it. The
+  bound is measured, not assumed: across 2,434 Polkadot chain-days the largest absolute gap is
+  0.004999620 DOT — 99.99 % of the quantum, zero exceedances.
+- **`fs.mkdirSync(dir, {recursive: true})` can SPIN FOREVER, and it never throws while it does.** It
+  reads `ENOENT` from a mkdir as "the parent does not exist yet", creates the parent and retries the
+  child — so on a filesystem that answers `ENOENT` to *creating* a child whose parent already exists,
+  the two alternate forever. procfs does exactly that: `mkdir('/proc/x')` is `ENOENT` while `/proc`
+  stats as a directory (verified on Linux 6.18, 2026-08-21, from Node and from `/bin/mkdir` alike).
+  `ANALYTICS_DATA_DIR=/proc/nonexistent/nope node server/index.mjs` spun in C++ at 100 % CPU, thread
+  state `R`, printed nothing, and never reached `server.listen` — so the `try/catch` that exists to
+  degrade mode A could never fire, because **a catch only helps if the call returns.**
+  `server/lib/store.mjs` now walks ancestors once, bounded by path depth. A process that is alive
+  and not listening reads as "still starting" to every health check there is.
+- **An unparseable answer from OUR OWN ORIGIN is not a `decode` error.** `src/core/client.js` threw
+  `kind: 'decode'` for any `/api/*` response that would not JSON-parse, and `decode`'s on-screen
+  advice is "a runtime upgrade changed a format" — so a 503 caused by a missing volume rendered as a
+  chain-decoder bug and cost ten minutes of hunting the wrong layer. Every `/api/*` answer this
+  server produces is JSON, including its errors, so a body that will not parse **did not come from
+  the app**: it came from the edge, or the response was truncated. `decode` now only ever comes from
+  the server's own `error.kind`, and the client quotes the first 80 characters of whatever answered.
+- **SQD's portal stream TRUNCATES a block range and says nothing.** Ask `asset-hub-polkadot` for
+  39,000 blocks and you get 25,699 — HTTP 200, well-formed NDJSON, and **no header, field or
+  sentinel** marking the cut (measured twice, 2026-08-21; the cut looks byte-driven at roughly
+  6.7 MB). The only signal is that the last row's block number is below your `toBlock`. A caller that
+  does not loop on `last + 1` gets a window short at its **newest** end — the part a reader is most
+  likely looking at — and every chart drawn from it renders perfectly. `fetchRange` in
+  `server/sources/transfers.mjs` loops and throws if the stream ever fails to advance.
+- **SQD accepts an event name that does not exist and answers 200 with no events.**
+  `Bananas.Wobbled` verified live 2026-08-21. There is no schema check and no introspection to
+  validate a name against, so a typo — or a name a runtime upgrade moved — renders as "this account
+  never transferred anything" rather than as a failure. Pin the names as a constant with a test, and
+  publish the per-name chain-wide match count on the payload so a name that has stopped matching
+  shows up on the page as a zero.
+- **SQD's `real_time` flag cannot tell a live dataset from a dead one.** Every Polkadot-ecosystem
+  dataset reports `real_time: false`, including the two that are current. On 2026-08-21
+  `asset-hub-polkadot` was ~2 h behind and `hydradx` was **104.5 days** behind, both flagged
+  identically, both answering in under a second with well-formed rows. Only the head TIMESTAMP
+  separates them, and `/datasets/<name>/head` does not publish one — stream the head block for it.
+  The portal also publishes in batches: the Asset Hub head was byte-identical across 41 minutes of
+  observation while its lag grew from 82 to 122 minutes.
+- **Transfer events are ~30 % of the balance-changing events on Asset Hub, and the rest have no
+  counterparty at all.** Over 1,600 blocks on 2026-08-21: `Deposit` 405, `Transfer` 399, `Withdraw`
+  325, `Minted` 144, `Endowed` 69, `Assets.Transferred` 13. `Deposit`/`Withdraw`/`Minted` are
+  single-ended `{who, amount}` — fees, staking rewards, the mint and burn halves of XCM — so they
+  belong in a balance fold and cannot be graph edges. A page that folds transfers and calls it
+  "everything this account did" is claiming a completeness it does not have.
+- **Hydration registers the same Ethereum ERC-20 once PER BRIDGE, and the money market took the
+  Wormhole one.** Asset 19 `WBTC` (oracle-priced) is `GeneralKey("wh") + GeneralIndex(2) +
+  GeneralKey(0x…2260fac5…)` — Wormhole-wrapped; asset 1000190 is the *same Ethereum contract*
+  arriving over Snowbridge, and `getAssetPrice` **reverts** on it. Likewise Hydration's oracle-priced
+  `USDT` (10) and `USDC` (22) are `Parachain(1000) + PalletInstance(50) + GeneralIndex(1984 / 1337)`
+  — Asset Hub's own Tether and Circle coins, the two that are *not* bridged. Never key a price by the
+  ticker, and — one level up — **never key it by the underlying contract address either**: the bridge
+  that wrapped it is part of the asset's identity. All locations read live from
+  `AssetRegistry::AssetLocations`, 2026-08-21. See `docs/platform/prices.md`.
+- **Hydration's money-market oracle prices 23 of 1,438 registered assets, that set is exactly
+  `Pool.getReservesList()`, and it is keyed by two different kinds of address.** A revert means "not
+  a reserve", not "no market" — it is the collateral valuation of one Aave fork, not a price feed for
+  the chain (verified live 2026-08-21 by calling `getAssetPrice` on every registry id). A Substrate
+  registry asset is `0x` + 31 zero bytes + `01` + the u32 id big-endian; an `Erc20`-typed one is the
+  contract in its `AssetLocations` entry — **asked by id, HOLLAR reverts**, so a sweep keyed only by
+  id silently drops the market's dollar-pegged asset and the Omnipool's best hub anchor. Nothing
+  errors: the hub median just loses an anchor (109 bps from three against 76 bps from four, measured
+  an hour apart) and HOLLAR reappears with an *Omnipool implied spot* label instead of the oracle's
+  exact `1.00000000`. Both readings are plausible. The Omnipool's implied spot covers a different 19
+  assets and agrees with the oracle to **under 1 %** on the four in the overlap.
+- **Asset Hub's `ForeignAssets` key tail and Hydration's `AssetLocations` value are byte-identical
+  for the same asset.** That is the join between the two chains — raw SCALE bytes, no decoding, no
+  ticker. 22 of Asset Hub's 34 bridged assets match a Hydration id this way, and the match is
+  corroborated independently: `Tokens::TotalIssuance` on Hydration equals `ForeignAssets` `supply` on
+  Asset Hub *to the unit* for ENA, sUSDe and LBTC (verified live 2026-08-21), because essentially
+  everything bridged in has been forwarded on to Hydration.
+- **Every "Giga" token on Hydration is an aToken of a STABLESWAP POOL, no name-based filter catches
+  it, and the registry cannot tell a 1:1 wrapper from one that is not.** `GDOT` (69) wraps the pool
+  `2-Pool-GDOT` (690); `GETH` (420) wraps `2-Pool-GETH` (4200), whose own reserves are `aETH` — itself
+  the aToken of ETH; `GSOL` (9001) wraps `2-Pool-GSOL` (90001); `GIGAHDX` (67) wraps `stHDX`. The
+  Omnipool's third-largest position is therefore four hops from a token that is not a claim on
+  something else on the same chain, and summing the four venues double-counts **$27.19 M of
+  $90.02 M — 30.2 %** (verified live 2026-08-21; with the recursive-deposit deduction below it is
+  $32.32 M, 36 %). Ask the contract — `UNDERLYING_ASSET_ADDRESS()` for
+  an aToken, `asset()` for an ERC-4626 vault — plus registry type `StableSwap`/`XYK`. And the two
+  answers are not equivalent: **an aToken is 1:1 with its underlying, an ERC-4626 vault share is
+  not.** `uBIL` (550) is a 4626 vault over HOLLAR whose `convertToAssets(1e18)` reads **1.00988** — a
+  0.99 % error today that grows with the vault's yield, and it renders perfectly. Both appear as
+  `AssetType::Erc20`; only the contract distinguishes them. See
+  `docs/platform/hydration-capital.md`.
+- **Hydration's venues hold more of four assets than the CHAIN HAS, and that is correct Aave
+  behaviour, not a bug.** A depositor can borrow the same asset and re-deposit it, and the money
+  market's `supplied` — the aToken supply — counts every turn of the loop, so it is not a quantity of
+  tokens in custody. Verified live 2026-08-21 against `Tokens::TotalIssuance`: **DOT 5,660,420 held
+  gross against a chain supply of 4,489,790 (126 %)**, EURC 137 %, SOL 120 %, ETH 103 %. Netting the
+  borrowed leg out (`supplied − borrowed`, floored at zero because HOLLAR is *minted* as debt rather
+  than lent) brings all 28 checkable assets back under supply. Any Hydration TVL that adds
+  `supplied` to pool reserves is counting looped deposits, and the number looks entirely reasonable
+  — **the supply comparison is the only thing that distinguishes the two figures.**
+- **A control that navigates re-runs `load()` — even for a parameter `load()` never reads — and the
+  fix for that breaks every other control's link.** Both halves fail silently. `/xcm/`'s edge
+  weighting was a `choiceControl`, so flipping "by value / by messages" re-fetched all four Dotlake
+  endpoints including the row-level read that pages the upstream up to twenty times: about forty
+  seconds to change how one graph is drawn from data already in the browser, with the page reloading
+  correctly and showing the right answer. Use `localChoiceControl` when the parameter does not appear
+  in `load()`. But `choiceControl` builds each option's `href` from the whole query string **once, at
+  build time**, which was enough only while every control navigated away — add one control that
+  rewrites the URL with `replaceState` and every other control still carries the values the page
+  LOADED with, so using Network after flipping the graph silently reverts the graph. `src/design/page.js`
+  keeps a `relinkers` set for exactly this. See
+  `docs/decisions/0017-a-control-sits-with-what-it-changes.md`.

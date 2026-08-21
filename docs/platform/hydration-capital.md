@@ -257,3 +257,16 @@ the page.
 | the money market's `supplied` exceeds chain supply for 4 assets, and netting fixes all 4 | **verified live**, `Tokens::TotalIssuance` against every base asset, 2026-08-21 |
 | the derived/base classification is complete | **inferred.** It is complete over the four registry/contract tests above; a future wrapper that answers neither `UNDERLYING_ASSET_ADDRESS()` nor `asset()` and is registry-typed `Token` would be counted as base and would double-count silently. There is no on-chain flag that says "this is a wrapper". |
 | the XYK long tail is not hiding significant value | **inferred** from pool symmetry, not measured |
+
+## Related, and one page that now points the wrong way
+
+- [hydration.md](hydration.md) — what the Omnipool, stableswap, the Router, DCA and the money
+  market *are*, and how to price an asset off this chain.
+- [prices.md](prices.md) — the oracle universe and the Omnipool's implied spot, which
+  `server/sources/prices.mjs` publishes for other pages to compose.
+- `/hydration-market/` explains why the money market's `supplied` cannot simply be added to pool
+  reserves, and says "which is why there is no combined Hydration TVL number anywhere on it". That
+  is still true **of that page**, and it is now the only place a reader is told the number does not
+  exist — it does, on `/hydration-capital/`, which reads all four venues at one instant and nets
+  them against each other. `src/pages/hydration-market/board.js`'s wrapper-share note wants one
+  clause pointing there.

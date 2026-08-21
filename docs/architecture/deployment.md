@@ -3,8 +3,13 @@
 How this service becomes a container, what that container needs from the world, and what is still
 missing before it can actually ship.
 
-**Status as of 2026-08-19: the deploy job is gated off.** Pushes to `main` build and publish an
-image. Nothing pulls it. See [What is still owed](#what-is-still-owed) for the exact list.
+**Status as of 2026-08-21: the deploy runs, and the store has nowhere to live on the VM.**
+`.github/workflows/deploy.yml` carries real infra values and `PINNED_COMMAND_SUPPLIED=true`, and
+production is demonstrably serving this repository's code — so the "gated off as of 2026-08-19" this
+line used to say is out of date. What cannot be read from this repository is the value of the
+`DEPLOY_ENABLED` repository variable itself (research queue O59). What is missing is a volume: see
+[the volume, and the change an operator has to make](#the-volume-and-the-change-an-operator-has-to-make),
+and [What is still owed](#what-is-still-owed) for the rest of the list.
 
 ---
 
@@ -14,11 +19,16 @@ One image, one process. Inside it:
 
 - **the static site** — a Vite multi-page build. Every page directory at the repo root that holds an
   `index.html` becomes a page; `xcm/index.html` is served at `/xcm/`.
-- **the server** — `server/index.mjs`, about 250 lines of `node:http`. It serves `dist/` and answers
-  a read-only, cached API at `/api/*` that proxies public upstreams.
+- **the server** — `server/index.mjs`, ~640 lines of `node:http`. It serves `dist/` and answers a
+  read-only, cached API at `/api/*` that proxies public upstreams.
+- **a job worker**, in a `worker_threads` thread of the same process, draining a queue that lives in
+  the same SQLite file as the store. It is idle unless something enqueued work
+  ([jobs.md](jobs.md)).
 
-There is no second container, no database, no cache server, no queue and no sidecar. The response
-cache is a `Map` in the process; a restart empties it and the next request refills it.
+There is no second container, no database server, no cache server and no sidecar. The response cache
+is a `Map` in the process; a restart empties it and the next request refills it. The job queue is
+**not** in that `Map` — it is rows in `store.sqlite` on the volume, and surviving a restart is the
+whole point of it.
 
 ## Building the image
 
@@ -53,50 +63,54 @@ deliberately: the service only ever reads them, so the process cannot rewrite it
 
 ## What the container needs
 
-Nothing.
+One volume, and nothing else.
 
-That is worth stating plainly, because it is unusual and it is the property that makes everything
-else about this deployment boring:
+That is worth stating plainly, because the list is so short and because it used to be shorter:
 
 - **No secrets.** Every upstream is anonymous public HTTP. No API key, no token, no `Authorization`
   header, no `.env`, no secret store, no mounted credential file. `server/lib/upstream.mjs` is the
   single place any outbound request is made, and it attaches no credentials to anything — see
   `docs/decisions/0003-no-secrets.md`.
-- **No volumes.** Nothing is written to disk at runtime. The image is designed to run with
-  `--read-only`, and CI asserts that it does. **This is now a constraint rather than a property**
-  — see the box below.
-- **No datastore.** No Postgres, no Redis, no object storage. The one persistence this repo has is
-  a single SQLite file it opens itself; there is still no server to run.
-- **No configuration** beyond four variables, none of which is sensitive:
+- **One volume, 1 GB, at `/data`.** This is the whole of the change from "nothing at all", and it
+  arrived with [decision 0006](../decisions/0006-demand-driven-store.md): mode A writes
+  `store.sqlite`. The rootfs stays `--read-only` and `/data` is the only writable path in the
+  container. See the box below for what happens without it, and
+  [decision 0014](../decisions/0014-the-store-gets-a-volume-and-fills-itself.md) for why it is a
+  named volume rather than a `VOLUME` instruction.
+- **No datastore.** Still true, and worth keeping separate from the volume: no Postgres, no Redis,
+  no object storage, no second container. The one persistence this repo has is a single SQLite file
+  it opens itself; there is no server to run.
+- **No configuration** beyond five variables, none of which is sensitive:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8080` | listen port |
 | `HOST` | `0.0.0.0` | listen address |
 | `BUILD_STAMP` | `unknown` | the deployed git sha, reported by `/api/health` |
-| `ANALYTICS_DATA_DIR` | `<repo>/server/data` | where `store.sqlite` lives. **Unset in production today**, and the default is not writable on a read-only rootfs |
+| `ANALYTICS_DATA_DIR` | `/data` **in the image** (`<repo>/server/data` outside it) | where `store.sqlite` lives. Set in the Dockerfile so a deployment has one job — mount something at `/data` — rather than two that can disagree |
+| `NODE_OPTIONS` | `--max-old-space-size=192` | heap ceiling; see the memory envelope below |
 
-> ### The store has nowhere to live, and that is deliberate-but-expired
+> ### Without the volume the site works and two pages do not
 >
 > "Nothing is written to disk at runtime" was true of the whole service when it was written. Since
-> [decision 0006](../decisions/0006-demand-driven-store.md) it is true only of **mode B**. Mode A —
-> the store — writes `store.sqlite`, and on a `--read-only` rootfs with no volume `openStore()`
-> throws.
+> [decision 0006](../decisions/0006-demand-driven-store.md) it is true only of **mode B**.
 >
-> **The service does not care, on purpose.** `createApp` catches it, logs `[store] mode A is
-> unavailable`, and boots with `store = null`; every mode-A operation then answers 503 while every
-> mode-B one answers normally. A site that refuses to start because a volume is missing is a worse
-> outage than a site with two of thirty-two endpoints down. But the consequence is worth saying
-> plainly: **`/netflows/` and `hydration/swaps-daily` do not work in production**, and they will not
-> until a volume exists.
+> With no volume mounted, `/data` is part of the read-only rootfs, `openStore()` throws, and the
+> service **carries on**: it logs `[store] mode A is unavailable`, keeps listening, answers every
+> TTL-cached (mode B) operation normally, and answers `503` on the store-backed ones. A site that
+> refuses to start because a volume is missing is a worse outage than a site with two of
+> thirty-seven endpoints down.
 >
-> The size question is settled, on a measured fill rate rather than a guess: **1 GB**, which holds
-> roughly 160,000 source-days at the 14–17 kB/day this repo actually costs. A full 19-month
-> Hydration backfill is 9 MB; the 2022 → 2026 netflows series is 2.33 MB. The measurement, and what
-> would reverse it, is in [jobs.md](jobs.md#what-the-store-actually-costs) and `docs/concept/plan.md`
-> §12.
+> The consequence, stated plainly, because it happened: **`/netflows/` and `hydration/swaps-daily`
+> return 503 for every visitor** in that state. It shipped that way on 2026-08-20 and nothing went
+> red, which is the real lesson here — **an image that boots and serves is not evidence that the
+> volume is there.** `/api/health` reports `store.available`; CI now asserts it in both directions.
 >
-> What is *not* settled is the ask, which is item 7 in [what is still owed](#what-is-still-owed).
+> The size is settled on a measured fill rate rather than a guess: **1 GB**, which holds roughly
+> 160,000 source-days at the 14–17 kB/day this repo actually costs. A full 19-month Hydration
+> backfill is 9 MB; the 2022 → 2026 Polkadot netflows series is 2.33 MB and Kusama's 2021 → 2026 one
+> is 2.73 MB. The measurement, and what would reverse it, is in
+> [jobs.md](jobs.md#what-the-store-actually-costs) and `docs/concept/plan.md` §12.
 
 `BUILD_STAMP` is what makes "is the new version actually live?" answerable by asking the service
 instead of inferring it from a container start time.
@@ -104,12 +118,21 @@ instead of inferring it from a container start time.
 A minimal run looks like this, and it is the full set of flags:
 
 ```
+docker volume create polkadot-analytics-data
+
 docker run -d --name polkadot-analytics \
   --read-only \
   --memory 256m \
+  --volume polkadot-analytics-data:/data \
   --publish 127.0.0.1:8080:8080 \
   ghcr.io/cypherpunk-agency/polkadot-analytics:<sha>
 ```
+
+A **named** volume, deliberately. `/data` exists in the image owned by uid 1000, and Docker seeds a
+fresh named volume from the image's directory — ownership included — so the `node` user can write to
+it on the first boot with no runtime `chown` and no root. A **bind** mount inherits nothing (the host
+directory's ownership wins), so a host path must be `chown 1000:1000`ed by hand first; forget it and
+the container reports exactly the same "mode A is unavailable" as having no volume at all.
 
 ## Memory envelope
 
@@ -158,7 +181,8 @@ Returns `200` and JSON:
   "service": "polkadot-analytics",
   "build": "<the deployed git sha>",
   "uptimeSeconds": 41,
-  "cache": { "entries": 12, "approxBytes": 918273, "hits": 88, "misses": 12, "…": 0 }
+  "cache": { "entries": 12, "approxBytes": 918273, "hits": 88, "misses": 12, "…": 0 },
+  "store": { "available": true }
 }
 ```
 
@@ -171,6 +195,12 @@ until the first real request.
 It also reports `build`, so an alert can distinguish "the service is down" from "the service is up
 and serving last week's code" — which is the failure a plain 200 check will never catch.
 
+`store.available` is the other field worth alerting on, and it is the one this deployment learned
+the hard way. `false` means the container came up without a writable `/data`: everything TTL-cached
+answers normally and every store-backed operation answers 503, so the site looks entirely healthy
+from the outside while `/netflows/` is broken for every visitor. Nothing else distinguishes the two
+states.
+
 ### What neither of them does
 
 Neither endpoint calls an upstream, and that is a deliberate design decision rather than an
@@ -179,6 +209,37 @@ everybody learns to ignore, and an upstream outage that restarts our container m
 worse. Upstream failures surface where they belong: as `502` on the specific `/api/<source>/<op>`
 call, with `transport` versus `upstream` preserved so the reader can tell "we could not reach them"
 from "they answered with an error".
+
+### What the server does at boot, and in what order
+
+The order is load-bearing, so it is written down rather than left to be read out of the file:
+
+1. **`server.listen`.** Before anything touches the filesystem. Whatever a mounted volume costs —
+   and a volume can be slow, or wedged, in ways a local disk is not — it must not be able to cost
+   the listener. A process that is alive and not listening is the worst of the three states, because
+   every health check and every human reads it as "still starting" for as long as it lasts.
+2. **`openStore()`.** Failing here is a supported state, not a crash. Until it returns, mode A
+   answers 503 and mode B answers normally.
+3. **Warm and resume,** in the background, never awaited. Any job left runnable by a previous
+   instance is picked up, and any handler that declares `warm()` gets its identities enqueued — so a
+   backfill interrupted by a redeploy continues without waiting for a visitor. Thereafter a
+   one-minute tick keeps looking, because "runnable" is a function of the clock: a job SIGKILLed
+   mid-batch holds its lease for up to a minute after its owner died, and a failed job backs off for
+   up to an hour. See
+   [decision 0014](../decisions/0014-the-store-gets-a-volume-and-fills-itself.md).
+
+> **Both handlers declare `warm()` as of 2026-08-21**, so a fresh volume fills itself: every settled
+> month of `asset-hub/netflows-daily` on both networks, and every settled month of
+> `hydration/swaps-daily` from orca's own floor block up to orca's own head. Neither list is a
+> constant — each is derived from the same predicate `immutable` uses, so the current month falls
+> out on its own and the warm list cannot drift from the list a reader asks for. A warm identity
+> that differs from a requested one by so much as a key is a **second** identity: the backfill would
+> run twice, both copies would be correct, and the page would still start empty.
+>
+> **Warming half a page is worse than warming nothing**, which is why `netflows-daily` warms both
+> networks. `MAX_LIVE_JOBS_PER_OPERATION` (8) is counted per `(source, operation)` **across all
+> params**, so warming Polkadot alone would put 55 live jobs on that operation and a Kusama reader
+> arriving during the drain would be refused with "the queue is busy" for the whole of it.
 
 ## Push-to-deploy
 
@@ -233,57 +294,93 @@ fail this one.
 
 ## What is still owed
 
-Nothing below exists yet. Until it does, `DEPLOY_ENABLED` stays unset and the deploy job stays
-skipped.
+Items 1–4 of the original list were supplied by infra over the agent bridge on 2026-08-19 and are
+reviewed literals in `.github/workflows/deploy.yml` now: the Workload Identity provider and service
+account, the instance and zone (`web-server` / `europe-west1-b`), and the pinned privileged command
+(`sudo /usr/local/bin/deploy-service`). The one Actions secret the deploy reads is
+`GCP_DEPLOY_SSH_KEY`; there is deliberately no `GCP_SA_KEY` and the preflight fails the run if one
+appears.
 
-**From the infra session**, as repository *variables* — none of these is confidential, and keeping
-them as variables rather than secrets keeps "this repo has no secrets" literally true:
+What is still owed:
 
-1. **`GCP_WORKLOAD_IDENTITY_PROVIDER`** —
-   `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`.
-   The pool's attribute condition **must** restrict the principal to this repository (e.g.
-   `assertion.repository == 'cypherpunk-agency/polkadot-analytics'`). Without that condition, any
-   GitHub repository in the world can assume the identity.
-2. **`GCP_SERVICE_ACCOUNT`** — the deploy service account's email. It needs exactly two things: pull
-   the image, and run the pinned command on one instance. Not project editor, not compute admin.
-3. **`GCP_INSTANCE`** and **`GCP_ZONE`** — the shared `e2-small` and its zone.
-4. **The pinned privileged command** — the exact remote command that swaps the running container.
-   It lives inline in `deploy.yml`, not in a repository variable, because a command injected from a
-   variable is arbitrary remote code execution for anyone who can edit repository settings. Infra
-   supplies the text; it lands in the file through code review like everything else.
-
-Also owed, and the reason the `--ssh-key-file` box exists:
-
-5. **OS Login enabled** (`enable-oslogin=TRUE`) on the project or the instance, plus IAP so
-   `--tunnel-through-iap` can be added and public SSH closed on the VM.
-
-And from whoever owns the edge:
-
-6. **Caddy** terminating TLS for `analytics.cypherpunk.agency` and proxying to the container. The
+1. **OS Login enabled** (`enable-oslogin=TRUE`) on the project or the instance, plus IAP so
+   `--tunnel-through-iap` can be added and public SSH closed on the VM. This is also the durable fix
+   for the `--ssh-key-file` box above.
+2. **Caddy** terminating TLS for `analytics.cypherpunk.agency` and proxying to the container. The
    server sets its own security headers including `connect-src 'self'`, so the edge and the origin
    agree even if one of them is ever bypassed.
-
-When all six exist, the enabling change is: set `DEPLOY_ENABLED=true`, replace the `TODO(infra)`
-remote command, and flip `PINNED_COMMAND_SUPPLIED` in the preflight step — the last two in the same
-reviewed pull request. The preflight step refuses to run if the flag is flipped before the values
-are real, because a half-configured deploy that runs is worse than one that does not.
-
-**Added 2026-08-20, and independent of the six above** — the deploy works without it; two features
-do not:
-
-7. **One small persistent volume, and the two changes that go with it.**
-   **1 GB**, sized on a measured fill rate rather than a guess (`docs/concept/plan.md` §12.2 and
-   [jobs.md](jobs.md#what-the-store-actually-costs)): 14–17 kB per source-day, ~160,000 source-days
-   in a gigabyte, 9 MB for a full nineteen-month Hydration backfill. Mounted somewhere writable —
-   `/mnt/pd` was the shape discussed — with **`ANALYTICS_DATA_DIR`** pointed at it. The rootfs
-   stays read-only; **CI's assertion becomes "read-only rootfs *plus one writable mount*"** rather
-   than being dropped, because the property worth keeping is that the service cannot rewrite its
-   own code.
-   Until this exists, `/netflows/` and `hydration/swaps-daily` answer 503 in production while
-   working locally, which is the least obvious failure on this list — everything renders, two pages
-   are empty. Tracked as research queue **O46**. Eviction is still deliberately unbuilt
+3. **A 1 GB persistent volume mounted at `/data`**, in the compose file on the VM — the one thing
+   this repository cannot do for itself. The exact change is in
+   [the section below](#the-volume-and-the-change-an-operator-has-to-make). Until it exists,
+   `/netflows/` returns 503 for every visitor and `/api/health` reports
+   `"store":{"available":false}`. Eviction is still deliberately unbuilt
    ([decision 0006](../decisions/0006-demand-driven-store.md)) and should become a stated decision
    at the same time, not later.
+
+## The volume, and the change an operator has to make
+
+**This repository cannot make this change.** The deploy workflow's last step is
+`sudo /usr/local/bin/deploy-service polkadot-analytics <digest>`, which recreates a service defined
+in a compose file **on the VM**. That file is not in this repository and is not reachable from it.
+Everything on our side is done: the image sets `ANALYTICS_DATA_DIR=/data`, creates `/data` owned by
+uid 1000, and CI proves the store opens when something is mounted there and degrades cleanly when
+nothing is.
+
+What has to happen on `web-server` (`europe-west1-b`), once:
+
+1. Add a named volume to the `polkadot-analytics` service in the VM's compose file:
+
+   ```yaml
+   services:
+     polkadot-analytics:
+       # … unchanged: image, read_only: true, mem_limit, ports …
+       volumes:
+         - polkadot-analytics-data:/data
+
+   volumes:
+     polkadot-analytics-data:
+   ```
+
+   A **named** volume, not a bind mount: Docker seeds a fresh named volume from the image's `/data`,
+   ownership included, so the container's uid 1000 can write to it with no `chown` and no root. A
+   host bind mount would have to be `chown 1000:1000`ed by hand, and forgetting that fails in exactly
+   the same way as having no volume.
+
+2. Keep `read_only: true`. The volume is the only writable path and that is the design.
+
+3. Cap the volume at **1 GB** if the host's storage driver supports it. Nothing enforces a size from
+   inside the container, and the measured fill rate (14–17 kB per source-day) means 1 GB is roughly
+   160,000 source-days — but a runaway job is a runaway job.
+
+4. Redeploy, then confirm from off the box:
+
+   ```
+   curl -s https://analytics.cypherpunk.agency/api/health | grep -o '"store":{[^}]*}'
+   # want: "store":{"available":true}
+   ```
+
+   Then watch it fill. `/api/asset-hub/netflows-daily?month=2026-07&network=polkadot` answers 200
+   with a `coverage` block from the first request; `coverage.complete` turns true when that month's
+   job finishes. The whole 2022 → 2026 Polkadot series is roughly 50 minutes of polite serial
+   fetching, once, and Kusama's 2021 → 2026 one measured 33 minutes.
+
+**Nothing here is a credential and nothing here belongs in this repository's settings.** The volume
+is a line in a compose file on a VM.
+
+### If the backfill should not run against the public RPCs from the VM
+
+It does not have to. The store is a single SQLite file and the CLI drains the same queue with the
+same engine, so it can be filled anywhere and copied in:
+
+```
+ANALYTICS_DATA_DIR=./data node scripts/job.mjs enqueue asset-hub netflows-daily month=2026-07 network=polkadot
+ANALYTICS_DATA_DIR=./data node scripts/job.mjs run
+# then copy data/store.sqlite into the volume with the container stopped
+```
+
+Stop the container first — copying a SQLite file with a live writer attached copies a torn WAL. This
+is the escape hatch, not the plan: the boot warm-up is the plan, and it is one-time because the
+volume persists.
 
 ## Running it locally
 

@@ -410,10 +410,11 @@ prefix; reads are `state_queryStorageAt`, many keys at one block.
 
 **Cost.** `bridged-inventory` and `bridged-holders` are about thirty requests per 15-minute TTL
 across two hosts; `sovereign-dot` is roughly five per 10 minutes. The expensive one is history:
-`netflows-daily` walks days at **~2.2 requests per day per chain**, ~1.4 s a day, and the whole
-2022-01 → 2026-07 backfill was ~50 minutes and 2.33 MB stored. What makes that affordable is
-**JSON-RPC batching** — both endpoints accept an array of calls in one POST — applied across *days*
-as well as across keys.
+`netflows-daily` walks days at **5.4–5.7 requests per stored day** and ~1.1 s a day (counted through
+the handler, 2026-08-21 — this corrects a "~2.2 per day" figure measured the day before, which forgot
+the per-batch head re-pin). The whole 2022-01 → 2026-07 Polkadot backfill was ~50 minutes and 2.33 MB
+stored. What makes that affordable is **JSON-RPC batching** — both endpoints accept an array of calls
+in one POST — applied across *days* as well as across keys.
 
 > ⚠️ **Match a batch response by `id`, never by position.** A server may reorder it, and reading it
 > positionally attributes one block's balances to another day. Silent, and plausible.
@@ -429,6 +430,36 @@ as well as across keys.
 
 > ⚠️ **`rpc-composable.luckyfriday.io` serves Centrifuge.** Resolves, answers, wrong chain, silently.
 > Recorded here because it was reached for during this work; it is not read by anything.
+
+## Kusama relay chain and Asset Hub — `kusama-rpc.polkadot.io`, `kusama-asset-hub-rpc.polkadot.io`
+
+The same two Parity hosts one network over, read by the **same module** — `netflows-daily` and
+`sovereign-dot-recent` take a required `network` of `polkadot | kusama`
+([decision 0015](../decisions/0015-netflows-is-parameterised-by-network.md)). Same runtime release
+(`1.24.1-8ae9775dc43`), same operator, both full archives to genesis. Everything measured is in
+[kusama.md](kusama.md).
+
+**What we read.** `System::Account` for the `para` leg on the relay and the `sibl` leg on Asset Hub;
+`Paras::ParaLifecycles` and `Registrar::Paras` at each stored day's own block; `Timestamp::Now` at
+every pinned block; `system_properties` on every read, as a canary rather than as configuration.
+
+**Cost.** 5.43 requests per stored day, 0.75 s a day; the whole 2021-07 → 2026-07 backfill was 61
+months, 1,857 days, **33.1 minutes** and 2.73 MB stored (measured 2026-08-21).
+
+> ⚠️ **KSM is 12 decimals and DOT is 10.** A Kusama figure divided by Polkadot's `1e10` is exactly
+> 100× too large and looks entirely reasonable. SS58 is 2, not 0, so a Kusama account rendered at
+> prefix 0 is a valid-looking Polkadot address. `netflowsHeads` asserts both against
+> `system_properties` on every read.
+
+> ⚠️ **Kusama Asset Hub has state but no clock below block #66,687** (2021-06-03T15:36:00.509Z) —
+> Statemine's pre-launch period, indistinguishable from a pruned archive, and a pruned balance read
+> answers `null`, indistinguishable from an empty account. It is what sets the Kusama series' floor
+> at 2021-07.
+
+> ⚠️ **The Kusama Asset Hub Migration is 2025-10-07**, bisected out of the relay chain rather than
+> transcribed, and it was progressive rather than atomic. After it, each chain's `para` leg on the
+> relay holds a round number of KSM plus one existential deposit — a few hundred KSM per chain, which
+> looks entirely reasonable if you read only that leg.
 
 ## Interlay — `api.interlay.io/parachain`
 

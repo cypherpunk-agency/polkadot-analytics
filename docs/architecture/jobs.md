@@ -11,7 +11,7 @@ somebody about to write a handler.
 | Handler | Identity | Segment | What it stores | Read it with |
 |---|---|---|---|---|
 | `hydration/swaps-daily` | `{ month }` | one ISO day | a day of routed trades, summarised: volumes, routes, accounts, derived rates, quality counters | [hydration.md](../platform/hydration.md#backfilling-the-whole-history-what-orca-actually-holds-and-what-it-costs) |
-| `asset-hub/netflows-daily` | `{ month }` | one ISO day | DOT in every parachain sovereign account at that UTC day's close, both legs, on two chains | [asset-hub.md](../platform/asset-hub.md#reading-sovereign-balances-day-by-day-back-to-2022) |
+| `asset-hub/netflows-daily` | `{ month, network }` | one ISO day | the relay token in every parachain sovereign account at that UTC day's close, both legs, on two chains of one network | [asset-hub.md](../platform/asset-hub.md#reading-sovereign-balances-day-by-day-back-to-2022), [kusama.md](../platform/kusama.md) |
 
 They landed a few hours apart on 2026-08-20 and chose the same identity independently, which is
 the argument for the month bucket being right rather than merely first. Neither can serve the
@@ -19,9 +19,11 @@ the argument for the month bucket being right rather than merely first. Neither 
 `asset-hub/sovereign-dot-recent` — and the page joins them and says which side of the seam a day
 came from. That pattern is [decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md).
 
-⚠️ **Neither of them works in production yet.** The container has no writable volume, so
-`openStore()` fails and mode A degrades to 503 while mode B answers normally — deliberately, and
-documented at [deployment.md](deployment.md#what-is-still-owed).
+⚠️ **Neither of them works in production yet.** The compose file on the VM mounts no volume, so
+`/data` is part of the read-only rootfs, `openStore()` fails, and mode A degrades to 503 while mode B
+answers normally — deliberately. The image side is done and CI asserts both directions; what remains
+is one line in a file this repository cannot reach, written out in
+[deployment.md](deployment.md#the-volume-and-the-change-an-operator-has-to-make).
 
 Four files, and they do not overlap:
 
@@ -229,6 +231,24 @@ State the cost of the bucket on the page rather than discovering it later. A mon
 cannot serve the current month at all, so a page that wants both history and this week reads the
 store for whole past months and a TTL-cached operation for the tail.
 
+> **Adding a param to a filled job orphans everything already in it.** `{"month":"2026-01"}` and
+> `{"month":"2026-01","network":"polkadot"}` are different canonical params, so they are different
+> identities and share no segment. Making `network` required on `asset-hub/netflows-daily` on
+> 2026-08-21 therefore orphaned all **1,673** stored Polkadot days at a stroke: they are re-derived
+> once, on demand, and the old rows sit in the SQLite file as dead weight until somebody deletes
+> them. That is the honest price of a self-describing identity and it is worth paying — but pay it
+> knowingly, and consider the forward-only `UPDATE` in
+> [decision 0015](../decisions/0015-netflows-is-parameterised-by-network.md), which was verified
+> against a copy of the store rather than assumed.
+
+**And enqueuing is not idempotent across `done`.** `queue.enqueue` is find-or-create over *live*
+states only, and `done` is not one of them — so enqueuing an identity that already finished mints a
+**new** job and refetches every segment already stored. Anything that enqueues without asking
+`describeIdentity` first (a boot warm-up, a cron, a retry loop) turns "immutable data is fetched once
+and never again" into "refetched every time", with correct answers, a full coverage bar and nothing
+anywhere reporting it. `server/lib/warm.mjs` checks, and `server/test/warm.test.mjs` asserts that it
+does.
+
 ### Do not name a job after an operation
 
 A `jobs` entry and an `operations` entry share the URL shape `/api/<source>/<name>`, and **the job
@@ -324,11 +344,21 @@ answer. The summary month is 428 kB over the wire, measured.
 the file plus a few MB, not for the file exactly.
 
 **The second handler is two orders of magnitude cheaper per day, and that is the useful comparison.**
-`asset-hub/netflows-daily` stores **1,392 B mean** per day against Hydration's 14–17 kB, because a
-day of sovereign balances is ~50 numbers while a day of trades is a summary with bounded lists. The
-whole 2022-01 → 2026-07 series is **1,673 days and 2.33 MB**, filled in about 50 minutes. Full
-figures, and the five months that failed once mid-run and succeeded on retry, are in
-[asset-hub.md](../platform/asset-hub.md#the-cost-measured).
+`asset-hub/netflows-daily` stores **1,392 B mean** per Polkadot day and **1,542 B** per Kusama day,
+against Hydration's 14–17 kB, because a day of sovereign balances is ~50 numbers while a day of
+trades is a summary with bounded lists. Polkadot's 2022-01 → 2026-07 series is **1,673 days and
+2.33 MB**, filled in about 50 minutes; Kusama's 2021-07 → 2026-07 series is **1,857 days and
+2.73 MB**, filled in 33.1 minutes at 1.07 s a day (measured 2026-08-21). Full figures, and the five
+months that failed once mid-run and succeeded on retry, are in
+[asset-hub.md](../platform/asset-hub.md#the-cost-measured) and
+[kusama.md](../platform/kusama.md#what-it-costs-to-read).
+
+⚠️ **A per-day request count is easy to under-measure by forgetting what runs per BATCH.**
+`netflows-daily` was recorded at "~2.2 requests per day" on 2026-08-20; counting real `fetch` calls
+through the handler the next day gives **5.4–5.7 on both networks**. The missing ~3 are
+`netflowsHeads`, which re-pins both chains on every batch — five un-batched calls per host, ten per
+ten-day batch, a full request per stored day. Count the calls; do not add up the ones you meant to
+make.
 
 So the range a `jobs` handler costs is **0.5 kB to 17 kB per day** on this evidence, and the thing
 that moves it is how much summarising the payload does — not how busy the chain was. Both handlers

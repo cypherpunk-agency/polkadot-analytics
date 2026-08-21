@@ -72,11 +72,17 @@ Rejected alternatives:
   [design-system.md](../architecture/design-system.md#a-page-has-one-subject-and-it-goes-first):
   `live` is part of a page's identity, and a page that stops reading an upstream goes back to
   `live: false`. Getting it wrong in either direction is the same failure — for one day this flag
-  said the wrong thing about both halves at once.
-- **The 2023 dataset is now drawn by two pages**, `/netflows/` (as a cross-check against the
-  re-derived series, where the two overlap) and `/sovereign/` (for its "then" bars). Each asserts
-  its own `frozen` liveness report about the same bundled file. That is duplication, accepted
-  knowingly at two pages and worth extracting at three — it is research queue **O32**.
+  said the wrong thing about both halves at once. (The "Kusama alone is still archive-only" clause
+  above expired on 2026-08-21: both toggles now draw the same chain-read series —
+  [decision 0015](0015-netflows-is-parameterised-by-network.md).)
+- ~~**The 2023 dataset is now drawn by two pages**, `/netflows/` (as a cross-check against the
+  re-derived series, where the two overlap) and `/sovereign/` (for its "then" bars).~~
+  **Corrected 2026-08-21:** back to **one page**. `/sovereign/`'s "then" bars and gap strip were cut
+  along with its import of `src/data/netflows.json` —
+  [decision 0016](0016-a-comparison-inherits-its-worst-reading.md) — because that comparison's
+  reference point was the archive's single worst day. Only `/netflows/` draws the dataset now, and
+  half of research queue **O32** (the duplicated `archiveLiveness()`) retires with it. The other half
+  stands: the Asset Hub Migration date is still transcribed in three files.
 - Splitting is not free: a reader who wanted the comparison now has to follow a link. That is the
   right trade when the two subjects are genuinely different questions asked of the same accounts,
   and the wrong one when a page is split merely because it got long.

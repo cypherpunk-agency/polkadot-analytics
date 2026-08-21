@@ -9,8 +9,11 @@ today. Between them was a three-and-a-half-year hole, and the ask was one contin
 beginning until now.
 
 The measurement itself is cheap and completely known: `System::Account` for every parachain
-sovereign account, at the last block of a UTC day, on the relay chain and on Asset Hub. About 2.2
-HTTP requests and 1.4 seconds per day per chain-pair, and roughly 0.9 kB stored. A day's state is
+sovereign account, at the last block of a UTC day, on the relay chain and on Asset Hub. ~~About 2.2
+HTTP requests and 1.4 seconds per day per chain-pair~~ — **corrected 2026-08-21 by counting real
+`fetch` calls through the handler: 5.7 requests and ~1.1 s per stored day.** The 2.2 forgot the
+per-batch head re-pin; see [asset-hub.md](../platform/asset-hub.md#the-cost-measured). Roughly
+1.4 kB stored per day. A day's state is
 also **immutable in the strongest sense available here** — it is a finalised historical block, not
 an indexer's opinion — which is the ideal case for the store
 ([decision 0006](0006-demand-driven-store.md), [jobs.md](../architecture/jobs.md)).
@@ -36,7 +39,10 @@ is not held hostage to it.
 TTL-cached operation.**
 
 - `asset-hub/netflows-daily` (job) — `{month}`, segments are that month's ISO dates, `immutable` is
-  "the month ended more than an hour ago, and is not before 2022-01".
+  "the month ended more than an hour ago, and is not before 2022-01". **Amended 2026-08-21:** the
+  identity is `{month, network}` and the floor is per network — 2022-01 for Polkadot, 2021-07 for
+  Kusama, each being the first whole month its Asset Hub has a clock
+  ([decision 0015](0015-netflows-is-parameterised-by-network.md)).
 - `asset-hub/sovereign-dot-recent` (operation) — the last N *closed* UTC days, same payload shape,
   30-minute TTL, hard cap of 40 days.
 - The page reads every whole past month from the store and one tail request, and joins them on one
@@ -47,9 +53,12 @@ each upstream call goes through the job engine's politeness gate.
 
 ## What that costs, stated rather than discovered
 
-**Fifty-five requests per page load** for 2022-01 → 2026-07, about 860 kB in total, 16 kB each and
-individually cacheable. That is fine now and will not be in 2029. It is the price of the month
-bucket and it is the first thing to revisit when it hurts.
+**Up to sixty-two requests per page load, and it is per network.** For Polkadot's 2022-01 → 2026-07
+that is fifty-five stored months plus one live tail, about 860 kB in total, 16 kB each and
+individually cacheable. Kusama's series starts five months earlier, so its load is sixty-one stored
+months plus a tail — and the two networks are separate identities, so a reader who flips the toggle
+pays it again. That is fine now and will not be in 2029. It is the price of the month bucket and it
+is the first thing to revisit when it hurts (research queue O41).
 
 **A seam that moves.** On the 1st of a month the store reaches yesterday and the tail is empty; by
 the 28th the tail is 27 days of live reading, which is ~20 s on a cold cache. The seam is real, it

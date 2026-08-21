@@ -444,7 +444,7 @@ flows dwarf every bridge here** — "value bridged in" is not "value that arrive
 |---|---|---|
 | **E1** | **`server/sources/asset-hub.mjs`** — `bridged-inventory`, `bridged-holders`, `sovereign-dot`. ~30 requests per TTL, two hosts, no key, no store | — |
 | E2 | **`/bridged/`** — the bridged-value page. Stacked bars per asset, segments = holding chain, summing to supply by construction; issuer-minted USDC/USDT in a separate labelled tile; Moonbeam band separate | E1 |
-| E3 | **Netflows v2** — ~~current value only~~ ~~second series on `/netflows/`~~ **DONE, and it went further than this row asked.** Three moves on 2026-08-20: the live read shipped as a second series on `/netflows/`; it was split into its own page `/sovereign/` the same day, because eight blocks had accumulated above the archive's chart ([decision 0011](../decisions/0011-a-page-has-one-subject.md)); and then the 2023 → 2026 hole was filled from the chains themselves, so `/netflows/` draws a continuous daily series 2022-01 → yesterday and the 2023 archive became a cross-check against it ([decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md)). Both pages are `live: true`. Kusama is still archive-only on both — research queue O26/O39 | E1 (`sovereign-dot`), then `netflows-daily` + `sovereign-dot-recent` |
+| E3 | **Netflows v2** — ~~current value only~~ ~~second series on `/netflows/`~~ **DONE, and it went further than this row asked.** Three moves on 2026-08-20: the live read shipped as a second series on `/netflows/`; it was split into its own page `/sovereign/` the same day, because eight blocks had accumulated above the archive's chart ([decision 0011](../decisions/0011-a-page-has-one-subject.md)); and then the 2023 → 2026 hole was filled from the chains themselves, so `/netflows/` draws a continuous daily series 2022-01 → yesterday and the 2023 archive became a cross-check against it ([decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md)). Both pages are `live: true`. ~~Kusama is still archive-only on both — research queue O26/O39~~ **Two further moves on 2026-08-21:** Kusama got the same series from one parameterised implementation, so `/netflows/` draws both networks from the chains and O39 is closed ([decision 0015](../decisions/0015-netflows-is-parameterised-by-network.md), [kusama.md](../platform/kusama.md)); and `/sovereign/`'s then/now card and gap strip were **cut** once `/netflows/` covered the gap, because their reference point was the archive's single worst day ([decision 0016](../decisions/0016-a-comparison-inherits-its-worst-reading.md)). `/sovereign/` is still Polkadot-only — research queue O50 | E1 (`sovereign-dot`), then `netflows-daily` + `sovereign-dot-recent` |
 | E4 | **`moonbeam.mjs` + `interlay.mjs`** — the separate band, and BTC-in. Interlay is one `state_getStorage`; Moonbeam is `eth_call totalSupply()` over `pallet_moonbeam_foreign_assets` | E1 |
 | E5 | `docs/platform/bridges.md`, the trap entries in `CLAUDE.md`, and the `check.mjs` local-path gap | — |
 | E6 | Call Dotlake's `defi-tvl` / `daily-usdc` / `daily-usdt` — **registered since v1 and never called by anything.** Cross-check column only, never the lead figure | — |
@@ -686,7 +686,7 @@ the next session starts from fact rather than from summary.
 | **`server/sources/asset-hub.mjs`** | The first module here that reads Polkadot's own chains. `bridged-inventory`, `bridged-holders`, `sovereign-dot`. Every read pinned to one finalized head. |
 | **`server/sources/interlay.mjs`** | BTC bridged in. One storage read, a three-layer canary, and a liveness assertion that catches the chain being 24 days stale. |
 | **`/bridged/`** | 34 bridged assets, 37 holdings across 8 parachains, issuer-minted USDC/USDt kept separate, reconciliation shown as a finding. |
-| **`/netflows/` and `/sovereign/`** | The 2023 archive gained a live half, and the live half then gained its own page — the three-year gap is drawn to scale on `/sovereign/`, never crossed by a line, and `/netflows/` opens on the time series it is named for. Decision 0011. |
+| **`/netflows/` and `/sovereign/`** | The 2023 archive gained a live half, and the live half then gained its own page, so `/netflows/` opens on the time series it is named for. Decision 0011. ~~The three-year gap is drawn to scale on `/sovereign/`, never crossed by a line.~~ **Superseded within a day:** decision 0012 filled the gap from the chains, and on 2026-08-21 decision 0016 cut the gap strip and the then/now card from `/sovereign/` because there is no gap left to draw and their reference day was the archive's worst. |
 | **`segmentedRows`** | A seventh chart form. Segments must sum to a separately-stated total; the shortfall is drawn. |
 | **Liveness** | 3 sources → 5; `/bulletin/`, `/hydration/`, `/hyperfx/` now render or deliberately abstain. |
 | **Nav grouping** | Four Hydration pages under one entry. Top level 9 → 6. |
@@ -831,6 +831,19 @@ and it is refused for a second reason anyway: `serveFromStore` returns every seg
 response with no paging, so a month of raw trades is a ~150 MB single answer. The summary month
 measured 428 kB over the wire.
 
+**Applied 2026-08-21, half of it.** The image side is done — `ANALYTICS_DATA_DIR=/data`, `/data`
+created owned by uid 1000, and CI runs the container both with and without a volume and asserts
+`store.available` in both directions ([decision 0014](../decisions/0014-the-store-gets-a-volume-and-fills-itself.md)).
+The VM side is an operator change to a compose file this repository cannot reach; the exact text is
+in [deployment.md](../architecture/deployment.md#the-volume-and-the-change-an-operator-has-to-make).
+Recording the size and never asking for the mount is what broke `/netflows/` for a day: **a decision
+written down is not a decision applied.**
+
+**And the size figure now has a second network under it.** Kusama's netflows series added 1,857 days
+and 2.73 MB at 1,542 B a day, so the two together are ~5 MB — still three orders of magnitude inside
+1 GB, but the arithmetic in §12.1 predates it and is worth re-running against a filled store rather
+than re-derived from the same estimate (research queue O58).
+
 ### 12.3 What the measurement corrected
 
 - **`~8,527 trades/day`, measured from the live 14-day window and quoted in `hydration.mjs`,
@@ -848,16 +861,61 @@ has already indexed?* A stored day is never re-fetched, so a revision would be i
 It is defended by three checks that refuse rather than annotate, but confirming it needs elapsed
 time, not cleverness.
 
-**O35** was written here as "nothing renders the stored history yet, and the seam needs a decision
-before anything does". *Half of that closed within hours* — `/netflows/` renders a store-backed
-series over the second handler, `asset-hub/netflows-daily`, and the seam decision was taken and
-written down as [decision 0012](../decisions/0012-netflows-is-a-store-plus-a-live-tail.md): one
-chart, whole past months from the store, a TTL-cached tail for the current month, and the page
-saying which side of the join a day came from. What is still open is **Hydration's** history page
-specifically, where the tail is the 14-day `swaps` operation rather than a day-reader, so the two
-halves are not the same payload the way netflows' two halves are.
+~~**O35** was written here as "nothing renders the stored history yet…"~~ **O35 is closed
+(2026-08-21).** `/hydration/?days=3m|12m|all` joins whole stored months to a counted live tail, so
+the 0012 pattern is applied on Hydration too and the second handler has a reader. The seam it leaves
+is different from netflows' and is worth stating: the counted tail has **no priced volume**, so the
+dollar line breaks at the join while orca's own pool volume is continuous (research queue O71).
 
 Two more the backfill opened, both about the store rather than about Hydration: **O36**, because
-`/netflows/` asks for 55 month-identities on a cold store against a cap of 8 live jobs; and
-**O46**, because the production container still has nowhere to keep any of it — §12.2 settled the
-*size* at 1 GB and nobody has yet been asked for the volume.
+`/netflows/` asks for 55 month-identities on a cold store against a cap of 8 live jobs; and ~~**O46**,
+because the production container still has nowhere to keep any of it~~ — **O46 is closed
+(2026-08-21)**: its three open parts were the ask, `ANALYTICS_DATA_DIR`, and what CI asserts, and all
+three are settled in [decision 0014](../decisions/0014-the-store-gets-a-volume-and-fills-itself.md)
+and written out as an operator instruction in
+[deployment.md](../architecture/deployment.md#the-volume-and-the-change-an-operator-has-to-make).
+What is left is somebody editing a compose file on a VM, which is not research.
+
+---
+
+## 13. Session record — 2026-08-21
+
+Seven agents in parallel. Written down here so the next reader can tell what moved without reading
+the whole log.
+
+### 13.1 Shipped
+
+| | |
+|---|---|
+| **`/hydration-capital/`** | A fifth Hydration page, and the **stock** counterpart to four flow pages: how much money is on the chain, counted once. It publishes the combined figure `/hydration-market/` deliberately declined to publish, because the four venues hold each other's receipt tokens several layers deep and adding them up double-counts ~30 %. See [hydration-capital.md](../platform/hydration-capital.md). |
+| **`/account/`** | The transfer graph. `server/sources/transfers.mjs` over the SQD portal — a new *kind* of upstream (NDJSON streaming, keyless, decoded events from block 0) with four documented silent failure modes. See [sqd-portal.md](../platform/sqd-portal.md). |
+| **Kusama netflows** | One implementation parameterised by network, both toggles drawing the same chain-read series. Closes research queue **O39**. [Decision 0015](../decisions/0015-netflows-is-parameterised-by-network.md), [kusama.md](../platform/kusama.md). |
+| **`server/sources/prices.mjs`** | Decision 0009 was **decided and never built**; it is now implemented, registered, and composed by `/bridged/`'s own operation. The two remaining named consumers in 0009's context — the Moonbeam stranded-value row E4 and the per-chain value work in §7 — can now `import { quotes }` and get a `Map` keyed by XCM location bytes without touching Hydration. [prices.md](../platform/prices.md), [decision 0013](../decisions/0013-the-pricer-and-the-valuation-share-a-module.md). |
+| **The store's home** | `ANALYTICS_DATA_DIR=/data` in the image, `/data` owned by uid 1000, boot-time warm-and-resume, CI asserting `store.available` in both directions. [Decision 0014](../decisions/0014-the-store-gets-a-volume-and-fills-itself.md). Closes **O46** as research; the compose-file line on the VM is still owed. |
+| **`/sovereign/` lost its "then"** | 875 → 467 lines. [Decision 0016](../decisions/0016-a-comparison-inherits-its-worst-reading.md). |
+| **The control row** | `localChoiceControl`, a sticky bar with its hints lifted out, and every control relinking when any control moves the URL. [Decision 0017](../decisions/0017-a-control-sits-with-what-it-changes.md). |
+
+### 13.2 What the day cost in wrong numbers already written down
+
+Three figures this repository had recorded and got wrong, corrected in place rather than appended to:
+
+- **`netflows-daily` at "~2.2 requests per day"** — it is 5.4–5.7 on both networks. The arithmetic
+  forgot what runs per *batch*. Corrected in `asset-hub.md`, `data-sources.md`, `jobs.md`, decision
+  0012 and the module header.
+- **`/netflows/`'s Kusama toggle described as archive-only** in decision 0011, plan §7.7 and
+  `pages.js`. Corrected.
+- **`/sovereign/` described as drawing the gap to scale** in plan §7.7 and §11.1. It no longer draws
+  it, and the gap no longer exists.
+
+And one that was written down as a decision and never applied, which is the one that reached
+visitors: §12.2 settled the volume's size on 2026-08-20 and nobody asked for the mount, so
+`/netflows/` answered 503 for every visitor for a day while everything else rendered.
+
+### 13.3 Still open, and where
+
+`docs/concept/research-queue.md`, which opened **28** questions, closed **7** that today's work
+answered (O8, O26, O35, O39, O44, O46) plus one — O57 — that was opened and answered inside the same
+day, and now stands at 5 blocking and 64 opening. The two worth reading first are **O50**
+(`/sovereign/` is the last Polkadot-only page and no longer has a reason to be) and **O56** (a JSON
+503 from our own origin reached a browser as something that would not parse, which means every
+structured error this service writes may be being discarded at the edge).

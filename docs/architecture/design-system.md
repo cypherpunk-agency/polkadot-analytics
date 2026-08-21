@@ -235,6 +235,53 @@ Two practical consequences for anyone adding to a page:
 A lede is prose and prose grows. At 390px the page head is the whole first screen before anything
 is drawn, so a lede that runs past four lines is spending the reader's only screen on sentences.
 
+## The control row
+
+**A control belongs to the smallest thing it changes** —
+[decision 0017](../decisions/0017-a-control-sits-with-what-it-changes.md). There are two controls
+and the difference between them is which question the choice answers.
+
+- **`choiceControl` — a load parameter.** Something `load()` actually reads. It navigates, `load()`
+  re-runs, and the choice lives in the URL.
+- **`localChoiceControl` — a view parameter.** `onChange` redraws in place from data already in
+  memory; the choice still lands in the URL via `history.replaceState`, so the view stays linkable
+  and bookmarkable. **Use it whenever the parameter does not appear in `load()`.** A `choiceControl`
+  for a parameter `load()` never reads is a silent full refetch: on `/xcm/` it cost about forty
+  seconds against an upstream we do not own, to change how one graph was drawn from data the browser
+  already had, and nothing about it looked wrong.
+
+Three properties of the pair worth knowing before writing one:
+
+- Its options are real `<a href>`s. A modified click (ctrl/cmd/shift/alt, or a non-primary button)
+  is left alone and opens a new tab at the right URL; only a plain primary click is handled in place.
+- `replaceState`, not `pushState`: a view is not a new place, and Back should leave the page rather
+  than walk back through every flip. Verified — two flips add nothing to `history.length`.
+- **Every control relinks when any control moves the URL.** `page.js` keeps a `relinkers` set for
+  this. Without it, a control's `href` still carries the values the page *loaded* with, so using
+  Network after flipping the graph silently reverts the graph — the exact failure `choiceControl`
+  was written to prevent, one level up, rendering perfectly.
+
+`renderPage({ controls })` wraps them in `.controls-bar`, which is **sticky under the site header**,
+and lifts each control's `hint` out of the bar into `.control-hints` beneath it. That lift is not
+cosmetic: **a sticky element's flow box is the box it paints**, so any height change while it is
+stuck shifts every pixel below it and the page jumps under the reader at exactly the moment they
+scroll past. "Compact the row when it sticks" is therefore not available — the row has to be born
+compact, and at 390px a one-sentence hint is five lines and was the only part of the bar that was
+not already one line.
+
+`--head-h` and `--controls-h` are measured by `measureStickyChrome()` and published on `<html>`.
+They are the one pair of sizes not in `tokens.css`, because they are facts about the rendered page
+rather than choices: the header is **53px at 1280 and 143px at 390**, where it wraps, so any offset
+written into the stylesheet is right at exactly one width. `html { scroll-padding-top }` is built
+from them plus `var(--s2)`, so a focused control lands clear of both bars *and* of its own focus
+ring, which is drawn 4px outside its box.
+
+A control a page places in its own body rather than in `renderPage({ controls })` — `/hyperfx/` does
+— is untouched: `.controls` keeps `margin-bottom: var(--s5)` and its hint stays inline. Only
+`.controls-bar > .controls` zeroes the margin. The selected option is styled by
+`.theme-btn[aria-current]` in `base.css` rather than by an inline `style` prop, so the visible state
+and the accessible state cannot disagree.
+
 ## The four-state page
 
 `renderPage()` owns the states a data page actually has, which is the thing pages get wrong when

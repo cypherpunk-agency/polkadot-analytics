@@ -23,11 +23,12 @@ written account of what it is querying.
 |---|---|
 | [polkadot.md](platform/polkadot.md) | relay chain, parachains, Agile Coretime, system chains, where JAM fits |
 | [asset-hub.md](platform/asset-hub.md) | assets, foreign assets, multilocations, sufficiency, the migration off the relay chain |
+| [kusama.md](platform/kusama.md) | the same shape with different constants — 12 decimals, SS58 2, a 2025-10-07 migration, and an archive whose worst day is a mid-day capture |
 | [xcm.md](platform/xcm.md) | XCM as a language: the instruction model, reserve vs teleport, sovereign accounts, barriers, and a worked transfer |
 | [smart-contracts.md](platform/smart-contracts.md) | pallet-revive and PolkaVM, Ethereum RPC compatibility, address mapping, where ink! stands |
 | [people-chain.md](platform/people-chain.md) | identity off the relay chain, registrars and judgements, resolving an address to a name |
 | [hydration.md](platform/hydration.md) | the Omnipool, stableswap, the Router, DCA, the money market, HOLLAR — the routed trades this site reads, and what a single-account drill-down is bounded by |
-| [hydration-capital.md](platform/hydration-capital.md) | how much capital sits on Hydration, in which assets, and why adding its four venues together double-counts 37% |
+| [hydration-capital.md](platform/hydration-capital.md) | how much capital sits on Hydration, in which assets, and why adding its four venues together overstates it by 36% — receipt tokens several layers deep, plus recursive deposits |
 | [prices.md](platform/prices.md) | which assets can be given a dollar figure from chains alone, which cannot, and what a page says about the difference |
 | [hyperbridge.md](platform/hyperbridge.md) | consensus-proof interoperability, the nexus indexer, and HyperFX intent orders |
 | [bridges.md](platform/bridges.md) | every bridge that reaches Polkadot, what each one asks you to trust, and why their numbers cannot be added together |
@@ -54,6 +55,9 @@ written account of what it is querying.
 | [0012](decisions/0012-netflows-is-a-store-plus-a-live-tail.md) | the netflows series is a **month-bucketed** store plus a live tail — how a stored fact's identity gets chosen |
 | [0013](decisions/0013-the-pricer-and-the-valuation-share-a-module.md) | the pricer and the valuation share a module, and only one half may fetch |
 | [0014](decisions/0014-the-store-gets-a-volume-and-fills-itself.md) | the store gets a volume, and fills itself at boot |
+| [0015](decisions/0015-netflows-is-parameterised-by-network.md) | one netflows implementation parameterised by network, with `network` **required** — and what adding a param to a filled job costs |
+| [0016](decisions/0016-a-comparison-inherits-its-worst-reading.md) | a page does not carry a comparison whose reference point it cannot defend |
+| [0017](decisions/0017-a-control-sits-with-what-it-changes.md) | a control belongs to the smallest thing it changes; the global row is for load parameters only |
 
 ## `concept/` — working notes, deliberately not published
 

@@ -675,10 +675,20 @@ bridged reserves**, and the shape — a step up followed by a months-long decay 
 | one stored day, JSON payload | **1,392 B mean** over all 1,673 days (322 B smallest, 1,925 B largest) |
 | a whole month, over the wire | **15 kB** in January 2022, **65 kB** in July 2026 — it grows with the number of parachains, not with the amounts |
 | the whole 2022-01 → 2026-07 series | **1,673 days, 2.33 MB** of stored payload; 2.5 MB served as 55 month responses |
-| HTTP requests per day | **~2.2 per chain**, both chains in flight at once |
-| time per day | **~1.4 s**, ten days per committed batch |
+| HTTP requests per day | **5.70**, measured 2026-08-21 — see the correction below |
+| time per day | **~1.1 s**, ten days per committed batch |
 | a whole month | **~45 s** |
 | the whole backfill | **~50 minutes**, one drainer, resumable at any point |
+
+⚠️ **The request figure that was here — "~2.2 per chain" — does not reproduce, and the arithmetic
+that produced it is the interesting part.** Re-measured on 2026-08-21 by counting real `fetch` calls
+through the job handler, with the boundary hint carried across batches exactly as the engine carries
+it: **171 requests for 30 Polkadot days (5.70/day)** and **163 for 30 Kusama days (5.43/day)**. The
+2.2 counted the boundary search and the account reads and forgot `netflowsHeads`, which runs on
+*every* batch — `pin()` is five un-batched calls per host, so ten requests per ten-day batch, a full
+request per stored day spent re-reading two heads that moved a few hundred blocks. Research queue O55
+asks whether three of those five are needed mid-month. Kusama's whole backfill, for comparison: 61
+months, 1,857 days, **33.1 minutes**, 1.07 s a day ([kusama.md](kusama.md#what-it-costs-to-read)).
 
 Five of the fifty-five months failed once mid-run with `could not be reached` against one endpoint or
 the other and succeeded on the retry — a public RPC drops a connection occasionally and that is

@@ -84,13 +84,23 @@ OOM crash-loop rather than an error.
 
 ## Transports, and the seam for more
 
-Three exist today, all in `lib/upstream.mjs`:
+Four exist today, all in `lib/upstream.mjs`:
 
 - **`graphql`** — POST, with the `errors` array treated as a real failure rather than a warning.
 - **`jsonRpc`** — anonymous Substrate JSON-RPC over HTTPS POST.
 - **`rest`** — GET with a server-built query string.
+- **`ndjson`** — a newline-delimited JSON stream, added 2026-08-21 for the SQD portal
+  (`server/sources/transfers.mjs`). It had to live here rather than in the source module for a
+  structural reason: `callUpstream` ends in `JSON.parse(text)` and an `application/jsonl` body is
+  not a JSON document, so the stream could not go through it — and a bare `fetch` in a source
+  module would have made `lib/upstream.mjs` no longer the single place this service talks to the
+  outside world, which is the property `CLAUDE.md`'s rule 2 depends on. It keeps the timeout,
+  the size ceiling and the `transport`/`upstream`/`decode` distinction, and additionally returns the
+  response headers, because SQD publishes its archive head on `x-sqd-head-number` and the liveness
+  check is then free on a call already being made. `callUpstream`'s own contract is unchanged; this
+  was purely additive. See [sqd-portal.md](../platform/sqd-portal.md).
 
-Adding a fourth is a function in that file plus a `transport` value. Two are worth naming:
+Adding a fifth is a function in that file plus a `transport` value. Two are worth naming:
 
 **A light client (smoldot) would have to run server-side.** In the browser it needs WebSocket
 connections to bootnodes, which `connect-src 'self'` forbids — the same policy that forces

@@ -292,11 +292,25 @@ were byte-identical across a 2,000-block gap while `latestAnswer()` moved. But `
 followed and no precompile was found at the usual addresses. Do not claim on a page that this price is
 chain-internal and trust-free until someone reads the fork's source.
 
+**How far it reaches is now measured, not asserted.** `getAssetPrice` was called on **all 1,438**
+registry ids on 2026-08-21. It answered for **23**, and that set is exactly `Pool.getReservesList()`
+— so "a revert means *not a reserve*, not *no market*" is a measured property of today's oracle
+rather than an inference from Aave's source. (Reading the fork would upgrade it to a guarantee; not
+done.)
+
+⚠️ **That 23 only appears if `Erc20`-typed assets are asked for by CONTRACT.** The oracle is keyed
+by two different kinds of address: a Substrate registry asset is `0x` + 31 zero bytes + `01` + the
+u32 id big-endian, but an `Erc20`-typed one is the contract in its `AssetLocations` entry. Keyed by
+id alone the oracle answers for 22 and **silently drops HOLLAR** — the market's dollar-pegged asset
+and the Omnipool's best hub anchor. Nothing errors. See
+[prices.md](prices.md#the-oracle-is-keyed-by-two-different-kinds-of-address-and-asking-wrong-looks-like-no-price).
+
 ### The second path: the Omnipool's own implied spot
 
-Independent of the oracle, and useful as a reconciliation rather than as a fallback. For an Omnipool
-asset, price-in-hub is `hub_reserve / reserve`, both in whole units; dividing two of those cancels the
-hub and gives a ratio. HOLLAR is in the Omnipool and is dollar-pegged, so:
+Independent of the oracle, and — as of 2026-08-21 — good enough to be a **labelled fallback** rather
+than only a reconciliation. For an Omnipool asset, price-in-hub is `hub_reserve / reserve`, both in
+whole units; dividing two of those cancels the hub and gives a ratio. HOLLAR is in the Omnipool and
+is dollar-pegged, so:
 
 ```
 usd(asset) = (hub_reserve_asset / reserve_asset) / (hub_reserve_HOLLAR / reserve_HOLLAR)
@@ -318,6 +332,24 @@ rather than erroring.
 
 Oracle against Omnipool: **0.05 %**. Oracle against the off-chain control: **−0.28 %**. Three
 independent constructions of the same number.
+
+**Reconciled again on 2026-08-21, this time across every asset both venues carry** — four of them,
+which is what turned this path from a check into a fallback:
+
+| Asset | Money-market oracle | Omnipool implied spot | Difference |
+|---|---:|---:|---:|
+| vDOT | 1.43861370 | 1.44036671 | **+0.122 %** |
+| PAXG | 4562.50561 | 4585.68916 | **+0.508 %** |
+| HOLLAR | 1.00000000 | 0.99878442 | **−0.122 %** |
+| tBTC | 76857.09235 | 76657.87743 | **−0.259 %** |
+
+Worst case half a percent; re-run an hour later the worst was tBTC at −0.559 %. Treat "under one
+percent" as the claim and the live figure on the page as the measurement. `server/sources/prices.mjs`
+publishes the Omnipool figure with a **different `source` label** and never merges it into the
+oracle's — the discipline
+[decision 0013](../decisions/0013-the-pricer-and-the-valuation-share-a-module.md) exists for. Between
+them the two paths price **38 distinct assets**, 23 + 19 with four in the overlap; the full table and
+the hub-anchor arithmetic are in [prices.md](prices.md).
 
 ### `deriveRates` already resolves DOT
 
@@ -692,6 +724,17 @@ pegged by a reserve but by the HSM.
 Circle's USDC contract, one via Wormhole and one via Snowbridge), which is a real arbitrage and a real
 risk difference. Collapsing them by symbol turns that into a nonsensical USDC→USDC route and hides
 which bridge a holding depends on.
+
+⚠️ **And the symbol is the *easier* half of this trap.** Hydration registers the same Ethereum ERC-20
+**once per bridge**, so the contract address looks like a safe key and is not: it carries **two
+WBTCs and two sUSDSs** backed by the same Ethereum contract, one arriving over Wormhole and one over
+Snowbridge, as separate registry ids with separate liquidity. Which one the money market took is not
+guessable — asset 19 `WBTC` is the **Wormhole** wrapper and is oracle-priced, while the Snowbridge
+one (1000190) reverts. Counted by route rather than by ticker there were five USDCs, three WETHs,
+three WBTCs, three USDTs and three DAIs on 2026-08-21. **Never key a price by the ticker, and never
+key it by the underlying contract either — the bridge that wrapped it is part of the asset's
+identity.** The full table, with the location bytes of each route shape, is in
+[prices.md](prices.md#the-trap-hydration-registers-the-same-token-once-per-route).
 
 For *rate derivation* specifically, collapsing them is harmless — they are all worth about a dollar,
 which is what `USD_PEGGED` in `src/core/pricing.js` assumes. For anything that counts supply, holders

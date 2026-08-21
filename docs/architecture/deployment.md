@@ -110,10 +110,13 @@ That is worth stating plainly, because the list is so short and because it used 
 > red, which is the real lesson here — **an image that boots and serves is not evidence that the
 > volume is there.** `/api/health` reports `store.available`; CI now asserts it in both directions.
 >
-> The size is settled on a measured fill rate rather than a guess: **1 GB**, which holds roughly
-> 160,000 source-days at the 14–17 kB/day this repo actually costs. A full 19-month Hydration
-> backfill is 9 MB; the 2022 → 2026 Polkadot netflows series is 2.33 MB and Kusama's 2021 → 2026 one
-> is 2.73 MB. The measurement, and what would reverse it, is in
+> The size is settled on a measured fill rate rather than a guess: **1 GB**, against a measured
+> terminal size of **≈ 60 MB** for full backfills of all three store-backed handlers, growing
+> **≈ 19–20 MB/year**. A full 19-month Hydration backfill is 9 MB; the 2022 → 2026 Polkadot
+> netflows series is 2.33 MB and Kusama's 2021 → 2026 one is 2.73 MB; the DOT whale cohort's
+> 2022 → 2026 series is **≈ 43 MB** (8.5–35.6 kB/day, ~26× netflows — added 2026-08-21, and infra
+> was told, because the earlier ~16 MB terminal figure was sized over two handlers). The
+> measurement, and what would reverse it, is in
 > [jobs.md](jobs.md#what-the-store-actually-costs) and `docs/concept/plan.md` §12.
 
 `BUILD_STAMP` is what makes "is the new version actually live?" answerable by asking the service
@@ -410,9 +413,9 @@ What has to happen on `web-server` (`europe-west1-b`), once:
    directory on the host's data disk with no per-volume quota, and this service never deletes a
    stored fact (decision 0006 defers eviction until storage pressure is real, and it has not been
    implemented). So 1 GB is a sizing estimate, not a limit, and the honest control is a disk alert
-   on the host rather than a number in this document. The measured fill rate (14–17 kB per source-day)
-   means 1 GB is roughly
-   160,000 source-days — but a runaway job is a runaway job.
+   on the host rather than a number in this document. Measured fill rates span 1.4 kB per
+   source-day (netflows) through 14–17 kB (Hydration) to 36 kB (the whale cohort, the heaviest),
+   so 1 GB is tens of thousands of source-days at worst — but a runaway job is a runaway job.
 
 4. Redeploy, then confirm from off the box:
 

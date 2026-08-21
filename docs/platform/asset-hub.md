@@ -762,6 +762,28 @@ This site reads all of the above through one source module, `server/sources/asse
 | `/api/asset-hub/netflows-daily` (job) | one stored fact per UTC day, a calendar month at a time: both sovereign legs for every enumerated parachain at that day's last block on each chain |
 | `/api/asset-hub/netflows-series` (store-read) | every settled month of the above in ONE response, each month carrying the same `{data, coverage, job}` envelope. This is what `/netflows/` draws — one request instead of one per month (decision 0020) |
 | `/api/stream/asset-hub/netflows-daily` (SSE) | the identity watch: given `network` and a list of `months`, hands each month's complete envelope over as one Server-Sent Event when it lands. Read-only — it observes fetches, it never starts one |
+| `/api/asset-hub/whales-daily` (job) | one stored fact per UTC day for the dated DOT whale cohort (`src/data/dot-whales.json`, decision 0021): all 990 accounts' `System::Account` on BOTH chains at that day's last block, sparse, with the day's aggregate header computed at fetch time |
+| `/api/asset-hub/whales-series` (store-read) | every settled month of the whale series in ONE response — per-day aggregates only (sum, both legs, nonzero count, top-10), never the per-account detail, which stays in the store |
+| `/api/stream/asset-hub/whales-daily` (SSE) | the identity watch for the whale series, same contract as the netflows one |
+
+### What the whale series showed on its first verified days (2026-08-21)
+
+- **A pre-Migration Asset Hub balance in this cohort is account *existence*, not activity.** At the
+  close of 2024-06-30, 550 of the 990 cohort accounts held **exactly 100,000,000 planck (0.01 DOT —
+  one existential deposit)** on Asset Hub and nothing more; the AH leg's whole 2,152.67 DOT is
+  essentially 550 × ED, against 588,222,171 DOT (99.99963 %) on the relay. A chart that draws the
+  AH leg before 2025-11-04 is drawing an ED count. When those 550 accounts were ED-seeded, and by
+  what, is open (research queue).
+- **The series legitimately opens with most of the cohort absent.** At the close of 2022-01-31,
+  **0** of the 990 existed on Asset Hub and **271** existed on the relay (331,051,302 DOT). That is
+  the survivorship caveat made visible — the cohort is 2026's whales, and in 2022 most of them did
+  not exist yet — not missing data.
+- **Post-Migration the relay leg is not zero, but is negligible:** 3,399.44 DOT across 10 cohort
+  accounts at the close of 2026-07-31, 0.0003 % of that day's 1,117,281,721 DOT.
+- **The committed cohort reproduces exactly.** Reading all 990 keys at the cohort file's own pinned
+  block (#19,727,122) with an independently written key derivation and u128 decoder returns
+  `cohortPlanck` byte-identical, 990/990 present, zero per-account mismatches. That probe is the
+  reproduction for whoever doubts the join next.
 
 Operational detail for these endpoints — rate limits, caching policy, and the known
 quirks of each — lives in [data-sources.md](data-sources.md).

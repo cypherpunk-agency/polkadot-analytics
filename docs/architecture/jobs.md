@@ -449,6 +449,23 @@ months that failed once mid-run and succeeded on retry, are in
 [asset-hub.md](../platform/asset-hub.md#the-cost-measured) and
 [kusama.md](../platform/kusama.md#what-it-costs-to-read).
 
+**The third handler sits between the two, and it moves the terminal size more than either.**
+`asset-hub/whales-daily` stores one day of the 990-account DOT whale cohort — both legs, sparse,
+with a pre-computed aggregate header — at **8.5 kB (2022-01) → 30.1 kB (2024-06) → 35.6 kB
+(2026-07)** per day, growing with how many of the cohort *exist yet* (271 → 588 → 980 of the 990;
+the payload is sparse, so a day costs what the cohort's existence costs, and the curve flattens as
+it saturates). Measured against the real endpoints, 2026-08-21: 11.6 requests and 4.7 s per day
+amortised over a ten-day batch. The whole 2022-01 → 2026-07 backfill is **1,673 days ≈ 43.3 MB
+(mean 25.3 kB/day), ~19,400 requests, ~2.2 h** through the politeness gate, and the series grows
+**≈ 13.3 MB/year** from then on — ~26× netflows' per-day bytes, because a day here is up to 990
+holdings where a netflows day is ~50. The complete `whales-series` aggregate response stays
+~0.36 MB because it ships per-day headers only; the per-account detail never leaves the store in
+bulk.
+
+**The store's terminal size is therefore ≈ 60 MB for full backfills of all three handlers**
+(9 + 2.3 + 2.7 + 43.3), growing **≈ 19–20 MB/year**, against a 1 GB volume. Infra was told on
+2026-08-21 when the third handler moved these figures.
+
 ⚠️ **A per-day request count is easy to under-measure by forgetting what runs per BATCH.**
 `netflows-daily` was recorded at "~2.2 requests per day" on 2026-08-20; counting real `fetch` calls
 through the handler the next day gives **5.4–5.7 on both networks**. The missing ~3 are

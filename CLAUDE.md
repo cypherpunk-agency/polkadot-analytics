@@ -502,6 +502,12 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   ~4.14 M accounts the same day). A "top DOT holders" ranking read from the relay returns sovereign
   remnants and deposit dust and renders perfectly. Today's holders live on Asset Hub; only
   pre-Migration history needs the relay leg. See `docs/platform/asset-hub.md`.
+- **`fromHex` answers an EMPTY array for malformed input rather than throwing**, so an account hex
+  carrying a stray `0x` prefix or an uppercase digit produces a well-formed `System::Account`
+  storage key for the *empty* account — one whale that reads as holding nothing on every day of a
+  four-year series, with no error anywhere. `whaleCohort()` in `server/sources/asset-hub.mjs`
+  regex-checks every row before hashing and cross-checks each hex against its SS58 address; any
+  new consumer of committed account hex must do the same.
 - **A page's request count must not scale with history length, and an endpoint a page polls for
   progress must not be mode B.** Both halves failed silently once (2026-08-21): `/netflows/` grew
   to ~56 per-month requests per load and the edge's 30-req/min limit cut it off mid-fan-out — a

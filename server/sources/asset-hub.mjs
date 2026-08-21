@@ -165,6 +165,8 @@
 // another id. `Registrar::NextFreeParaId` is 3443 and nothing in relay state links an id to a
 // chain name, so that question cannot be settled from these two endpoints.
 
+import { readFileSync } from 'node:fs'
+
 import { callUpstream, jsonRpc, UpstreamError } from '../lib/upstream.mjs'
 import { serveFromStore } from '../lib/demand.mjs'
 import { liveness } from '../../src/core/liveness.js'
@@ -2713,6 +2715,542 @@ async function netflowsSeries({ network }, { store, queue, startWorker }) {
   }
 }
 
+/* ═════════════════════════════════════════════════ the DOT whale cohort's daily series ═════ */
+//
+// The netflows treatment, generalised from sovereign accounts to arbitrary holders: the same
+// boundary search, the same batching, the same guards, a different set of keys. What is NOT the
+// same is where the account list comes from, and that is decision 0021's whole subject.
+//
+// ── discovery is an INPUT, measurement is an upstream ────────────────────────────────────────
+// No upstream this repo may use serves "accounts ranked by balance" — the chain indexes
+// `System::Account` by key, Dotlake has no balance endpoint, SQD carries events and not state,
+// and the explorers that do rank holders put it behind a key (rule 1). So WHICH accounts to
+// watch is seeded once, by a human, from Subscan's public holder list, and committed to
+// `src/data/dot-whales.json` with its date and its provenance on it — the same standing as the
+// 2021–2023 archive in `src/data/netflows.json`. WHAT they hold is read from the chains here and
+// only here. The seed could vanish tomorrow and nothing on this site would break or notice.
+//
+// The consequence the page must state, because the payload cannot hide it: the cohort is TODAY'S
+// whales, so the series answers "what did today's whales hold on each past day". An account that
+// was large in 2023 and exited before 2026-08-21 is invisible by construction. That is
+// survivorship, not error, and it is only honest if it is said out loud.
+//
+// ── two legs, again, and the near-empty one is correct ───────────────────────────────────────
+// Every day is read on BOTH chains at that day's own close, exactly as the sovereign series is,
+// because the Asset Hub Migration (2025-11-04 on Polkadot) moved user balances relay → Asset Hub
+// progressively. Before it the relay leg carries essentially the whole cohort and the Asset Hub
+// leg nearly nothing; after it the reverse — the relay's whole `System::Account` map holds 1,493
+// accounts and 220,772 DOT today (docs/platform/asset-hub.md). Both legs are stored separately so
+// the handover is drawn rather than asserted through.
+
+/** Stamped on every stored row. Bump when the payload's meaning changes. */
+const WHALES_VERSION = 'asset-hub/whales-daily@1'
+
+/**
+ * The cohort implies the network: `dot-whales.json` is a Polkadot Asset Hub reading, so there is
+ * no `network` parameter here — one would be a second identity for a question with one answer.
+ * The Polkadot row of the netflows table is reused rather than restated so that the token and
+ * decimals canary in `netflowsHeads` (DOT/10, asserted against `system_properties` on both hosts
+ * on every read) covers this series too.
+ */
+const WHALES_NET = NETFLOW_NETWORKS.polkadot
+
+/**
+ * The first whole month both chains can answer for — Polkadot's netflows floor, and it is the
+ * same constraint rather than a coincidence: Asset Hub has state but no `Timestamp::Now` below
+ * #305,204 (2021-12-18T18:52:54.582Z), which looks exactly like a pruned archive.
+ */
+const WHALES_FIRST_MONTH = WHALES_NET.firstMonth
+
+/** How many of the cohort's largest holdings the stored per-day header sums. */
+const WHALES_TOP = 10
+
+/**
+ * The committed cohort, read once at import. Parsed here rather than `import`ed so this stays a
+ * plain Node module with no JSON-module flag, and so a malformed file is a startup error naming
+ * the file rather than a syntax error naming the loader.
+ */
+const WHALE_COHORT_FILE = JSON.parse(readFileSync(new URL('../../src/data/dot-whales.json', import.meta.url), 'utf8'))
+
+/**
+ * The schema's `oneOf`, derived from the file rather than written beside it. A hardcoded list
+ * that drifted from the file would refuse the only cohort that exists — or, worse, accept a
+ * cohort id whose accounts are somebody else's.
+ */
+const WHALE_COHORT_IDS = [WHALE_COHORT_FILE.cohort]
+
+let whaleCohortMemo = null
+
+/**
+ * The cohort, verified — decoders self-check, and a committed dataset is a decoder's input.
+ *
+ * Four checks, each catching something that would otherwise render perfectly:
+ *
+ *   · `accountHex` must be 64 lowercase hex characters. `fromHex` returns an EMPTY array for
+ *     anything else, so a stray `0x`, an uppercase digit or a truncated row would produce a
+ *     storage key for the empty account — a valid-looking key that matches nothing, i.e. a whale
+ *     that reads as holding zero on every day of the series.
+ *   · The SS58 `address` must be what that hex encodes at prefix 0. The two fields are redundant
+ *     on purpose: the hex is what we query with and the address is what a page will show, and a
+ *     mismatched pair would attribute one account's balance to another's name.
+ *   · The keys must be distinct. A duplicated account is counted twice in every total.
+ *   · The file's own `cohortPlanck` must equal the sum of its rows. This is the arithmetic canary
+ *     for the whole series: it is the number today's totals are compared against, and a file that
+ *     lost rows in an edit would move the benchmark along with the data, silently.
+ *
+ * Lazy and memoised: 990 blake2b hashes at import time would be paid by every `npm run check`
+ * and every process boot for a series nobody may ask for.
+ *
+ * Exported for `server/test/whales-series.test.mjs`, which checks the day arithmetic below
+ * against the REAL cohort without touching a chain.
+ */
+export function whaleCohort() {
+  if (whaleCohortMemo) return whaleCohortMemo
+
+  const file = WHALE_COHORT_FILE
+  const accounts = file?.accounts
+  const fail = (message) => {
+    throw new UpstreamError(`src/data/dot-whales.json: ${message}`, { kind: 'decode', source: 'asset-hub' })
+  }
+  if (typeof file?.cohort !== 'string' || !file.cohort) fail('has no `cohort` id, which is the store identity.')
+  if (!Array.isArray(accounts) || accounts.length === 0) fail('has no `accounts`.')
+
+  const keys = []
+  const indexOfKey = new Map()
+  let summed = 0n
+  accounts.forEach((account, index) => {
+    const hex = account?.accountHex
+    if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/.test(hex)) {
+      fail(`row ${index} (rank ${account?.rank}) has \`accountHex\` \`${hex}\`, which is not 64 lowercase hex characters. fromHex would answer an empty array and the key would match nothing.`)
+    }
+    const address = encodeSs58(fromHex(hex), 0)
+    if (address !== account?.address) {
+      fail(`row ${index} says \`${account?.address}\` but its \`accountHex\` encodes \`${address}\` at prefix 0. One of the two names a different account.`)
+    }
+    const key = systemAccountKey(hex).toLowerCase()
+    if (indexOfKey.has(key)) fail(`rows ${indexOfKey.get(key)} and ${index} are the same account, which would be counted twice in every total.`)
+    indexOfKey.set(key, index)
+    keys.push(key)
+    summed += BigInt(account.free ?? 0) + BigInt(account.reserved ?? 0)
+  })
+
+  if (file.cohortPlanck !== undefined && String(file.cohortPlanck) !== String(summed)) {
+    fail(`declares \`cohortPlanck\` ${file.cohortPlanck} but its ${accounts.length} rows sum to ${summed}. The published benchmark and the data disagree.`)
+  }
+
+  whaleCohortMemo = {
+    id: file.cohort,
+    accounts,
+    keys,
+    indexOfKey,
+    seededAt: file.readAt ?? null,
+    seedBlock: file.blockNumber ?? null,
+    seedPlanck: String(summed),
+    seedIssuancePlanck: file.totalIssuancePlanck ?? null,
+    seed: file.seed ?? null,
+  }
+  return whaleCohortMemo
+}
+
+/** The cohort, or a throw. Never a default — a wrong cohort id must not silently become this one. */
+function whaleCohortOf(id) {
+  const cohort = whaleCohort()
+  if (id !== cohort.id) {
+    throw new UpstreamError(`\`cohort\` must be one of: ${WHALE_COHORT_IDS.join(', ')} — got \`${id}\`.`, {
+      kind: 'decode',
+      source: 'asset-hub',
+    })
+  }
+  return cohort
+}
+
+/**
+ * The settle predicate, and the same total-by-construction rule as `netflowsMonthIsSettled`:
+ * anything unparseable, an unknown cohort, a month before the floor, or a month not yet finished
+ * is NOT immutable and is refused before a job exists.
+ *
+ * The cohort id is checked against the committed file, not merely against a pattern: a job minted
+ * for a cohort that does not exist would fetch nothing forever, and a job minted for a cohort id
+ * that later gets REUSED for a different account list would answer with somebody else's whales.
+ */
+export function whalesMonthIsSettled(params, now = Date.now()) {
+  const month = params?.month
+  if (params?.cohort !== WHALE_COHORT_IDS[0]) return false
+  if (typeof month !== 'string' || !NETFLOWS_MONTH_RE.test(month)) return false
+  if (month < WHALES_FIRST_MONTH) return false
+  return now >= monthEndMs(month) + NETFLOWS_SETTLE_MS
+}
+
+/**
+ * Every month the store can answer for, oldest first. THE month list: `warm()` enqueues it,
+ * `whales-series` reads it, the identity watch validates against the same predicate. Two
+ * derivations that disagree by one entry produce a page permanently missing its newest month
+ * with no error anywhere.
+ */
+function whalesSettledMonths(cohortId, now = Date.now()) {
+  const cohort = whaleCohortOf(cohortId)
+  const months = []
+  const ceiling = new Date(now).getUTCFullYear()
+  for (let year = Number(WHALES_FIRST_MONTH.slice(0, 4)); year <= ceiling; year += 1) {
+    for (let index = 1; index <= 12; index += 1) {
+      const month = `${year}-${String(index).padStart(2, '0')}`
+      if (!whalesMonthIsSettled({ month, cohort: cohort.id }, now)) continue
+      months.push(month)
+    }
+  }
+  return months
+}
+
+/**
+ * The cohort's `System::Account` values at one block per day, on one chain.
+ *
+ * The keys are identical on both chains — `System::Account` is `System::Account` — so they are
+ * built once, by `whaleCohort()`, and used for the relay and for Asset Hub alike.
+ *
+ * Chunked by KEYS_PER_REQUEST across the whole batch rather than per day: 990 keys is more than
+ * one request's worth on its own, so a day is four requests and ten days are forty, per chain.
+ * A missing key in the answer is an account that does not exist at that block — which, at a
+ * block that DID produce a timestamp, genuinely means it held nothing. That is the whole force of
+ * the close-block guard below: without it, `null` from a pruned archive and `null` from an empty
+ * account are the same bytes.
+ */
+async function whaleValuesAt(run, host, frames, keys) {
+  const calls = []
+  const owner = []
+  frames.forEach((frame, day) => {
+    for (let i = 0; i < keys.length; i += KEYS_PER_REQUEST) {
+      calls.push({ method: 'state_queryStorageAt', params: [keys.slice(i, i + KEYS_PER_REQUEST), frame.closeHash] })
+      owner.push(day)
+    }
+  })
+
+  // Group sub-calls into HTTP requests by TOTAL key count, never by call count: a batch of ten
+  // 300-key queries is three thousand keys in one POST against somebody else's free endpoint.
+  const results = new Array(calls.length)
+  let at = 0
+  while (at < calls.length) {
+    let keyed = 0
+    let end = at
+    while (end < calls.length && (end === at || keyed + calls[end].params[0].length <= KEYS_PER_REQUEST)) {
+      keyed += calls[end].params[0].length
+      end += 1
+    }
+    const answer = await batchCalls(run, host, calls.slice(at, end), end - at, 90_000)
+    for (let i = 0; i < answer.length; i += 1) results[at + i] = answer[i]
+    at = end
+  }
+
+  const maps = frames.map(() => new Map())
+  results.forEach((result, i) => {
+    for (const [key, value] of result?.[0]?.changes ?? []) {
+      if (value !== null && value !== undefined) maps[owner[i]].set(String(key).toLowerCase(), value)
+    }
+  })
+  return maps
+}
+
+/**
+ * One UTC day, both legs, as the payload that is actually stored.
+ *
+ * SPARSE by construction: an account holding nothing on a chain is omitted from that chain's
+ * list rather than written as a zero. Pre-migration the Asset Hub side is nearly empty and
+ * post-migration the relay side is, so a dense 990-row pair would be mostly zeroes — about twice
+ * the bytes to say the same thing on every one of ~1,700 days.
+ *
+ * Amounts are exact planck as decimal STRINGS. A whale's holding is past 2^53 planck on the first
+ * row of the cohort, and a JSON number would round it silently.
+ *
+ * The day's header is computed HERE, at fetch time, and stored beside the detail. `whales-series`
+ * composes fifty-five months of it and must never have to open the detail to do so: 55 × ~31 ×
+ * 990 rows is tens of megabytes through one HTTP response.
+ *
+ * Exported so the arithmetic — which is what every figure on a whales page will be — can be
+ * checked against synthetic `AccountInfo` blobs with no chain in the loop. A sum that is wrong by
+ * one account renders perfectly.
+ */
+export function summariseWhaleDay({ cohort, date, relayFrame, ahFrame, relayValues, ahValues }) {
+  const relayRows = []
+  const ahRows = []
+  const combined = []
+  let relayPlanck = 0n
+  let ahPlanck = 0n
+  let nonzero = 0
+
+  cohort.keys.forEach((key, index) => {
+    let total = 0n
+    for (const [rows, values, host, add] of [
+      [relayRows, relayValues, WHALES_NET.relay, (n) => { relayPlanck += n }],
+      [ahRows, ahValues, WHALES_NET.assetHub, (n) => { ahPlanck += n }],
+    ]) {
+      const raw = values.get(key)
+      if (!raw) continue
+      const info = decodeAccountInfo(raw, host.id)
+      const held = info.free + info.reserved
+      if (held <= 0n) continue
+      rows.push([index, String(info.free), String(info.reserved)])
+      add(held)
+      total += held
+    }
+    if (total > 0n) {
+      nonzero += 1
+      combined.push(total)
+    }
+  })
+
+  combined.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
+  let top = 0n
+  for (const amount of combined.slice(0, WHALES_TOP)) top += amount
+
+  return {
+    date,
+    cohort: cohort.id,
+    network: WHALES_NET.id,
+    token: WHALES_NET.token,
+    decimals: WHALES_NET.decimals,
+    accounts: cohort.accounts.length,
+    // The LAST block of the UTC day on each chain, with that chain's own clock reading for it.
+    relay: { block: relayFrame.closeHeight, at: new Date(relayFrame.closeAt).toISOString() },
+    assetHub: { block: ahFrame.closeHeight, at: new Date(ahFrame.closeAt).toISOString() },
+    // The header `whales-series` reads. Everything in it is derived from the detail below at the
+    // moment the detail was decoded, so the two can never describe different readings.
+    aggregate: {
+      sumPlanck: String(relayPlanck + ahPlanck),
+      relayPlanck: String(relayPlanck),
+      ahPlanck: String(ahPlanck),
+      nonzero,
+      top10Planck: String(top),
+      top: WHALES_TOP,
+    },
+    // [cohort index, free planck, reserved planck] for every account holding something. Absent =
+    // held nothing at that block on that chain.
+    holders: { relay: relayRows, assetHub: ahRows },
+  }
+}
+
+/**
+ * A run of consecutive UTC days, on both chains. The sovereign series' `readSovereignDays`
+ * without the four-source para enumeration — the account list is fixed, which is what makes the
+ * cohort cheap to read and is also exactly what the survivorship caveat is about.
+ */
+async function readWhaleDays({ cohort, days, run, heads, hint }) {
+  const targets = days.map((day) => dayStartMs(day) + DAY_MS)
+
+  const cold = !hint?.relay?.blocksPerDay || !hint?.assetHub?.blocksPerDay
+  const measured = cold
+    ? await Promise.all([
+        headBlockMs(WHALES_NET.relay, heads.relay.block, heads.relay.timeMs, run),
+        headBlockMs(WHALES_NET.assetHub, heads.assetHub.block, heads.assetHub.timeMs, run),
+      ]).then(([relay, assetHub]) => ({ relay, assetHub }))
+    : { relay: null, assetHub: null }
+
+  const rateFor = (side) =>
+    hint?.[side]?.blocksPerDay ? DAY_MS / hint[side].blocksPerDay : (measured[side] ?? DAY_MS / 14_400)
+
+  const hintsFor = (side) => {
+    const base = hint?.[side]
+    const head = heads[side]
+    return days.map((_, i) => {
+      if (!base?.height || !base?.blocksPerDay) {
+        return Math.round(head.block - (head.timeMs - targets[i]) / rateFor(side))
+      }
+      const daysAhead = Math.round((targets[i] - base.target) / DAY_MS)
+      return base.height + daysAhead * base.blocksPerDay
+    })
+  }
+
+  const [relayFrames, ahFrames] = await Promise.all([
+    firstBlocksAtOrAfter(WHALES_NET.relay, {
+      targets,
+      hints: hintsFor('relay'),
+      head: heads.relay.block,
+      headAt: heads.relay.timeMs,
+      blockMs: rateFor('relay'),
+      run,
+    }),
+    firstBlocksAtOrAfter(WHALES_NET.assetHub, {
+      targets,
+      hints: hintsFor('assetHub'),
+      head: heads.assetHub.block,
+      headAt: heads.assetHub.timeMs,
+      blockMs: rateFor('assetHub'),
+      run,
+    }),
+  ])
+
+  // THE guard, unchanged and not weakened: both close blocks must carry a timestamp INSIDE the
+  // UTC day. A pruned archive answers a balance query with `null`, which is indistinguishable
+  // from an empty account — and here that would be 990 empty accounts, a day of zero whales
+  // drawn as a real reading.
+  days.forEach((day, i) => {
+    const from = dayStartMs(day)
+    for (const [side, frame, host] of [
+      ['relay', relayFrames[i], WHALES_NET.relay],
+      ['Asset Hub', ahFrames[i], WHALES_NET.assetHub],
+    ]) {
+      if (!frame.closeHash || frame.closeAt === null || frame.closeAt === undefined) {
+        throw new UpstreamError(
+          `${host.label} has no readable block at the close of ${day} (would-be block ${frame.closeHeight}). Refusing to store a day whose state could not be read — an unreadable balance is not a zero one.`,
+          { kind: 'upstream', source: host.id },
+        )
+      }
+      if (frame.closeAt < from || frame.closeAt >= from + DAY_MS) {
+        throw new UpstreamError(
+          `${host.label}: block ${frame.closeHeight} is dated ${new Date(frame.closeAt).toISOString()}, which is not inside ${day}. The ${side} leg of this day cannot be the day's close.`,
+          { kind: 'decode', source: host.id },
+        )
+      }
+    }
+  })
+
+  const [relayValues, ahValues] = await Promise.all([
+    whaleValuesAt(run, WHALES_NET.relay, relayFrames, cohort.keys),
+    whaleValuesAt(run, WHALES_NET.assetHub, ahFrames, cohort.keys),
+  ])
+
+  const payloads = days.map((day, i) =>
+    summariseWhaleDay({
+      cohort,
+      date: day,
+      relayFrame: relayFrames[i],
+      ahFrame: ahFrames[i],
+      relayValues: relayValues[i],
+      ahValues: ahValues[i],
+    }),
+  )
+
+  const last = days.length - 1
+  return {
+    payloads,
+    hint: {
+      relay: {
+        height: relayFrames[last].height,
+        target: targets[last],
+        blocksPerDay: days.length > 1 ? Math.round((relayFrames[last].height - relayFrames[0].height) / (days.length - 1)) : hint?.relay?.blocksPerDay ?? null,
+      },
+      assetHub: {
+        height: ahFrames[last].height,
+        target: targets[last],
+        blocksPerDay: days.length > 1 ? Math.round((ahFrames[last].height - ahFrames[0].height) / (days.length - 1)) : hint?.assetHub?.blocksPerDay ?? null,
+      },
+    },
+  }
+}
+
+/**
+ * The day header, read out of a stored fact — defensively, because a fact written by an older
+ * `codeVersion` is still in the store and must not become a zero.
+ *
+ * `null` is not `0` here and it matters: a day whose header cannot be read is a day this endpoint
+ * could not summarise, which draws as a gap. A zero would draw as "the whales held nothing".
+ */
+function whaleDayHeader(fact) {
+  const payload = fact?.payload ?? {}
+  const aggregate = payload.aggregate ?? {}
+  const value = (name) => (aggregate[name] === undefined ? null : aggregate[name])
+  return {
+    day: payload.date ?? fact?.segment ?? null,
+    relayBlock: payload.relay?.block ?? null,
+    assetHubBlock: payload.assetHub?.block ?? null,
+    sumPlanck: value('sumPlanck'),
+    relayPlanck: value('relayPlanck'),
+    ahPlanck: value('ahPlanck'),
+    nonzero: value('nonzero'),
+    top10Planck: value('top10Planck'),
+  }
+}
+
+/**
+ * Every settled month of the cohort's daily series, in ONE response — the same shape as
+ * `netflows-series` (decision 0020) and served through the same `serveFromStore`, so the bounds
+ * are identical: find-or-create, the reader-priority raise, the gave-up refusal, the live-jobs
+ * cap and the settle predicate all apply to this one GET.
+ *
+ * The one deliberate difference from `netflowsSeries`, and it is the reason this endpoint can
+ * exist at all: the per-month entry carries `days` — the stored HEADERS — not `data`, the stored
+ * facts. A month of this series is ~990 rows × 31 days of per-account detail; fifty-five of them
+ * in one response is tens of megabytes, which is not a page, it is an outage. The detail is
+ * composed and DISCARDED month by month, so peak memory is one month. A future per-account
+ * endpoint reads the same store by month and hands back the detail for the accounts asked for.
+ */
+async function whalesSeries({ cohort: cohortId }, { store, queue, startWorker }) {
+  const cohort = whaleCohortOf(cohortId)
+  const months = []
+  let incomplete = 0
+  let stalled = 0
+  for (const month of whalesSettledMonths(cohort.id)) {
+    const answer = await serveFromStore({
+      store,
+      queue,
+      sourceId: 'asset-hub',
+      operationId: 'whales-daily',
+      params: { month, cohort: cohort.id },
+      handler: WHALES_DAILY,
+      startWorker,
+    })
+    if (answer.status !== 200) {
+      // Defensive only, exactly as in `netflowsSeries`: the settle predicate admitted this month
+      // moments ago. Kept because an uncaught non-envelope answer is a page that cannot draw.
+      months.push({ month, days: [], coverage: { complete: false, segments: 0, note: answer.body?.error?.message ?? 'Refused.' }, job: null })
+      incomplete += 1
+      continue
+    }
+    const { data, coverage, job } = answer.body
+    months.push({ month, days: (data ?? []).map(whaleDayHeader), coverage, job })
+    if (!coverage.complete) incomplete += 1
+    if (job?.state === 'gave-up') stalled += 1
+    // One yield per month. Without it the whole composition — fifty-five store reads and their
+    // decoding — runs as ONE macrotask on the HTTP thread, and this series' facts are an order of
+    // magnitude larger than netflows', so the block would be too.
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+
+  const now = Date.now()
+  const lastEnded = isoDay(now - DAY_MS).slice(0, 7)
+  const pending =
+    lastEnded !== isoDay(now).slice(0, 7) && !whalesMonthIsSettled({ month: lastEnded, cohort: cohort.id }, now) ? lastEnded : null
+
+  const complete = incomplete === 0
+  return {
+    complete,
+    body: {
+      cohort: cohort.id,
+      network: WHALES_NET.id,
+      token: WHALES_NET.token,
+      decimals: WHALES_NET.decimals,
+      firstMonth: WHALES_FIRST_MONTH,
+      migratedOn: WHALES_NET.migratedOn,
+      accounts: cohort.accounts.length,
+      // The seed's provenance, in the payload, because the page is required to state it and must
+      // not have to carry its own copy of a date that lives in a committed file.
+      seed: { source: cohort.seed, readAt: cohort.seededAt, block: cohort.seedBlock, cohortPlanck: cohort.seedPlanck },
+      months,
+      coverage: {
+        complete,
+        months: months.length,
+        incomplete,
+        stalled,
+        pending,
+        note: complete
+          ? `Complete: all ${months.length} settled months of the ${cohort.id} whale cohort are stored. Immutable data is fetched once and never again.` +
+            (pending ? ` ${pending} ended less than an hour ago and is not yet fetchable; it will appear here once it settles.` : '')
+          : `Partial: ${months.length - incomplete} of ${months.length} settled months are stored.` +
+            (stalled
+              ? ` ${stalled} of the missing month${stalled === 1 ? '' : 's'} ${stalled === 1 ? 'has' : 'have'} surrendered after repeated failures and will NOT land without a maintainer — the rest are being fetched.`
+              : '') +
+            ` Each incomplete month's own coverage says what is being done about it; subscribe to /api/stream/asset-hub/whales-daily to be handed each month as it lands, or re-ask this endpoint.`,
+      },
+      // What this series cannot see, stated from the data rather than from a page's memory.
+      notes: [
+        `Each day is the state at that UTC day's LAST BLOCK on each chain — its close, not its open — read as \`System::Account\` for all ${cohort.accounts.length} cohort accounts on the Polkadot relay chain AND on Asset Hub, at two different blocks because they are two different chains.`,
+        `The cohort is SEEDED and dated: the ${cohort.accounts.length} accounts are the top DOT holders on ${cohort.seededAt ? cohort.seededAt.slice(0, 10) : cohort.id}, and this series therefore answers "what did today's whales hold on each past day". An account that was large earlier and exited before then is invisible here by construction. ${cohort.seed ?? ''}`.trim(),
+        `Amounts are exact planck as decimal strings, \`top10Planck\` is the sum of the ${WHALES_TOP} largest holdings that day, and ${WHALES_NET.token} is ${WHALES_NET.decimals} decimals. An account absent from a day's detail held nothing at that block — the day itself is refused outright if either chain's close block cannot produce a timestamp inside the day, so "unreadable" never reaches the store as "zero".`,
+        `The Asset Hub Migration on ${WHALES_NET.migratedOn} moved user balances from the relay chain to Asset Hub. Before it the relay leg carries nearly the whole cohort and the Asset Hub leg nearly nothing; afterwards the reverse. Both legs are stored separately, so the handover is drawn rather than asserted through.`,
+      ],
+      stream: complete ? null : '/api/stream/asset-hub/whales-daily',
+    },
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════ registry ═════ */
 
 const REGISTRY = {
@@ -2793,6 +3331,22 @@ const REGISTRY = {
         network: { type: 'string', required: true, oneOf: NETFLOW_NETWORK_IDS },
       },
       run: (params, ctx) => netflowsSeries(params, ctx),
+    },
+
+    'whales-series': {
+      summary:
+        'Every settled month of the DOT whale cohort’s daily balance series, in one response — per-day AGGREGATES only (the day’s summed holding, its two legs, how many of the cohort held anything, and the top ten), plus each month’s coverage envelope. The per-account detail stays in the store: fifty-five months of 990 accounts a day is tens of megabytes. Reading this is the demand that fills missing months; subscribe to `/api/stream/asset-hub/whales-daily` for the ones that are not stored yet.',
+      // No `ttlMs`, deliberately — `store: true` means completeness IS the cache policy
+      // (server/index.mjs `serveStoreRead`). See the note on `netflows-series` above; `npm run
+      // check` fails a store-read operation that also declares a TTL.
+      store: true,
+      schema: {
+        // Required, never defaulted, and validated against the committed file rather than a
+        // pattern: the cohort id is half the store identity, and a future re-seed is a NEW id
+        // filling beside this one rather than a mutation of it (decision 0021).
+        cohort: { type: 'string', required: true, oneOf: WHALE_COHORT_IDS, maxLength: 32 },
+      },
+      run: (params, ctx) => whalesSeries(params, ctx),
     },
   },
 
@@ -2955,6 +3509,118 @@ const REGISTRY = {
         }
       },
     },
+
+    /**
+     * The whale cohort's daily series. Named `whales-daily` against the operation `whales-series`
+     * for the same reason `netflows-daily` is not called `sovereign-dot`: a `jobs` entry WINS over
+     * an `operations` entry of the same name, so a collision does not sit beside the operation, it
+     * takes the URL away from it — 200s all the way down, carrying an envelope the page cannot
+     * draw. `npm run check` fails the registry group on a collision; this comment is why.
+     */
+    'whales-daily': {
+      summary:
+        'What every account in one dated DOT whale cohort held at the close of one UTC day, one stored fact per day, a calendar month at a time. Both legs — `System::Account` on the Polkadot relay chain and on Asset Hub — read at that day’s last block on each chain, sparse (an account holding nothing is omitted), with the day’s aggregate header computed at fetch time. Fetched once and never again.',
+      schema: {
+        // A month, and only a month: the params ARE the fact key, so a free {from, to} range
+        // would refetch and re-store the same day once per distinct window a reader asks for.
+        month: { type: 'string', required: true, pattern: NETFLOWS_MONTH_RE, maxLength: 7 },
+        // REQUIRED, and this is the whole of the re-seed story. The cohort id is half the store
+        // identity, so a new cohort in 2027 mints a SECOND set of identities beside this one and
+        // orphans nothing; a defaulted cohort would instead make `?month=X` and
+        // `?month=X&cohort=2026-08-21` two identities holding the same days, with correct answers
+        // and nothing anywhere reporting the duplication (docs/architecture/jobs.md).
+        //
+        // No `network`: the cohort is a Polkadot Asset Hub reading and says so, so a network
+        // parameter would be a second identity for a question that has one answer.
+        cohort: { type: 'string', required: true, oneOf: WHALE_COHORT_IDS, maxLength: 32 },
+      },
+
+      immutable: (params) => whalesMonthIsSettled(params),
+
+      /**
+       * The identity-watch contract for `/api/stream/asset-hub/whales-daily` (decision 0020),
+       * mirroring `netflows-daily`'s. Read-only by contract: it observes jobs, it never creates or
+       * raises one — the aggregate read is what turns a reader into demand.
+       */
+      watch: {
+        event: 'month',
+        schema: {
+          cohort: { type: 'string', required: true, oneOf: WHALE_COHORT_IDS, maxLength: 32 },
+          // Comma-separated months still wanted, capped well above any real series (55 in
+          // 2026-08, growing by twelve a year) but capped: an uncapped list parameter is a free
+          // way to make one GET cost N store probes per poll tick.
+          months: { type: 'list', required: true, pattern: NETFLOWS_MONTH_RE, maxItems: 200 },
+        },
+        // Only months the settle predicate admits. A month that can never land — the current one,
+        // a future one, one below the floor — would otherwise sit in the wanted set for the
+        // watch's whole lifetime and pin a watch slot doing nothing.
+        identities: ({ cohort, months }) =>
+          months.filter((month) => whalesMonthIsSettled({ month, cohort })).map((month) => ({ month, cohort })),
+      },
+
+      /**
+       * Fill this without waiting for a reader (server/lib/warm.mjs, decision 0014). The same set
+       * `whales-series` asks for and it must stay the same set: a warm identity differing from a
+       * requested one by so much as a key is a SECOND identity, so the backfill runs twice, both
+       * copies are correct, and the page still starts empty. Both read `whalesSettledMonths`.
+       *
+       * Safe to leave as "everything, forever": warmStore asks `describeIdentity` first and skips
+       * an identity that is already complete, so once filled this costs one indexed lookup per
+       * month per boot. Enqueuing a `done` identity would instead MINT A NEW JOB and refetch every
+       * segment already stored (CLAUDE.md) — the check is in warm.mjs, not here.
+       */
+      warm: () => whalesSettledMonths(WHALE_COHORT_IDS[0]).map((month) => ({ month, cohort: WHALE_COHORT_IDS[0] })),
+
+      plan: async ({ params }) => ({ totalUnits: daysOfMonth(params?.month ?? '').length || null }),
+
+      async nextBatch({ params, cursor, gate }) {
+        const run = gatedRun(gate)
+        const cohort = whaleCohortOf(params.cohort)
+        const days = daysOfMonth(params.month)
+        const state = cursor ?? { day: days[0], hint: null }
+        const index = days.indexOf(state.day)
+        if (index < 0) {
+          throw new UpstreamError(`the stored cursor names ${state.day}, which is not a day of ${params.month}.`, {
+            kind: 'decode',
+            source: WHALES_NET.relay.id,
+          })
+        }
+
+        // Both heads, and the DOT/10 canary on both hosts — shared with the netflows series
+        // rather than restated, so there is one place that can catch a hostname resolving to the
+        // wrong chain.
+        const heads = await netflowsHeads(run, WHALES_NET)
+        const slice = days.slice(index, index + DAYS_PER_BATCH)
+        const lastEnd = dayStartMs(slice[slice.length - 1]) + DAY_MS
+
+        // THE guarantee, and it is not `immutable` above — that one only knows the wall clock. A
+        // chain can answer every call and still be weeks behind (CLAUDE.md), and a day summarised
+        // from a chain that has not reached its end would be a wrong number stored forever.
+        for (const chain of [heads.relay, heads.assetHub]) {
+          if (chain.timeMs < lastEnd) {
+            throw new UpstreamError(
+              `${chain.host.label} has not produced a block past ${new Date(lastEnd).toISOString()} — its finalized head #${chain.block} is dated ${new Date(chain.timeMs).toISOString()}. Refusing to store days it has not reached.`,
+              { kind: 'upstream', source: chain.host.id },
+            )
+          }
+        }
+
+        const { payloads, hint } = await readWhaleDays({ cohort, days: slice, run, heads, hint: state.hint })
+
+        const finished = index + slice.length >= days.length
+        const head =
+          `${WHALES_NET.relay.chainLabel} #${heads.relay.block} @ ${new Date(heads.relay.timeMs).toISOString()}; ` +
+          `${WHALES_NET.assetHub.chainLabel} #${heads.assetHub.block} @ ${new Date(heads.assetHub.timeMs).toISOString()}`
+
+        return {
+          rows: payloads.map((payload) => ({ segment: payload.date, payload, head, codeVersion: WHALES_VERSION })),
+          cursor: finished ? undefined : { day: days[index + slice.length], hint },
+          done: finished,
+          doneUnits: index + slice.length,
+          totalUnits: days.length,
+        }
+      },
+    },
   },
 }
 
@@ -2965,5 +3631,9 @@ const REGISTRY = {
  * drift. Assigned before export, used only at request time, so the reference is always live.
  */
 const NETFLOWS_DAILY = REGISTRY.jobs['netflows-daily']
+
+/** The `whales-daily` handler, by name — same reasoning as `NETFLOWS_DAILY` above: one handler
+ *  object, captured from the registry, so the aggregate and the HTTP path cannot drift apart. */
+const WHALES_DAILY = REGISTRY.jobs['whales-daily']
 
 export default REGISTRY

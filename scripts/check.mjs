@@ -295,7 +295,7 @@ function checkSecrets() {
  * See DISCHARGING_A_HANDLER_CHANGE below for what to do about a failure. Do not edit this list
  * on its own — the list is the last step, not the first.
  */
-const MEASURED_JOB_HANDLERS = ['asset-hub/netflows-daily', 'hydration/swaps-daily']
+const MEASURED_JOB_HANDLERS = ['asset-hub/netflows-daily', 'asset-hub/whales-daily', 'hydration/swaps-daily']
 
 /** What a change to that list obliges, in the order it has to happen. */
 const DISCHARGING_A_HANDLER_CHANGE =

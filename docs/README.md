@@ -61,6 +61,7 @@ written account of what it is querying.
 | [0018](decisions/0018-a-readers-job-outranks-a-warm-one.md) | a reader's job outranks a warm one — priority orders the claim, and a batch is the unit of fairness |
 | [0019](decisions/0019-the-store-canaries-its-own-derivability.md) | the store canaries its own derivability, because "no backup" is a claim about upstreams |
 | [0020](decisions/0020-the-series-is-read-in-one-request.md) | the series is read in one request, and late months arrive over a stream — the read layer composes, the storage identity never changes |
+| [0021](decisions/0021-the-whale-cohort-is-seeded-not-enumerated.md) | the whale cohort is seeded from a public list and measured from the chain — discovery is editorial, measurement is verified |
 
 ## `concept/` — working notes, deliberately not published
 

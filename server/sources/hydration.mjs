@@ -32,16 +32,21 @@
 // rule exists to prevent. Window edges are whole UTC days resolved to real block heights by
 // asking the chain which block a day started at, never by multiplying an assumed block time.
 
-import { graphql, jsonRpc, UpstreamError } from '../lib/upstream.mjs'
+import { callUpstream, graphql, jsonRpc, UpstreamError } from '../lib/upstream.mjs'
 import { deriveRates } from '../../src/core/pricing.js'
 import { aggregate, trimForWire, dayOf } from '../../src/core/swaps.js'
-import { twox128 } from '../../src/core/codec/xxhash.js'
+import { twox128, xxhash64 } from '../../src/core/codec/xxhash.js'
 import { blake2b } from '../../src/core/codec/blake2b.js'
 import { toHex, fromHex, utf8, concat, u32le } from '../../src/core/codec/bytes.js'
 import { decodeCompact } from '../../src/core/codec/scale.js'
 import { encodeSs58 } from '../../src/core/codec/ss58.js'
 import { structuralLabel } from '../../src/core/topology.js'
 import { liveness } from '../../src/core/liveness.js'
+import { keccakHex } from '../../src/core/codec/keccak.js'
+// Decision 0009: pricing is a source others COMPOSE. `capital` below calls this module's
+// `market` operation for the oracle, the money-market reserves and the Omnipool balance sheet
+// rather than reimplementing any of them. One level deep — the pricer calls no one.
+import hydrationEvm from './hydration-evm.mjs'
 
 /** The upstream's human name, as `/api` and every liveness line spell it. Declared once, for
  *  the reason bulletin.mjs declares its own: the contract says `label` is "the upstream's human
@@ -1500,6 +1505,204 @@ async function ingestDay({ gate, day, fromBlock, fromBlockAt, hintBlocks }) {
 
 /* ------------------------------------------------------------------------------ page ---- */
 
+/* ═══════════════════════════════════════════════════ what Hydration holds — the plumbing ═════ */
+//
+// The stock question, beside the flow question the rest of this module answers: how much capital
+// sits on this chain right now, and in which assets. Every reading, every grade and the full
+// derivation are in docs/platform/hydration-capital.md; what follows is the code that re-derives
+// them. Two things about it are load-bearing.
+//
+// ── the one thing that would inflate the answer by 37 % ──────────────────────────────────────
+// Hydration's venues hold EACH OTHER'S receipt tokens, several layers deep. Adding the four
+// together counted $72.5 M on 2026-08-21, of which $27.1 M was one venue holding another's claim.
+// The stack is not guessable from the names: `GDOT` (69) is the aToken of the STABLESWAP POOL
+// `2-Pool-GDOT` (690), and `GETH` (420) is the aToken of `2-Pool-GETH` (4200), whose own reserves
+// are aETH — itself the aToken of ETH. A symbol filter keeps every one of them.
+//
+// So the classification is asked of the CONTRACT and the REGISTRY, never of the name:
+//
+//     UNDERLYING_ASSET_ADDRESS() answers  ->  an aToken           (derived)
+//     asset() answers                     ->  an ERC-4626 vault   (derived)
+//     registry type StableSwap / XYK      ->  a pool share token  (derived)
+//     otherwise                           ->  base
+//
+// and a position counts only when its token is base. A derived position is a claim on reserves
+// counted where they physically sit, so this is exact rather than an estimate: the aDOT the
+// Omnipool holds is INSIDE the money market's supplied DOT, not beside it.
+//
+// ── composition, not a second pricer ─────────────────────────────────────────────────────────
+// Decision 0009: pricing is a source others compose. The oracle discovery chain, the money-market
+// reserves and the Omnipool balance sheet read by all three storage paths already exist in
+// `hydration-evm`, and this CALLS it rather than reimplementing it — one level deep, which is the
+// rule that decision sets. No price here comes from anywhere but a chain (decision 0008).
+//
+// It composes `hydration-evm` rather than `prices.mjs`, and that is deliberate. This operation
+// needs the money market's per-reserve `supplied` and `borrowed` and the Omnipool's reserves, not
+// only a price — `prices.mjs` serves prices alone, so composing it would mean reading the SAME
+// oracle twice, a minute apart, and an asset would be worth two amounts on one page. Taking each
+// price from the reserve row whose quantity it multiplies keeps price and quantity inside one
+// snapshot, which is the property 0009's caching rule is protecting.
+//
+// The two were checked against each other rather than assumed compatible: across the 25 assets
+// both value, `prices.mjs` and this operation agree to a worst relative difference of 0.0004 %
+// (verified live 2026-08-21). Two modules, two authors, one oracle, one number. This chain also
+// resolves four assets `prices.mjs` cannot — wstETH, jitoSOL, sUSDS, sUSDe — through the
+// stableswap share-price residual below.
+
+/** The pool account of a stableswap pool: `blake2_256("sts" ‖ u32le(poolId))`. Derived, never
+ *  stored — `Stableswap::Pools` gives the members and the amplification and NOT the reserves.
+ *  Tested against two plausible alternatives (docs/platform/hydration.md); the wrong derivation
+ *  does not error, it yields a valid-looking account holding nothing. */
+const stableswapAccount = (poolId) => '0x' + toHex(blake2b(concat(utf8('sts'), u32le(poolId)), 32))
+
+/** A Substrate-native asset's EVM address: 12 zero bytes, `00000001`, then the u32 id big-endian.
+ *  An `Erc20`-typed asset does NOT follow this — its address is a real contract in AssetLocations. */
+const evmAddressOfAsset = (id) => `0x${'0'.repeat(31)}1${Number(id).toString(16).padStart(8, '0')}`
+
+/** The reverse: an address in that shape back to its id, or null if it is a real contract. */
+function assetIdOfEvmAddress(address) {
+  const hex = String(address ?? '').replace(/^0x/, '').toLowerCase()
+  if (hex.length !== 40 || !hex.startsWith('0'.repeat(31) + '1')) return null
+  return Number.parseInt(hex.slice(32), 16)
+}
+
+const capitalSelector = (signature) => keccakHex(signature).slice(0, 10)
+const CAP_SEL = {
+  balanceOf: capitalSelector('balanceOf(address)'),
+  underlying: capitalSelector('UNDERLYING_ASSET_ADDRESS()'),
+  asset4626: capitalSelector('asset()'),
+  convertToAssets: capitalSelector('convertToAssets(uint256)'),
+}
+const capitalWord = (value) => String(value).replace(/^0x/, '').toLowerCase().padStart(64, '0')
+
+const STORAGE_PAGE = 400
+const EVM_BATCH = 150
+
+/** `state_queryStorageAt`, paged. A missing key comes back `null`, which is a fact about the
+ *  chain rather than an error: an `Erc20` asset simply has no orml row. */
+async function readStorage(keys) {
+  const found = new Map()
+  for (let at = 0; at < keys.length; at += STORAGE_PAGE) {
+    const slice = keys.slice(at, at + STORAGE_PAGE)
+    const changes = await jsonRpc({
+      source: 'hydration-rpc',
+      url: RPC,
+      method: 'state_queryStorageAt',
+      params: [slice],
+      timeoutMs: 45_000,
+    })
+    for (const [key, value] of changes?.[0]?.changes ?? []) found.set(key.toLowerCase(), value)
+  }
+  return keys.map((key) => found.get(key.toLowerCase()) ?? null)
+}
+
+/** Every key under a storage prefix, paged. */
+async function keysUnder(prefix) {
+  const out = []
+  let start = null
+  for (;;) {
+    const page = await jsonRpc({
+      source: 'hydration-rpc',
+      url: RPC,
+      method: 'state_getKeysPaged',
+      params: [prefix, 1000, start],
+      timeoutMs: 45_000,
+    })
+    if (!page?.length) break
+    out.push(...page)
+    if (page.length < 1000) break
+    start = page[page.length - 1]
+  }
+  return out
+}
+
+/** An `eth_call` batch. Per-item failures become `null` rather than throwing: a reverting call
+ *  means "this contract has no answer", which is a fact to report and not a dead page. */
+async function ethCalls(calls) {
+  const out = new Array(calls.length).fill(null)
+  for (let at = 0; at < calls.length; at += EVM_BATCH) {
+    const slice = calls.slice(at, at + EVM_BATCH)
+    const body = slice.map((call, i) => ({
+      jsonrpc: '2.0',
+      id: i,
+      method: 'eth_call',
+      params: [{ to: call.to, data: call.data }, 'latest'],
+    }))
+    const answer = await callUpstream({ source: 'hydration-rpc', url: RPC, method: 'POST', body, timeoutMs: 60_000 })
+    if (!Array.isArray(answer)) {
+      throw new UpstreamError('the node answered a JSON-RPC batch with something that is not an array.', {
+        kind: 'decode',
+        source: 'hydration-rpc',
+      })
+    }
+    for (const item of answer) {
+      if (!Number.isInteger(item?.id) || item.id < 0 || item.id >= slice.length) continue
+      out[at + item.id] = item.error ? null : (item.result ?? null)
+    }
+  }
+  return out
+}
+
+const wordAddress = (hex) => (hex && hex !== '0x' && BigInt(hex) !== 0n ? '0x' + hex.slice(26) : null)
+
+/** A fixed-width little-endian unsigned integer at a byte offset in a hex string. */
+function leUint(hex, byteOffset = 0, byteLength = 16) {
+  if (!hex) return null
+  const slice = hex.replace(/^0x/, '').slice(byteOffset * 2, (byteOffset + byteLength) * 2)
+  if (slice.length !== byteLength * 2) return null
+  return BigInt('0x' + (slice.match(/../g) ?? []).reverse().join(''))
+}
+
+/** `AssetRegistry::AssetLocations` for an `Erc20` asset is always `parents: 0`, `X1[AccountKey20]`
+ *  — 24 bytes. Asserted rather than generally decoded: taking 20 bytes off the end of an
+ *  arbitrary junction yields a plausible address for a location that is not one. */
+function erc20AddressOf(hex) {
+  if (!hex) return null
+  const bytes = String(hex).replace(/^0x/, '').toLowerCase()
+  return bytes.length === 48 && bytes.startsWith('00010300') ? '0x' + bytes.slice(8) : null
+}
+
+/** `Stableswap::Pools -> PoolInfo`. Only the member list is wanted. The trailing amplification
+ *  and fee are measured, not parsed — a tail that is not 16 bytes means the layout moved, and
+ *  that must be loud rather than yielding a plausible member list. */
+function decodePoolMembers(hex) {
+  const [count, next] = decodeCompact(hex, 2)
+  const assets = []
+  let at = next
+  for (let i = 0; i < count; i += 1) {
+    assets.push(Number(leUint('0x' + hex.slice(at, at + 8), 0, 4)))
+    at += 8
+  }
+  const tailBytes = (hex.length - at) / 2
+  if (tailBytes !== 16) {
+    throw new UpstreamError(
+      `Stableswap PoolInfo left ${tailBytes} trailing bytes, expected 16 — the runtime layout has changed.`,
+      { kind: 'decode', source: 'hydration-rpc' },
+    )
+  }
+  return assets
+}
+
+const scaledBy = (raw, decimals) =>
+  raw === null || raw === undefined || decimals === null || decimals === undefined ? null : Number(raw) / 10 ** decimals
+
+/** Dollars, to the cent. `null` in, `null` out — a figure we could not compute is not zero. */
+const usd2 = (n) => (n === null || n === undefined || !Number.isFinite(n) ? null : Math.round(n * 100) / 100)
+
+/** One GraphQL call to an orca host `connect()` has already chosen. No host failover: the
+ *  failover happened when the host was picked, and re-picking mid-operation would mean two
+ *  halves of one answer came from two indexes. */
+const orcaOnce = (url, query, variables) =>
+  graphql({ source: ORCA, url, query, variables, timeoutMs: 120_000 })
+
+/** Blocks in a day, as a BRACKET rather than an estimate — used ONLY to let the height index
+ *  answer a boundary lookup quickly. This chain's block time has moved by a factor of 2.9 across
+ *  the range these series cover, so nothing multiplies one out; the bracket is deliberately far
+ *  wider than any day on record (6,188 to 17,702), and every boundary it finds is then proved
+ *  against the chain's own timestamps. A bracket that was too tight throws; it never shifts a day. */
+const DAY_BLOCKS_MIN = 4_000
+const DAY_BLOCKS_MAX = 26_000
+
 export default {
   id: 'hydration',
   label: LABEL,
@@ -1509,17 +1712,788 @@ export default {
   covers: ['Hydration (Polkadot parachain 2034)'],
 
   operations: {
+    /**
+     * What Hydration holds right now, once — the capital across all four venues, resolved to
+     * base assets so that nothing is counted twice.
+     *
+     * Five minutes. Reserves, prices and supplies are current state and can never be immutable,
+     * so this is the TTL cache and nothing else (docs/architecture/middleware.md). One snapshot
+     * is ~40 requests against a public node; per visitor it would make this site that node's
+     * heaviest anonymous client.
+     */
+    capital: {
+      summary:
+        'Every position in Hydration’s four venues — Omnipool, 17 stableswap pools, 290 XYK pools and the ' +
+        'money market — priced on-chain and resolved to base assets, with the receipt tokens the venues hold ' +
+        'in each other named and netted rather than summed.',
+      ttlMs: 300_000,
+      schema: {},
+
+      async run() {
+        const startedAt = Date.now()
+        const observedAt = Date.now()
+
+        // The decode below is trusted by every dollar on the page.
+        await verifyRegistry()
+
+        /* ---- 1. the venues' topology, off the chain ---- */
+
+        const stableswapPrefix = '0x' + toHex(concat(twox128(utf8('Stableswap')), twox128(utf8('Pools'))))
+        const xykPrefix = '0x' + toHex(concat(twox128(utf8('XYK')), twox128(utf8('PoolAssets'))))
+        const [stableswapKeys, xykKeys] = await Promise.all([keysUnder(stableswapPrefix), keysUnder(xykPrefix)])
+        const [stableswapValues, xykValues] = await Promise.all([readStorage(stableswapKeys), readStorage(xykKeys)])
+
+        const stableswapPools = []
+        stableswapKeys.forEach((key, i) => {
+          if (!stableswapValues[i]) return
+          // Blake2_128Concat: 16 bytes of hash then the u32 key itself.
+          const id = Number(leUint('0x' + key.slice(stableswapPrefix.length + 32), 0, 4))
+          stableswapPools.push({ id, members: decodePoolMembers(stableswapValues[i]), account: stableswapAccount(id) })
+        })
+
+        // `XYK::PoolAssets` is keyed by the pool's ACCOUNT with the asset pair as the value —
+        // the opposite of what the name suggests, and the reason no derivation is needed here:
+        // the key already IS the account whose balances are the reserves.
+        const xykPools = []
+        xykKeys.forEach((key, i) => {
+          const value = xykValues[i]
+          if (!value) return
+          xykPools.push({
+            account: '0x' + key.slice(xykPrefix.length + 32),
+            members: [Number(leUint('0x' + value.slice(2, 10), 0, 4)), Number(leUint('0x' + value.slice(10, 18), 0, 4))],
+          })
+        })
+
+        /* ---- 2. the money market and the Omnipool, composed rather than reimplemented ---- */
+
+        const market = await hydrationEvm.operations.market.run({})
+        const omnipoolAssets = market.omnipool?.assets ?? []
+
+        /* ---- 3. the registry, for exactly the assets these venues touch ---- */
+
+        const touched = new Set()
+        for (const pool of stableswapPools) {
+          touched.add(pool.id)
+          for (const id of pool.members) touched.add(id)
+        }
+        for (const pool of xykPools) for (const id of pool.members) touched.add(id)
+        for (const asset of omnipoolAssets) touched.add(asset.id)
+        for (const reserve of market.reserves ?? []) {
+          const id = assetIdOfEvmAddress(reserve.asset)
+          if (id !== null) touched.add(id)
+        }
+        const registry = await fetchAssets([...touched])
+
+        // `Erc20` assets need their contract address: it is where the balance lives, and it is
+        // also what answers the two questions that decide whether the asset is derived.
+        const erc20Ids = [...registry.values()].filter((asset) => asset.type === 'Erc20').map((asset) => asset.id)
+        const locationsPrefix = '0x' + toHex(concat(twox128(utf8('AssetRegistry')), twox128(utf8('AssetLocations'))))
+        const locationKeys = erc20Ids.map((id) => {
+          const encoded = u32le(id)
+          return locationsPrefix + toHex(blake2b(encoded, 16)) + toHex(encoded)
+        })
+        const locationValues = await readStorage(locationKeys)
+        const contractOf = new Map()
+        erc20Ids.forEach((id, i) => {
+          const address = erc20AddressOf(locationValues[i])
+          if (address) contractOf.set(id, address)
+        })
+        // A money-market reserve whose address is a contract resolves to its id through this map.
+        const idOfContract = new Map([...contractOf].map(([id, address]) => [address.toLowerCase(), id]))
+
+        const addressOf = (id) => contractOf.get(id) ?? evmAddressOfAsset(id)
+        const symbolOfId = (id) => registry.get(id)?.symbol ?? registry.get(id)?.name ?? `#${id}`
+        const decimalsOf = (id) => registry.get(id)?.decimals ?? null
+        const typeOf = (id) => registry.get(id)?.type ?? null
+
+        /* ---- 4. the wrap graph, asked of the contracts ---- */
+
+        const probes = erc20Ids.flatMap((id) => [
+          { to: addressOf(id), data: CAP_SEL.underlying },
+          { to: addressOf(id), data: CAP_SEL.asset4626 },
+        ])
+        const probed = await ethCalls(probes)
+
+        /** id -> { kind, underlying, ratio } for every derived asset. */
+        const wrap = new Map()
+        const vaultIds = []
+        erc20Ids.forEach((id, i) => {
+          const underlying = wordAddress(probed[i * 2])
+          const vaultAsset = wordAddress(probed[i * 2 + 1])
+          if (underlying) {
+            const target = assetIdOfEvmAddress(underlying) ?? idOfContract.get(underlying.toLowerCase()) ?? null
+            // An aToken is 1:1 with its underlying — verified live across 282 DOT<->aDOT legs in
+            // 24 h, deviation exactly 0 (docs/platform/hydration.md).
+            wrap.set(id, { kind: 'aToken', underlying: target, ratio: 1 })
+          } else if (vaultAsset) {
+            const target = assetIdOfEvmAddress(vaultAsset) ?? idOfContract.get(vaultAsset.toLowerCase()) ?? null
+            // A 4626 SHARE IS NOT 1:1 with its asset, unlike an aToken, and the two are
+            // indistinguishable in the registry. `convertToAssets` is asked below.
+            wrap.set(id, { kind: 'vault', underlying: target, ratio: null })
+            vaultIds.push(id)
+          }
+        })
+        if (vaultIds.length) {
+          const one = capitalWord((10n ** 18n).toString(16))
+          const ratios = await ethCalls(vaultIds.map((id) => ({ to: addressOf(id), data: CAP_SEL.convertToAssets + one })))
+          vaultIds.forEach((id, i) => {
+            const raw = ratios[i] && ratios[i] !== '0x' ? BigInt(ratios[i]) : null
+            if (raw !== null) wrap.get(id).ratio = Number(raw) / 1e18
+          })
+        }
+        // Pool share tokens are derived by their registry TYPE, which is the authority for them.
+        for (const [id, asset] of registry) {
+          if (wrap.has(id)) continue
+          if (asset.type === 'StableSwap') wrap.set(id, { kind: 'stableswap share', underlying: null, ratio: null })
+          else if (asset.type === 'XYK') wrap.set(id, { kind: 'XYK share', underlying: null, ratio: null })
+        }
+        const derivedKind = (id) => wrap.get(id)?.kind ?? null
+
+        /* ---- 5. prices: three chained paths, each labelled ---- */
+
+        const oraclePrice = new Map()
+        const spotPrice = new Map()
+        const marketPriceNote = new Map()
+        for (const reserve of market.reserves ?? []) {
+          const id = assetIdOfEvmAddress(reserve.asset) ?? idOfContract.get(String(reserve.asset).toLowerCase()) ?? null
+          if (id === null || reserve.price === null) continue
+          oraclePrice.set(id, reserve.price)
+          marketPriceNote.set(id, reserve.priceSource)
+        }
+        for (const asset of omnipoolAssets) if (asset.spotUsd !== null) spotPrice.set(asset.id, asset.spotUsd)
+
+        /** One whole unit, in dollars, and where the number came from. `null` is never `0`. */
+        function priceOf(id, depth = 0) {
+          if (depth > 8) return { price: null, via: null }
+          if (oraclePrice.has(id)) return { price: oraclePrice.get(id), via: marketPriceNote.get(id) ?? 'money-market oracle' }
+          const link = wrap.get(id)
+          if (link?.underlying !== null && link?.underlying !== undefined && link.ratio !== null) {
+            const inner = priceOf(link.underlying, depth + 1)
+            if (inner.price !== null) {
+              return {
+                price: inner.price * link.ratio,
+                via: `${symbolOfId(link.underlying)} × ${link.ratio === 1 ? '1:1' : link.ratio.toFixed(5)} (${link.kind})`,
+              }
+            }
+          }
+          if (spotPrice.has(id)) return { price: spotPrice.get(id), via: 'Omnipool implied spot' }
+          return { price: null, via: null }
+        }
+
+        /* ---- 6. every position ---- */
+
+        /** @type {Array<{venue:string, pool:string|null, asset:number, amount:number|null}>} */
+        const positions = []
+        for (const asset of omnipoolAssets) {
+          positions.push({ venue: 'Omnipool', pool: null, asset: asset.id, amount: asset.reserve })
+        }
+
+        const balanceReads = []
+        for (const pool of stableswapPools) {
+          for (const id of pool.members) balanceReads.push({ venue: 'Stableswap', pool: symbolOfId(pool.id), poolId: pool.id, account: pool.account, asset: id })
+        }
+        for (const pool of xykPools) {
+          for (const id of pool.members) balanceReads.push({ venue: 'XYK', pool: pool.account.slice(0, 10), poolId: null, account: pool.account, asset: id })
+        }
+
+        // Three storage paths, one balance sheet. HDX is `pallet-balances`, an `Erc20` asset's
+        // balance is in EVM storage, everything else is orml. Missing one does not error — it
+        // returns null, which a naive decoder turns into zero.
+        const viaOrml = balanceReads.filter((read) => typeOf(read.asset) !== 'Erc20' && read.asset !== 0)
+        const viaSystem = balanceReads.filter((read) => read.asset === 0)
+        const viaEvm = balanceReads.filter((read) => typeOf(read.asset) === 'Erc20')
+
+        const tokensPrefix = '0x' + toHex(concat(twox128(utf8('Tokens')), twox128(utf8('Accounts'))))
+        const systemPrefix = '0x' + toHex(concat(twox128(utf8('System')), twox128(utf8('Account'))))
+        const [ormlValues, systemValues, evmValues] = await Promise.all([
+          readStorage(
+            viaOrml.map((read) => {
+              const currency = u32le(read.asset)
+              const digest = new Uint8Array(8)
+              new DataView(digest.buffer).setBigUint64(0, xxhash64(currency, 0), true)
+              return tokensPrefix + toHex(blake2b(fromHex(read.account), 16)) + toHex(fromHex(read.account)) + toHex(digest) + toHex(currency)
+            }),
+          ),
+          readStorage(viaSystem.map((read) => systemPrefix + toHex(blake2b(fromHex(read.account), 16)) + toHex(fromHex(read.account)))),
+          ethCalls(viaEvm.map((read) => ({ to: addressOf(read.asset), data: CAP_SEL.balanceOf + capitalWord(read.account.slice(0, 42)) }))),
+        ])
+        // orml `AccountData { free, reserved, frozen }` — free at byte 0. `frame_system::
+        // AccountInfo` puts `free` at byte 16, after four u32s.
+        viaOrml.forEach((read, i) => { read.raw = leUint(ormlValues[i], 0, 16) })
+        viaSystem.forEach((read, i) => { read.raw = leUint(systemValues[i], 16, 16) })
+        viaEvm.forEach((read, i) => { read.raw = evmValues[i] && evmValues[i] !== '0x' ? BigInt(evmValues[i]) : null })
+        for (const read of balanceReads) positions.push({ ...read, amount: scaledBy(read.raw, decimalsOf(read.asset)) })
+
+        for (const reserve of market.reserves ?? []) {
+          const id = assetIdOfEvmAddress(reserve.asset) ?? idOfContract.get(String(reserve.asset).toLowerCase()) ?? null
+          positions.push({
+            venue: 'Money market',
+            pool: `${reserve.market} market`,
+            poolId: null,
+            asset: id,
+            // `supplied` is the aToken supply, and an Aave market lets a depositor borrow and
+            // re-deposit, so it counts a looped position once per turn of the loop. Measured
+            // 2026-08-21: the market claimed 5,595,503 DOT supplied while the WHOLE CHAIN held
+            // 4,489,790. What is actually in custody is `supplied - borrowed`, and that is what
+            // `netAmount` carries. Floored at zero for HOLLAR, which the market MINTS as debt
+            // rather than lending out of deposits — its supplied is 0 and its borrowed is $12.3 M.
+            amount: reserve.supplied,
+            netAmount: reserve.supplied === null ? null : Math.max(0, reserve.supplied - (reserve.borrowed ?? 0)),
+            borrowedAmount: reserve.supplied === null ? null : Math.min(reserve.supplied, reserve.borrowed ?? 0),
+            borrowed: reserve.borrowed,
+            // A reserve the registry cannot name still has a price and a symbol from the market
+            // itself; dropping it would be worse than carrying it under the market's own label.
+            fallbackSymbol: reserve.symbol,
+            fallbackPrice: reserve.price,
+            fallbackVia: reserve.priceSource,
+          })
+        }
+
+        for (const position of positions) {
+          const known = position.asset !== null && registry.has(position.asset)
+          const { price, via } = known ? priceOf(position.asset) : { price: null, via: null }
+          position.price = price ?? position.fallbackPrice ?? null
+          position.via = price !== null ? via : (position.fallbackVia ?? null)
+          position.symbol = known ? symbolOfId(position.asset) : (position.fallbackSymbol ?? `#${position.asset}`)
+          position.derived = known ? derivedKind(position.asset) : null
+          position.usd = position.price === null || position.amount === null ? null : position.amount * position.price
+          // Everything outside the money market is already net: a pool's reserve is what the pool
+          // holds. Only a lending reserve has a borrowed leg to remove.
+          const net = position.netAmount === undefined ? position.amount : position.netAmount
+          position.netUsd = position.price === null || net === null ? null : net * position.price
+          position.borrowedUsd =
+            position.price === null || position.borrowedAmount === undefined || position.borrowedAmount === null
+              ? null
+              : position.borrowedAmount * position.price
+        }
+
+        /* ---- 7. the stableswap cross-check, which is also how an unpriced leg is valued ---- */
+        //
+        // For a pool whose SHARE token the oracle prices, `sharePrice × TotalIssuance(shares)` is
+        // a second, independent reading of the same pool. Where every leg prices, the two agreed
+        // to within 0.64 % across four pools on 2026-08-21 — which is what makes the reading
+        // trustworthy where a leg does NOT price. There the gap IS that leg's value, exactly,
+        // provided there is only one such leg; with two it cannot be split and is not.
+
+        const issuancePrefix = '0x' + toHex(concat(twox128(utf8('Tokens')), twox128(utf8('TotalIssuance'))))
+        const shareKeys = stableswapPools.map((pool) => {
+          const currency = u32le(pool.id)
+          const digest = new Uint8Array(8)
+          new DataView(digest.buffer).setBigUint64(0, xxhash64(currency, 0), true)
+          return issuancePrefix + toHex(digest) + toHex(currency)
+        })
+        const shareValues = await readStorage(shareKeys)
+
+        const pools = stableswapPools.map((pool, i) => {
+          const legs = positions.filter((position) => position.venue === 'Stableswap' && position.poolId === pool.id)
+          const legSum = legs.reduce((total, leg) => total + (leg.usd ?? 0), 0)
+          const unpriced = legs.filter((leg) => leg.usd === null)
+          const shares = scaledBy(leUint(shareValues[i], 0, 16), decimalsOf(pool.id))
+          const share = priceOf(pool.id)
+          const viaShares = shares === null || share.price === null ? null : shares * share.price
+          const gap = viaShares === null ? null : viaShares - legSum
+          return {
+            id: pool.id,
+            symbol: symbolOfId(pool.id),
+            members: pool.members.map((id) => ({ id, symbol: symbolOfId(id), derived: derivedKind(id) })),
+            legSumUsd: usd2(legSum),
+            shares,
+            sharePrice: share.price,
+            viaSharesUsd: usd2(viaShares),
+            gapUsd: usd2(gap),
+            gapPercent: viaShares ? sig6((gap / viaShares) * 100) : null,
+            unpriced: unpriced.map((leg) => ({ asset: leg.asset, symbol: leg.symbol, amount: leg.amount })),
+          }
+        })
+
+        // Attribute the gap. Exactly one unpriced leg means the residual is that leg's value and
+        // its implied unit price falls out; two or more cannot be split without assuming both
+        // sit at parity, so they are reported unattributed instead.
+        let residualUsd = 0
+        const unattributed = []
+        for (const pool of pools) {
+          if (pool.gapUsd === null || pool.gapUsd <= 0 || !pool.unpriced.length) continue
+          residualUsd += pool.gapUsd
+          if (pool.unpriced.length === 1) {
+            const [leg] = pool.unpriced
+            const target = positions.find(
+              (position) => position.venue === 'Stableswap' && position.poolId === pool.id && position.asset === leg.asset,
+            )
+            if (target && target.amount) {
+              target.usd = pool.gapUsd
+              target.netUsd = pool.gapUsd
+              target.price = pool.gapUsd / target.amount
+              target.via = `implied from ${pool.symbol}’s own share price`
+              leg.impliedPrice = sig6(target.price)
+              leg.impliedUsd = pool.gapUsd
+            }
+          } else {
+            unattributed.push({ pool: pool.symbol, usd: pool.gapUsd, legs: pool.unpriced.map((leg) => leg.symbol) })
+          }
+        }
+
+        /* ---- 8. roll up ---- */
+
+        const byVenue = new Map()
+        for (const position of positions) {
+          const entry = byVenue.get(position.venue) ?? {
+            venue: position.venue,
+            grossUsd: 0,
+            derivedUsd: 0,
+            distinctUsd: 0,
+            borrowedUsd: 0,
+            netUsd: 0,
+            positions: 0,
+            unpricedPositions: 0,
+          }
+          entry.positions += 1
+          if (position.usd === null) entry.unpricedPositions += 1
+          else {
+            entry.grossUsd += position.usd
+            if (position.derived) entry.derivedUsd += position.usd
+            else {
+              entry.distinctUsd += position.usd
+              entry.netUsd += position.netUsd ?? position.usd
+              entry.borrowedUsd += position.borrowedUsd ?? 0
+            }
+          }
+          byVenue.set(position.venue, entry)
+        }
+        const venues = [...byVenue.values()].sort((a, b) => b.grossUsd - a.grossUsd)
+        const grossUsd = venues.reduce((total, venue) => total + venue.grossUsd, 0)
+        const derivedUsd = venues.reduce((total, venue) => total + venue.derivedUsd, 0)
+        const distinctUsd = grossUsd - derivedUsd
+        const loopedUsd = venues.reduce((total, venue) => total + venue.borrowedUsd, 0)
+        const netUsd = distinctUsd - loopedUsd
+
+        // By BASE asset — the actual question, "how much money is in which assets". A derived
+        // position is skipped because its backing is counted where it sits, so this sums to the
+        // distinct total: that equality is the reconciliation, and the residual is published.
+        const byAsset = new Map()
+        for (const position of positions) {
+          if (position.derived) continue
+          const key = position.asset ?? `?${position.symbol}`
+          const entry = byAsset.get(key) ?? {
+            id: position.asset,
+            symbol: position.symbol,
+            // Seven registry assets are called USDC or USDT. A bare ticker in a ranked list is a
+            // factual error here, so anything a reader sees carries the id.
+            label: position.asset === null ? position.symbol : `${position.symbol} (${position.asset})`,
+            usd: 0,
+            grossUsd: 0,
+            borrowedUsd: 0,
+            amount: 0,
+            grossAmount: 0,
+            venues: [],
+            unpricedPositions: 0,
+            via: null,
+          }
+          if (!entry.venues.includes(position.venue)) entry.venues.push(position.venue)
+          if (position.usd === null) entry.unpricedPositions += 1
+          else {
+            entry.usd += position.netUsd ?? position.usd
+            entry.grossUsd += position.usd
+            entry.borrowedUsd += position.borrowedUsd ?? 0
+            entry.amount += (position.netAmount === undefined ? position.amount : position.netAmount) ?? 0
+            entry.grossAmount += position.amount ?? 0
+            entry.via = entry.via ?? position.via
+          }
+          byAsset.set(key, entry)
+        }
+        const assets = [...byAsset.values()]
+          .map((asset) => ({
+            ...asset,
+            usd: usd2(asset.usd),
+            grossUsd: usd2(asset.grossUsd),
+            borrowedUsd: usd2(asset.borrowedUsd),
+            amount: sig6(asset.amount),
+            grossAmount: sig6(asset.grossAmount),
+          }))
+          .sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0))
+
+        const assetTotal = assets.reduce((total, asset) => total + (asset.usd ?? 0), 0)
+        const unpricedPositions = positions.filter((position) => position.usd === null)
+        const unpricedAssets = new Set(unpricedPositions.map((position) => position.symbol))
+        const xykPoolsWithNoPricedLeg = xykPools.filter((pool) =>
+          pool.members.every((id) => {
+            const leg = positions.find((position) => position.venue === 'XYK' && position.account === pool.account && position.asset === id)
+            return !leg || leg.usd === null
+          }),
+        ).length
+
+        /* ---- 9. the reconciliation that decided the headline ---- */
+        //
+        // For every base asset we claim to have found, compare against `Tokens::TotalIssuance` —
+        // the whole chain's supply of it. The venues cannot hold more of a token than exists.
+        //
+        // At GROSS this check FAILS for six assets, DOT worst at 126 % of its own chain-wide
+        // supply, and that failure is what identified the recursive-deposit loop: an Aave market
+        // lets a depositor borrow and re-deposit, and `supplied` counts every turn. Netting the
+        // borrowing out brings every asset back under its supply. The check is run on both
+        // figures and BOTH results are published, because the second is only convincing next to
+        // the first.
+        //
+        // `Erc20`-typed assets are excluded: their orml row is a mirror residue, not a supply —
+        // HOLLAR's reads 13,584 against a real 12.6 M (docs/platform/hydration.md).
+
+        const checkable = assets.filter(
+          (asset) => asset.id !== null && asset.usd !== null && typeOf(asset.id) !== 'Erc20' && asset.amount > 0,
+        )
+        const issuanceValues = await readStorage(
+          checkable.map((asset) => {
+            const currency = u32le(asset.id)
+            const digest = new Uint8Array(8)
+            new DataView(digest.buffer).setBigUint64(0, xxhash64(currency, 0), true)
+            return issuancePrefix + toHex(digest) + toHex(currency)
+          }),
+        )
+        const supplyCheck = []
+        checkable.forEach((asset, i) => {
+          const supply = scaledBy(leUint(issuanceValues[i], 0, 16), decimalsOf(asset.id))
+          if (supply === null || supply <= 0) return
+          supplyCheck.push({
+            id: asset.id,
+            label: asset.label,
+            supply: sig6(supply),
+            heldNet: asset.amount,
+            heldGross: asset.grossAmount,
+            netShare: sig6(asset.amount / supply),
+            grossShare: sig6(asset.grossAmount / supply),
+          })
+        })
+        const overAtGross = supplyCheck.filter((row) => row.grossShare > 1.02)
+        const overAtNet = supplyCheck.filter((row) => row.netShare > 1.02)
+
+        const headBlock = await jsonRpc({ source: 'hydration-rpc', url: RPC, method: 'chain_getHeader', params: [], timeoutMs: 20_000 })
+        const [nowRaw] = await readStorage(['0x' + toHex(concat(twox128(utf8('Timestamp')), twox128(utf8('Now'))))])
+        const chainNowMs = nowRaw ? Number(leUint(nowRaw, 0, 8)) : null
+
+        return {
+          fetchedAt: new Date().toISOString(),
+          elapsedMs: Date.now() - startedAt,
+          totals: {
+            grossUsd: usd2(grossUsd),
+            derivedUsd: usd2(derivedUsd),
+            distinctUsd: usd2(distinctUsd),
+            loopedUsd: usd2(loopedUsd),
+            netUsd: usd2(netUsd),
+            derivedShare: grossUsd > 0 ? sig6(derivedUsd / grossUsd) : null,
+            // Everything the market has lent out, including the HOLLAR it MINTS rather than
+            // lends. `loopedUsd` above is the part that was lent out of deposits, which is the
+            // only part that can be double-counted by a re-deposit.
+            borrowedUsd: usd2(market.totals?.borrowedUsd ?? null),
+            positions: positions.length,
+            unpricedPositions: unpricedPositions.length,
+            unpricedAssets: [...unpricedAssets].slice(0, 40),
+            unpricedAssetCount: unpricedAssets.size,
+            xykPoolsWithNoPricedLeg,
+            xykPools: xykPools.length,
+            stableswapPools: stableswapPools.length,
+            omnipoolAssets: omnipoolAssets.length,
+            reserves: (market.reserves ?? []).length,
+            // The residual the share-price cross-check recovered, and what could not be split.
+            residualUsd: usd2(residualUsd),
+            unattributed,
+            // The reconciliation: by-asset must sum to distinct. Published rather than asserted,
+            // because a reader who cannot see the residual has to take the equality on trust.
+            byAssetTotalUsd: usd2(assetTotal),
+            byAssetResidualUsd: usd2(assetTotal - netUsd),
+            supplyCheck: {
+              checked: supplyCheck.length,
+              overAtGross: overAtGross.length,
+              overAtNet: overAtNet.length,
+              worstAtGross: overAtGross.sort((a, b) => b.grossShare - a.grossShare).slice(0, 6),
+              stillOver: overAtNet.sort((a, b) => b.netShare - a.netShare).slice(0, 6),
+            },
+          },
+          supplyCheck: supplyCheck.sort((a, b) => b.grossShare - a.grossShare),
+          venues,
+          assets,
+          pools,
+          wraps: [...wrap]
+            .filter(([, link]) => link.underlying !== null && link.underlying !== undefined)
+            .map(([id, link]) => ({
+              id,
+              symbol: symbolOfId(id),
+              kind: link.kind,
+              underlying: link.underlying,
+              underlyingSymbol: symbolOfId(link.underlying),
+              underlyingKind: derivedKind(link.underlying),
+              ratio: link.ratio,
+            }))
+            .sort((a, b) => a.id - b.id),
+          positions: positions
+            .filter((position) => position.usd !== null || position.amount)
+            .map((position) => ({
+              venue: position.venue,
+              pool: position.pool,
+              asset: position.asset,
+              symbol: position.symbol,
+              label: position.asset === null ? position.symbol : `${position.symbol} (${position.asset})`,
+              amount: sig6(position.amount),
+              usd: usd2(position.usd),
+              via: position.via,
+              derived: position.derived,
+            }))
+            .sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1)),
+          meta: {
+            liveness: liveness({
+              source: 'hydration',
+              label: `${LABEL} — chain state`,
+              observedAt,
+              headAt: chainNowMs,
+              head: `block #${Number(BigInt(headBlock?.number ?? 0)).toLocaleString('en-US')}`,
+              covers: { from: null, to: null },
+              staleAfterMs: STALE_AFTER_MS,
+              frozenAfterMs: FROZEN_AFTER_MS,
+              note:
+                'Read from chain state at the head block, not from an indexer. A parachain can answer ' +
+                'every call and still be weeks stale, so the head’s own `Timestamp::Now` is what this is ' +
+                'judged against rather than the fact that it answered.',
+            }),
+            source: 'hydration',
+            sourceLabel: 'Hydration RPC (Substrate + EVM planes)',
+            sourceUrl: 'rpc.hydradx.cloud',
+            venue: 'Hydration',
+            venueUrl: 'https://app.hydration.net',
+            headBlock: Number(BigInt(headBlock?.number ?? 0)),
+            chainNow: chainNowMs === null ? null : new Date(chainNowMs).toISOString(),
+            priceOracle: market.contracts?.priceOracle ?? null,
+            baseCurrencyUnit: market.totals?.baseCurrencyUnit ?? null,
+            doc: 'docs/platform/hydration-capital.md',
+          },
+        }
+      },
+    },
+
+    /**
+     * The live tail of the daily series: the last N CLOSED UTC days, counted rather than walked.
+     *
+     * ── why this exists at all ───────────────────────────────────────────────────────────────
+     * `swaps-daily` (mode A, below) stores a calendar month at a time and cannot serve the
+     * current month, because a month that has not ended can never be immutable — decision 0012,
+     * and the same seam `/netflows/` has. So the long-range view reads whole past months from the
+     * store and this for the days since. It is the exact counterpart of
+     * `asset-hub/sovereign-dot-recent`, and it is deliberately the SAME pattern rather than a
+     * second one.
+     *
+     * ── why it is counted and not walked ─────────────────────────────────────────────────────
+     * Walking a day the way `swaps-daily` does — every routed trade, priced — costs 6.5–12.8 s
+     * (measured 2026-08-21). On the 28th of a month that tail is five minutes, which is not a
+     * page load. Counting a day costs about 150 ms, because orca answers `totalCount` on both
+     * `routedTrades` and `swaps` and GraphQL ALIASES let a whole month go in one request: 20 days
+     * of counts in 3.1 s, verified live 2026-08-21.
+     *
+     * The price of that is real and is stated on the page rather than discovered: a tail day
+     * carries its trade count, its leg count, the inflation factor between them and orca's own
+     * published pool volume — and `usd: null`, because this repository's own priced-trade volume
+     * needs the trades themselves. `null` is not `0`: the chart breaks the line rather than
+     * drawing the tail at the floor.
+     */
+    'swaps-recent-daily': {
+      summary:
+        'The last N closed UTC days of Hydration trading, counted rather than walked: trades, legs, the ' +
+        'leg-inflation factor and orca’s own published pool volume per day. The live tail the month-bucketed ' +
+        'store cannot serve.',
+      // Thirty minutes. A day that has closed does not change, but the SET of closed days does,
+      // and the last day of the set is the one a reader is watching. Half an hour is the same
+      // figure `asset-hub/sovereign-dot-recent` uses for the same reason.
+      ttlMs: 1_800_000,
+      schema: {
+        // Thirty-one, because that is the most closed days a calendar month can have waiting for
+        // it, and this exists to cover exactly that gap. It is not a window control.
+        days: { type: 'int', min: 1, max: 31, default: 31 },
+      },
+
+      async run({ days }) {
+        const startedAt = Date.now()
+        const { url, host, head, floor, failures } = await connect()
+        const headMs = Date.parse(head.timestamp)
+        const floorMs = Date.parse(floor.block.timestamp)
+
+        // Yesterday, in UTC, by the SERVER's clock — and then bounded by what orca has actually
+        // indexed, so a server clock running fast cannot ask for a day the index stops inside.
+        const yesterday = addDaysIso(dayIso(Date.now()), -1)
+        const lastClosed = addDaysIso(dayIso(headMs), -1)
+        const lastDay = lastClosed < yesterday ? lastClosed : yesterday
+        const firstDay = addDaysIso(lastDay, -(days - 1))
+        const floorDay = dayIso(floorMs)
+
+        const wanted = []
+        for (let day = firstDay; day <= lastDay; day = addDaysIso(day, 1)) wanted.push(day)
+        // The exclusive right edge of the last day is the first block of the day after it.
+        const edges = [...wanted, addDaysIso(lastDay, 1)]
+
+        /* ---- the boundaries: one unbounded anchor, then a bracketed alias per edge ---- */
+        //
+        // A bracket, not an estimate. Block time on this chain has moved by a factor of 2.9
+        // across the range this series covers, so nothing here multiplies one out — the bracket
+        // exists only so the height index can answer the lookup, and every boundary it returns is
+        // then PROVED against the chain's own timestamps below. A bracket that was too tight
+        // therefore throws rather than shifting a day's trades into its neighbour.
+
+        const anchor = await orcaOnce(url, BOUNDARY_SCAN, { at: `${edges[0]}T00:00:00Z` })
+        const anchorBlock = anchor?.boundary?.nodes?.[0]
+        if (!anchorBlock) {
+          throw new UpstreamError(
+            `orca has no block at or after ${edges[0]}T00:00:00Z; its head is #${head.height} at ${head.timestamp}.`,
+            { kind: 'upstream', source: ORCA },
+          )
+        }
+
+        let query = 'query Edges {\n'
+        edges.forEach((day, i) => {
+          if (i === 0) return
+          const low = anchorBlock.height + i * DAY_BLOCKS_MIN
+          const high = anchorBlock.height + i * DAY_BLOCKS_MAX
+          query +=
+            `  e${i}: blocks(filter: { timestamp: { greaterThanOrEqualTo: "${day}T00:00:00Z" }, ` +
+            `height: { greaterThanOrEqualTo: ${low}, lessThan: ${high} } }, orderBy: HEIGHT_ASC, first: 1) ` +
+            `{ nodes { height timestamp } }\n`
+        })
+        query += '}'
+        const edgeAnswer = await orcaOnce(url, query, {})
+
+        const heights = [anchorBlock.height]
+        edges.forEach((day, i) => {
+          if (i === 0) return
+          const node = edgeAnswer?.[`e${i}`]?.nodes?.[0]
+          if (!node) {
+            throw new UpstreamError(
+              `orca has not indexed past ${day}T00:00:00Z — its head is block ${head.height} at ${head.timestamp}. ` +
+                'Refusing to report a day from an index that stops inside it.',
+              { kind: 'upstream', source: ORCA },
+            )
+          }
+          heights.push(node.height)
+        })
+
+        /* ---- prove every boundary, and count every day, in one request ---- */
+        //
+        // "The first block of day D" means exactly two things: this block is at or after D's
+        // start, and the one before it is not. Both are checked. A boundary that drifted by a
+        // single block would attribute trades to the wrong day for the rest of the series and
+        // every total would still look entirely reasonable.
+
+        query = 'query Days {\n'
+        heights.forEach((height, i) => {
+          query +=
+            `  p${i}: blocks(filter: { height: { greaterThanOrEqualTo: ${Math.max(1, height - 1)}, ` +
+            `lessThanOrEqualTo: ${height} } }, orderBy: HEIGHT_ASC) { nodes { height timestamp } }\n`
+        })
+        wanted.forEach((day, i) => {
+          const from = heights[i]
+          const to = heights[i + 1]
+          query +=
+            `  t${i}: routedTrades(filter: { paraBlockHeight: { greaterThanOrEqualTo: ${from}, lessThan: ${to} } }) { totalCount }\n` +
+            `  l${i}: swaps(filter: { paraBlockHeight: { greaterThanOrEqualTo: ${from}, lessThan: ${to} } }) { totalCount }\n` +
+            `  b${i}: blocks(filter: { height: { greaterThanOrEqualTo: ${from}, lessThan: ${to} } }) { totalCount }\n` +
+            `  v${i}: platformTotalVolumesByPeriod(filter: { startBlockNumber: ${from}, endBlockNumber: ${to - 1} }) ` +
+            `{ nodes { totalVolNorm omnipoolVolNorm stableswapVolNorm xykpoolVolNorm } }\n`
+        })
+        query += '}'
+        const answer = await orcaOnce(url, query, {})
+
+        const proved = []
+        heights.forEach((height, i) => {
+          const nodes = answer?.[`p${i}`]?.nodes ?? []
+          const at = nodes.find((node) => node.height === height)
+          const before = nodes.find((node) => node.height === height - 1)
+          const startMs = Date.parse(`${edges[i]}T00:00:00Z`)
+          if (!at || Date.parse(at.timestamp) < startMs || (before && Date.parse(before.timestamp) >= startMs)) {
+            throw new UpstreamError(
+              `block ${height} is not the first block of ${edges[i]}: it is at ${at?.timestamp ?? 'a height orca does not have'}` +
+                `${before ? `, and block ${height - 1} is at ${before.timestamp}` : ''}.`,
+              { kind: 'decode', source: ORCA },
+            )
+          }
+          proved.push(at.timestamp)
+        })
+
+        let gapless = 0
+        const series = wanted.map((date, i) => {
+          const from = heights[i]
+          const to = heights[i + 1]
+          const trades = answer?.[`t${i}`]?.totalCount ?? null
+          const legs = answer?.[`l${i}`]?.totalCount ?? null
+          const blockCount = answer?.[`b${i}`]?.totalCount ?? null
+          // A parachain numbers its blocks consecutively, so this equality is a free completeness
+          // check on the range: an index with a hole answers fewer.
+          const complete = blockCount === to - from
+          if (complete) gapless += 1
+          const volume = answer?.[`v${i}`]?.nodes?.[0] ?? null
+          const before = to <= floor.paraBlockHeight
+
+          return {
+            date,
+            // Not `indexed`: this day was COUNTED, not walked, so it carries fewer fields than a
+            // stored day and the page must be able to tell them apart without guessing.
+            coverage: before ? 'before-source-floor' : 'counted',
+            blocks: { from, to, count: to - from, firstBlockAt: proved[i], toBlockAt: proved[i + 1], gapless: complete },
+            trades: before ? null : trades,
+            legs: before ? null : legs,
+            legInflation: before || !trades ? null : sig6(legs / trades),
+            // `null`, never `0`. This repository's own priced-trade volume needs every trade in
+            // the day; a counted day does not have them, and drawing the tail at zero would read
+            // as a market that stopped.
+            usd: null,
+            platform: volume
+              ? {
+                  total: Number(volume.totalVolNorm),
+                  omnipool: Number(volume.omnipoolVolNorm),
+                  stableswap: Number(volume.stableswapVolNorm),
+                  xyk: Number(volume.xykpoolVolNorm),
+                }
+              : null,
+          }
+        })
+
+        return {
+          days: series,
+          firstDay,
+          lastDay,
+          floorDay,
+          gaplessDays: gapless,
+          meta: {
+            liveness: livenessOf({ observedAt: startedAt, head, headMs, firstDay, lastDay }),
+            source: 'hydration',
+            sourceLabel: 'Hydration liquidity-pools squid (orca)',
+            sourceUrl: host,
+            venue: 'Hydration',
+            venueUrl: 'https://app.hydration.net',
+            orcaHost: host,
+            hostFailures: failures,
+            headBlock: head.height,
+            headTime: head.timestamp,
+            elapsedMs: Date.now() - startedAt,
+            fetchedAt: new Date().toISOString(),
+            fidelity: 'counted',
+            note:
+              'Counted, not walked: each day here is a trade count, a leg count and orca’s own published pool ' +
+              'volume, read with one aliased query per pass. Dollar volume computed from the trades themselves — ' +
+              'the figure the stored months carry — is not available for these days and is null rather than zero.',
+          },
+        }
+      },
+    },
+
     swaps: {
       summary: 'Hydration routed trades over a recent window, valued and rolled up. Legs are grouped upstream.',
       // Fifteen minutes. A fourteen-day window is ~79,000 trades and ~37 MB of upstream
       // traffic; doing that on every pageview would make this site orca's heaviest client.
       ttlMs: 900_000,
       schema: {
-        // Fourteen, not seven, and not unlimited. Measured on 2026-08-20 against orca:
-        // 8,527 trades/day, 468 bytes/trade on the wire, ~330 ms per 1,000-row page — so a
-        // day costs ~3 s and fourteen days ~26 s. Thirty days is ~181,000 trades and ~60 s,
-        // which is a page load nobody waits through. The cap is OURS and it is a cost
-        // decision; the data goes back to January 2025 and the page says both.
+        // Fourteen, not seven, and not unlimited. 468 bytes/trade on the wire and ~330 ms per
+        // 1,000-row page, measured against orca on 2026-08-20.
+        //
+        // ⚠ The rate to size this by is NOT the one a short window measures. A 14-day window in
+        // August 2026 gave 8,527 trades/day, and that is this venue at its quietest: the mean
+        // over the whole 19 months orca holds is 11,050/day and 2025-08 ran at 19,046 — 2.2×
+        // the window figure (exact per-month counts in docs/platform/hydration.md). So fourteen
+        // days is ~3 s/day and ~26 s here, but the same fourteen days in August 2025 would have
+        // been about a minute. The cap is OURS and it is a cost decision; the data goes back to
+        // January 2025, and from three months up the page reads the daily series instead —
+        // `swaps-daily` from the store plus `swaps-recent-daily` for the tail.
         days: { type: 'int', min: 1, max: 14, default: 7 },
       },
 
@@ -1678,9 +2652,11 @@ export default {
             'not group them into trades before this floor, and the previous source behind this page (the generic Subsquid ' +
             'archive) saw its first `Broadcast.Swapped3` only at block 7,567,547, on 2025-05-19. A window that appears to start ' +
             'in mid-2025 is an artefact of the source, not of the venue.',
-          `The window is capped at 14 days by this service, not by the data. A day is ~8,500 trades and ~4 MB from an indexer we ` +
-            'do not own; thirty days would be a minute of fetching behind a spinner. The cap is a cost decision and it is the ' +
-            'reason this chart is short, not a shortage of history.',
+          `The window is capped at 14 days by this service, not by the data. A day is 11,050 routed trades on average across ` +
+            'everything the indexer holds — and 19,046 in August 2025, against 8,527 measured over a recent fortnight — pulled ' +
+            'from an indexer we do not own; thirty days at the long-run rate is well over a minute of fetching behind a ' +
+            'spinner. The cap is a cost decision. It is not a shortage of history: the 3-month, 12-month and all-time windows ' +
+            'on this page read the same venue back to January 2025 from a store, one summarised day at a time.',
           'Accounts beginning with the ASCII "modl" are pallet accounts, not people. They are labelled as such and left in the ' +
             'totals, because the money did move; the summary states how much of the volume they are.',
           'Volume is the value of what went IN — what the trader sent, before any hop. A trade with an unpriceable input leg is ' +

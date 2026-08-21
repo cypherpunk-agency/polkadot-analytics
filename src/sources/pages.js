@@ -42,8 +42,8 @@ export const GROUPS = [
     key: 'hydration',
     nav: 'Hydration',
     // Shown at the top of the open panel. Not decoration: it is the only chance to say what
-    // the four pages have in common before the reader has to guess from four short labels.
-    blurb: 'Swaps, the lending market, and the machinery that holds the pegs.',
+    // the five pages have in common before the reader has to guess from five short labels.
+    blurb: 'What the chain holds, what trades on it, the lending market, and the machinery that holds the pegs.',
   },
 ]
 
@@ -87,6 +87,26 @@ export const PAGES = [
     // 2026-08-21 reads nothing else — the bundled 2023 archive half moved out when `netflows-daily`
     // filled the gap that half existed to describe.
     source: 'Polkadot relay + Asset Hub RPC',
+    live: true,
+  },
+  {
+    // The stock question, and the first thing the Hydration group should open on: how much
+    // money is actually here. The other four pages are all flow or mechanism — what traded,
+    // what is lent, what the pegs are doing — and none of them can answer "how much is there",
+    // because answering it needs all four venues read at the same instant and netted against
+    // each other. /hydration-market/ says so explicitly and declines to publish the number;
+    // this is the page that publishes it.
+    key: 'hydration-capital',
+    kind: 'dashboard',
+    group: 'hydration',
+    href: '/hydration-capital/',
+    // "Capital", not "Overview": the group panel names the page, and a reader scanning five
+    // labels learns nothing from a word that could be in front of any of them.
+    nav: 'Capital',
+    title: 'Capital on Hydration',
+    blurb:
+      'How much money is on Hydration right now and in which assets, counted once. The Omnipool, the seventeen stableswap pools, the two hundred and ninety XYK pools and the money market hold each other’s receipt tokens several layers deep, so adding them up counts the same money about one and a half times; every position here is resolved to the base asset behind it, and both the gross figure and what had to come out of it are on the page.',
+    source: 'Hydration RPC (Substrate + EVM planes)',
     live: true,
   },
   {

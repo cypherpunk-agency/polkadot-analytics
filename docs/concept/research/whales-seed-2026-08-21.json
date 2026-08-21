@@ -1,0 +1,3010 @@
+{
+ "source": "assethub-polkadot.subscan.io/account_list pages 1-8, read 2026-08-21; verified against https://polkadot-asset-hub-rpc.polkadot.io",
+ "head": "0xb85292820f4a77f8ead72ca82c532c10af132ca647e0700745932b42f351497e",
+ "blockNumber": 19726844,
+ "readAt": "2026-08-21T15:52:23.363Z",
+ "totalIssuancePlanck": "16990738279644696981",
+ "cohortPlanck": "11311896884324308533",
+ "entries": [
+  {
+   "rank": 1,
+   "address": "16ZL8yLyXv3V3L3z9ofR1ovFLziyXaN1DPq4yffMAZ9czzBD",
+   "label": null,
+   "accountHex": "f5d5714c084c112843aca74f8c498da06cc5a2d63153b825189baa51043b1f0b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9cacf47a79a3f57e5c7a274a3e2120cc5f5d5714c084c112843aca74f8c498da06cc5a2d63153b825189baa51043b1f0b",
+   "subscanDot": 92603159.047,
+   "chain": {
+    "free": "926031590478992674",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 92603159.04789926,
+   "deltaDot": 0.0008992552757263184
+  },
+  {
+   "rank": 2,
+   "address": "13Z7KjGnzdAdMre9cqRwTZHR6F2p36gqBsaNmQwwosiPz8JT",
+   "label": null,
+   "accountHex": "70f59acb102933da7bb3014e9417745a1f5b1a8ef6dfb141c493597a7b723f26",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da90b643b30d3761e33cd90263ac480edc070f59acb102933da7bb3014e9417745a1f5b1a8ef6dfb141c493597a7b723f26",
+   "subscanDot": 40952887.945,
+   "chain": {
+    "free": "409528879452768797",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 40952887.94527688,
+   "deltaDot": 0.0002768784761428833
+  },
+  {
+   "rank": 3,
+   "address": "13vg3Mrxm3GL9eXxLsGgLYRueiwFCiMbkdHBL4ZN5aob5D4N",
+   "label": null,
+   "accountHex": "8167e55fee5bd1cab9465961646ea62dd3793bfec70c1983ba0734d7260bc29d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9c20e93219bb83ac091a0eb28fd2fe83e8167e55fee5bd1cab9465961646ea62dd3793bfec70c1983ba0734d7260bc29d",
+   "subscanDot": 37523518.135,
+   "chain": {
+    "free": "375235181358806887",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 37523518.135880694,
+   "deltaDot": 0.0008806958794593811
+  },
+  {
+   "rank": 4,
+   "address": "13UVJyLnbVp9RBZYFwFGyDvVd1y27Tt8tkntv6Q7JVPhFsTB",
+   "label": "modlpy/trsry",
+   "accountHex": "6d6f646c70792f74727372790000000000000000000000000000000000000000",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95ecffd7b6c0f78751baa9d281e0bfa3a6d6f646c70792f74727372790000000000000000000000000000000000000000",
+   "subscanDot": 24310104.335,
+   "chain": {
+    "free": "243100255393737286",
+    "reserved": "787957700000",
+    "frozen": "0"
+   },
+   "chainDot": 24310104.335143726,
+   "deltaDot": 0.0001437254250049591
+  },
+  {
+   "rank": 5,
+   "address": "19KT274PAdSchBjDmnxh6vEMdy4QFU9Bo6jgMZhen3esYGG",
+   "label": null,
+   "accountHex": "0658111801107f1c3774182a6ed3ec5535a77107590a799af7a0adb1d92593c2",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95c360d4e93ecba13461f3b6bf0ac4ba40658111801107f1c3774182a6ed3ec5535a77107590a799af7a0adb1d92593c2",
+   "subscanDot": 17187398.402,
+   "chain": {
+    "free": "29492037423611604",
+    "reserved": "142381946597990100",
+    "frozen": "0"
+   },
+   "chainDot": 17187398.40216017,
+   "deltaDot": 0.00016017258167266846
+  },
+  {
+   "rank": 6,
+   "address": "12ouvKSvKnXAdXFR5oCL1vXimWrkDWG3joMNw3ETupTRs1ab",
+   "label": null,
+   "accountHex": "5003aa0a3e9eaf4a3727bccb8dd0ffc7e3b8c936bba435328652a78545b54d25",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da903eef1a529ed0d08ad6c82c8a10308745003aa0a3e9eaf4a3727bccb8dd0ffc7e3b8c936bba435328652a78545b54d25",
+   "subscanDot": 16230000.01,
+   "chain": {
+    "free": "162300000100000000",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 16230000.01,
+   "deltaDot": 0
+  },
+  {
+   "rank": 7,
+   "address": "12YfMjjeRPVHpytGSgdHH5iWnybxxuBdLuhjSuuYmrPjFT2H",
+   "label": null,
+   "accountHex": "4461f6c556e5d1deef616c391bedcd9347f2ec7358c929f7c9ae89d838aed5f5",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9f0046d8ab8d68d727480e0c9823f26f04461f6c556e5d1deef616c391bedcd9347f2ec7358c929f7c9ae89d838aed5f5",
+   "subscanDot": 15562944.182,
+   "chain": {
+    "free": "78369671642",
+    "reserved": "155629363451262682",
+    "frozen": "0"
+   },
+   "chainDot": 15562944.182093434,
+   "deltaDot": 0.00009343400597572327
+  },
+  {
+   "rank": 8,
+   "address": "14iNNrvU5DCLZ67mBMjnXFHU1wW24XQBERnMa2ZvokTs5WYW",
+   "label": null,
+   "accountHex": "a441b9185ebdc0fe64c0d0160c552617a008af88365b1376a4e41a67f1fb016c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9aa09dd6bdfa545d66f88f20c13997e33a441b9185ebdc0fe64c0d0160c552617a008af88365b1376a4e41a67f1fb016c",
+   "subscanDot": 13729528.762,
+   "chain": {
+    "free": "5436614063",
+    "reserved": "137295282184660559",
+    "frozen": "0"
+   },
+   "chainDot": 13729528.762127463,
+   "deltaDot": 0.00012746267020702362
+  },
+  {
+   "rank": 9,
+   "address": "165iwLPuPxtR4hkunhEBWvVMarh6gjbBeoBwPm3V13EZT4aC",
+   "label": null,
+   "accountHex": "e0c7521bb0c595969c7832c139bfd3f6b7f04ce391418afae3df88457db0950d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da928852b50d6bd595803c59e0ce78f4556e0c7521bb0c595969c7832c139bfd3f6b7f04ce391418afae3df88457db0950d",
+   "subscanDot": 12125925.701,
+   "chain": {
+    "free": "121259257015857389",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 12125925.70158574,
+   "deltaDot": 0.0005857404321432114
+  },
+  {
+   "rank": 10,
+   "address": "15DQVbbkBZoDZ8GFTw5qoSaFcGvtT22M7g9CaiihH15DiCzL",
+   "label": null,
+   "accountHex": "ba66f69ac48ef538bb1f3df42177cacab234b0197ecd69596f8a977d8e295ae3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da968301d286e9a46ac27017443a9eb6d75ba66f69ac48ef538bb1f3df42177cacab234b0197ecd69596f8a977d8e295ae3",
+   "subscanDot": 12111187.492,
+   "chain": {
+    "free": "121111874927775808",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 12111187.49277758,
+   "deltaDot": 0.0007775798439979553
+  },
+  {
+   "rank": 11,
+   "address": "1yEvPjUDp5V9YmBfjRiRotK7UPzq6EHmeRLfE8xxyJW8bzj",
+   "label": null,
+   "accountHex": "2ae49a7814e0920ecb36f265a135b2d33571f05a77dfe99d2517411a3482ab81",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95a550842d4ce2d9bd82fba2f46dbc3692ae49a7814e0920ecb36f265a135b2d33571f05a77dfe99d2517411a3482ab81",
+   "subscanDot": 11850015.3,
+   "chain": {
+    "free": "118500153007679190",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 11850015.300767919,
+   "deltaDot": 0.0007679183036088943
+  },
+  {
+   "rank": 12,
+   "address": "15tkQXN8hj28sucMHYcGfMvyxWJqHtcVEDvj5jrNJ1TWSJyX",
+   "label": null,
+   "accountHex": "d86890cd7183273e67f993cb5404b896ec367ff38e3035d23c428109e9d449de",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9d153feeeb72a6f6f67a4272a77d12151d86890cd7183273e67f993cb5404b896ec367ff38e3035d23c428109e9d449de",
+   "subscanDot": 11776269.454,
+   "chain": {
+    "free": "1446050453926209",
+    "reserved": "116316644089554029",
+    "frozen": "0"
+   },
+   "chainDot": 11776269.454348024,
+   "deltaDot": 0.00034802407026290894
+  },
+  {
+   "rank": 13,
+   "address": "12npri3cnrVWGQ7AyBRa1TjqpcWLopBxxsyGYJD1B7rnGwSa",
+   "label": null,
+   "accountHex": "4f2f60b57a875b24b1ffb82cafb91ba0a02ac56fbf013860192d59c80b93fbb2",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9d1f0b156a19aaa6238ad6ab7092406a04f2f60b57a875b24b1ffb82cafb91ba0a02ac56fbf013860192d59c80b93fbb2",
+   "subscanDot": 10853359.84,
+   "chain": {
+    "free": "4991029987",
+    "reserved": "108540665846732789",
+    "frozen": "0"
+   },
+   "chainDot": 10854067.083776278,
+   "deltaDot": 707.2437762785703
+  },
+  {
+   "rank": 14,
+   "address": "12GQAfJAvMAMjxdweFfWP6UPE2dQ1UiodCh2RFgtpVQ59VmJ",
+   "label": null,
+   "accountHex": "37fae66ce8090e3da74d47dbc3e4616b4db37e88750b5834b7d3f6ade4f5c807",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a121e456d4a0e4b8b45b1680230e3f1b37fae66ce8090e3da74d47dbc3e4616b4db37e88750b5834b7d3f6ade4f5c807",
+   "subscanDot": 10808741.742,
+   "chain": {
+    "free": "108087417425042842",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 10808741.742504286,
+   "deltaDot": 0.0005042850971221924
+  },
+  {
+   "rank": 15,
+   "address": "12nr7GiDrYHzAYT9L8HdeXnMfWcBuYfAXpgfzf3upujeCciz",
+   "label": "Bybit.com (hot_wallet)",
+   "accountHex": "4f3396dd2c6b55498f67ce8883524360347427e30cbc50fb981922de73c4551e",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9218cdff684f67354f7cb325a06022e5d4f3396dd2c6b55498f67ce8883524360347427e30cbc50fb981922de73c4551e",
+   "subscanDot": 10630890.225,
+   "chain": {
+    "free": "106315440070078262",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 10631544.007007826,
+   "deltaDot": 653.7820078264922
+  },
+  {
+   "rank": 16,
+   "address": "1GVe7pAK2Pc4TVGuPBYbEU82VmaiQhKjFTzECpX7GGXgzBB",
+   "label": null,
+   "accountHex": "0bd1177d190c955fac5de6a176769fb1b3237c47c3a22a8bff2451a39979634d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92e5ab0e606f60a293b7183ba9a3464e30bd1177d190c955fac5de6a176769fb1b3237c47c3a22a8bff2451a39979634d",
+   "subscanDot": 10214000.011,
+   "chain": {
+    "free": "6001418498120000",
+    "reserved": "96138581613800000",
+    "frozen": "96100000000000000"
+   },
+   "chainDot": 10214000.011192,
+   "deltaDot": 0.00019199959933757782
+  },
+  {
+   "rank": 17,
+   "address": "13Th6PcjJ468fy2cQeVDDdHE6ycJ3sFQ5S9wHiQRDkCKR6Tz",
+   "label": null,
+   "accountHex": "6cd3cfefc1917b7853dd6289a8180bd99b6b6c36b50a1dee35df2c38fac67465",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b79650c29d7db2724ac0dfc3a31836086cd3cfefc1917b7853dd6289a8180bd99b6b6c36b50a1dee35df2c38fac67465",
+   "subscanDot": 10000097.841,
+   "chain": {
+    "free": "516858379109",
+    "reserved": "100000461555415629",
+    "frozen": "0"
+   },
+   "chainDot": 10000097.841379473,
+   "deltaDot": 0.0003794729709625244
+  },
+  {
+   "rank": 18,
+   "address": "13KJ3t8w1CKMkXCmZ6s3VwdWo4h747kXE88ZNh6rCBTvojmM",
+   "label": "pos.dog",
+   "accountHex": "666c474e2f859bb39716a333ad449122df3605cf2d272ab876171d0a61cbdd07",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da999402281f327ff010e617cb5b30730c4666c474e2f859bb39716a333ad449122df3605cf2d272ab876171d0a61cbdd07",
+   "subscanDot": 10000073.496,
+   "chain": {
+    "free": "534558363415",
+    "reserved": "100000200411523494",
+    "frozen": "100000000000000000"
+   },
+   "chainDot": 10000073.496988691,
+   "deltaDot": 0.000988692045211792
+  },
+  {
+   "rank": 19,
+   "address": "13e9cUkCHDWuimeE5hYZRmZfDg3sgscsnAJTpN8buzPxVkd4",
+   "label": null,
+   "accountHex": "74cd8952cbe0f24439c97fb67869d6819a94b504a600edb934f0d0b0fcd3a32c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da956b7864d820dcd25a384f481c8e9243374cd8952cbe0f24439c97fb67869d6819a94b504a600edb934f0d0b0fcd3a32c",
+   "subscanDot": 10000035.947,
+   "chain": {
+    "free": "158303954505",
+    "reserved": "100000201173616664",
+    "frozen": "0"
+   },
+   "chainDot": 10000035.947757117,
+   "deltaDot": 0.000757116824388504
+  },
+  {
+   "rank": 20,
+   "address": "13E7LXW3NGYAJGKugiEitKZ4XjR4MXBs4ZhE1bkwBAaAoBCn",
+   "label": null,
+   "accountHex": "6277fcfd2cca0d740aa2fb58c923a626786419e9a48303970151d63468a50aec",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99fc0c70ab10d577d0a2d27fb1eabffa46277fcfd2cca0d740aa2fb58c923a626786419e9a48303970151d63468a50aec",
+   "subscanDot": 10000023.277,
+   "chain": {
+    "free": "32360851234",
+    "reserved": "100000200410286720",
+    "frozen": "0"
+   },
+   "chainDot": 10000023.277113795,
+   "deltaDot": 0.00011379458010196686
+  },
+  {
+   "rank": 21,
+   "address": "14UpRGUeAfsSZHFN63t4ojJrLNupPApUiLgovXtm7ZiAHUDA",
+   "label": null,
+   "accountHex": "99ebf368e21f66e33f6d375e56213c0fee90f700c338883bb8b9357bec851b82",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9dbc39dd4fa25e0bdd4ff5f01c5a5ece099ebf368e21f66e33f6d375e56213c0fee90f700c338883bb8b9357bec851b82",
+   "subscanDot": 9760381.287,
+   "chain": {
+    "free": "1603961764475389",
+    "reserved": "95999851113800000",
+    "frozen": "0"
+   },
+   "chainDot": 9760381.287827538,
+   "deltaDot": 0.0008275378495454788
+  },
+  {
+   "rank": 22,
+   "address": "1gn68eNGNGqV3QjVcRRDVfw22xFn1eFyUizHCENVn256LXh",
+   "label": null,
+   "accountHex": "1e565a249e4ef744cc5b12e4394d653bf6cd39a84c240b3d75406f0723948713",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9cc240dce69c3d1e0bfe9fc9bf94058821e565a249e4ef744cc5b12e4394d653bf6cd39a84c240b3d75406f0723948713",
+   "subscanDot": 9733724.15,
+   "chain": {
+    "free": "97337241504206538",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 9733724.150420655,
+   "deltaDot": 0.00042065419256687164
+  },
+  {
+   "rank": 23,
+   "address": "14AoK8VSrHFxZijXhZGSUipHzZbUgo2AkmEaviD9yxTb1ScX",
+   "label": null,
+   "accountHex": "8c2dcf9e6b4b95987a11ca4fb9526cf77cbf60201bee404700db479129cada86",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91484167f23311ebc4bebad1e8a3dee128c2dcf9e6b4b95987a11ca4fb9526cf77cbf60201bee404700db479129cada86",
+   "subscanDot": 9555209.486,
+   "chain": {
+    "free": "10552243748943414",
+    "reserved": "84999851113800000",
+    "frozen": "85018700000000000"
+   },
+   "chainDot": 9555209.486274341,
+   "deltaDot": 0.00027434155344963074
+  },
+  {
+   "rank": 24,
+   "address": "11Q7ismkHUbbUexpQc4DgTvedfsh8jKMDV7jZZoQwv57NLS",
+   "label": null,
+   "accountHex": "004dd0a6b3b58039a3a28e53df777414446fc0073a2957c19e644c5c34e671f3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e18a4e6deb572ef6b70c9c73ae9df196004dd0a6b3b58039a3a28e53df777414446fc0073a2957c19e644c5c34e671f3",
+   "subscanDot": 9306778.485,
+   "chain": {
+    "free": "11068435601245337",
+    "reserved": "81999349257370451",
+    "frozen": "85000000000000000"
+   },
+   "chainDot": 9306778.485861579,
+   "deltaDot": 0.0008615795522928238
+  },
+  {
+   "rank": 25,
+   "address": "13Xo4xYdMRQQoWD7TA9yCDHG1BXqQFvnjeGvU6LHhRhUsBhQ",
+   "label": null,
+   "accountHex": "6ff4e8963ddf585a9bfbb1a51073af5616335585b3f5534ca235e07933d6070a",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da908df2b44cd6b5150dd36a97260af27326ff4e8963ddf585a9bfbb1a51073af5616335585b3f5534ca235e07933d6070a",
+   "subscanDot": 9194301.553,
+   "chain": {
+    "free": "10943164416289650",
+    "reserved": "80999851113800000",
+    "frozen": "87452133011148078"
+   },
+   "chainDot": 9194301.553008964,
+   "deltaDot": 0.000008964911103248596
+  },
+  {
+   "rank": 26,
+   "address": "1tZzPmcq8Auisttygmg9g6tPMtrh9i3b22D3tKXvde7ibRB",
+   "label": null,
+   "accountHex": "2754917a266c0586d2dc512365b1c35062ec06f5ca8310954af00cbbe294e1ec",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9c7cc2ccfe3f8e5196ed52c2b10097f712754917a266c0586d2dc512365b1c35062ec06f5ca8310954af00cbbe294e1ec",
+   "subscanDot": 9054908.847,
+   "chain": {
+    "free": "7049286862242169",
+    "reserved": "83499801617100000",
+    "frozen": "83954600000000000"
+   },
+   "chainDot": 9054908.847934218,
+   "deltaDot": 0.0009342189878225327
+  },
+  {
+   "rank": 27,
+   "address": "13sEhtx5hUwRtUjNxjLhpqJ7QAshnd5apRMKtXXRMSaZgrga",
+   "label": null,
+   "accountHex": "7ec8df627b832bf86248eae7a5fac167a84318bd68157b739874bcdcb27eb614",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ad458e5c009c09eae0373268a683529c7ec8df627b832bf86248eae7a5fac167a84318bd68157b739874bcdcb27eb614",
+   "subscanDot": 8896034.684,
+   "chain": {
+    "free": "4990979990",
+    "reserved": "88966568303708391",
+    "frozen": "0"
+   },
+   "chainDot": 8896657.329468839,
+   "deltaDot": 622.6454688385129
+  },
+  {
+   "rank": 28,
+   "address": "14etN8LW2YB2WA7yBYDecyLFPpxMSaeV1nhxYbJi8uMJcfkD",
+   "label": null,
+   "accountHex": "a199b0138a873e8db96304d72ea90e60d2110450f1bfc120fa7b9155e53f25d8",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da914367553c92fb9cb32ee3a88178bac6da199b0138a873e8db96304d72ea90e60d2110450f1bfc120fa7b9155e53f25d8",
+   "subscanDot": 8773614.676,
+   "chain": {
+    "free": "3736295646469388",
+    "reserved": "83999851113800000",
+    "frozen": "0"
+   },
+   "chainDot": 8773614.676026938,
+   "deltaDot": 0.0000269375741481781
+  },
+  {
+   "rank": 29,
+   "address": "169b8hX4djnkukuvRAY7cs2ewsaHqsYdsxdoPoKmNZhUFXRA",
+   "label": null,
+   "accountHex": "e3ba081215fbddaead471f8414a290c123f9214e984c8c93c1261b8b73a7e7d7",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da985639ec7ceef243a94d9975f4807ee41e3ba081215fbddaead471f8414a290c123f9214e984c8c93c1261b8b73a7e7d7",
+   "subscanDot": 8596999.65,
+   "chain": {
+    "free": "1002141851",
+    "reserved": "85975907118327718",
+    "frozen": "0"
+   },
+   "chainDot": 8597590.812046956,
+   "deltaDot": 591.1620469558984
+  },
+  {
+   "rank": 30,
+   "address": "13SkL2uACPqBzpKBh3d2n5msYNFB2QapA5vEDeKeLjG2LS3Y",
+   "label": null,
+   "accountHex": "6c1b752375304917c15af9c2e7a4426b3af513054d89f6c7bb26cd7e30e4413e",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9aefde87d556c1ce12f3ac318a9583b126c1b752375304917c15af9c2e7a4426b3af513054d89f6c7bb26cd7e30e4413e",
+   "subscanDot": 8451250.093,
+   "chain": {
+    "free": "2692713485180",
+    "reserved": "84509808224929548",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451250.093841473,
+   "deltaDot": 0.0008414722979068756
+  },
+  {
+   "rank": 31,
+   "address": "15j4dg5GzsL1bw2U2AWgeyAk6QTxq43V7ZPbXdAmbVLjvDCK",
+   "label": null,
+   "accountHex": "d10577dd7d364b294d2e9a0768363ac885efb8b1c469da6c4f2141d4f6560c1f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9980a66789bff41549e0e5e7914bcd397d10577dd7d364b294d2e9a0768363ac885efb8b1c469da6c4f2141d4f6560c1f",
+   "subscanDot": 8451211.113,
+   "chain": {
+    "free": "2501175677207",
+    "reserved": "84509609960724902",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451211.113640212,
+   "deltaDot": 0.0006402116268873215
+  },
+  {
+   "rank": 32,
+   "address": "15FZotswrG9r6KQvBPb5Y3ybs6CA5FLbFbyzhk4ABfgDup22",
+   "label": null,
+   "accountHex": "bc0cd0148a7ed0cbf253c8193aeb8bf3c5a9bd00f2a58f2a0451c40c40020ebb",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97afbd3588cdd583eff62494707a9a235bc0cd0148a7ed0cbf253c8193aeb8bf3c5a9bd00f2a58f2a0451c40c40020ebb",
+   "subscanDot": 8451179.746,
+   "chain": {
+    "free": "2291871560147",
+    "reserved": "84509505590737849",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451179.7462298,
+   "deltaDot": 0.00022980011999607086
+  },
+  {
+   "rank": 33,
+   "address": "16GMHo9HZv8CcJy4WLoMaU9qusgzx2wxKDLbXStEBvt5274B",
+   "label": null,
+   "accountHex": "e8e2262e16583379847ad70b7f77ca559d5c17aa69062230f8a0dbd1bf5da5d4",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9acfee0859393ff5481547b4d9ec1dec8e8e2262e16583379847ad70b7f77ca559d5c17aa69062230f8a0dbd1bf5da5d4",
+   "subscanDot": 8451153.709,
+   "chain": {
+    "free": "1729852600010",
+    "reserved": "84509807239277206",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451153.709187722,
+   "deltaDot": 0.0001877211034297943
+  },
+  {
+   "rank": 34,
+   "address": "14gAowz3LaAqYkRjqUZkjZUxKFUzLtN2oZJSfr3ziHBRhwgc",
+   "label": null,
+   "accountHex": "a2944aecbf249f5f7de8059942f2da631c4e3d2e17e017a5144979f23b89dca7",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95ea8a5df4c82cfca8ce16640fc28920aa2944aecbf249f5f7de8059942f2da631c4e3d2e17e017a5144979f23b89dca7",
+   "subscanDot": 8451153.533,
+   "chain": {
+    "free": "2728482900000",
+    "reserved": "84508806850942646",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451153.533384264,
+   "deltaDot": 0.00038426369428634644
+  },
+  {
+   "rank": 35,
+   "address": "13Fv7btqKR2NQVZSaJAK1DhxKpxgjzE8twaWnwDk8B1u6voR",
+   "label": null,
+   "accountHex": "63d8b31ab88e65e5a6bd697b9b02de9f93ced7b6a3214146aedcbc5aebd7f740",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9239e5499470c8ad4c9532fe65e8933f163d8b31ab88e65e5a6bd697b9b02de9f93ced7b6a3214146aedcbc5aebd7f740",
+   "subscanDot": 8451153.513,
+   "chain": {
+    "free": "11002028500130000",
+    "reserved": "73509506639139588",
+    "frozen": "73500000000000000"
+   },
+   "chainDot": 8451153.513926959,
+   "deltaDot": 0.0009269583970308304
+  },
+  {
+   "rank": 36,
+   "address": "14Ns6kKbCoka3MS4Hn6b7oRw9fFejG8RH5rq5j63cWUfpPDJ",
+   "label": null,
+   "accountHex": "9561809d76c46eaad3f19d2d392e0a4962086ce116a8739fe7d458bdc3bd4f1d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9af2bd7383c4e43257facb9adb191c67b9561809d76c46eaad3f19d2d392e0a4962086ce116a8739fe7d458bdc3bd4f1d",
+   "subscanDot": 8451153.455,
+   "chain": {
+    "free": "11001729004169891",
+    "reserved": "73509805550370326",
+    "frozen": "73500000000000000"
+   },
+   "chainDot": 8451153.455454022,
+   "deltaDot": 0.000454021617770195
+  },
+  {
+   "rank": 37,
+   "address": "14NSRugu2B7XPwcyPTFsDsBodZb72NgrhMih6ith8dSSGmfc",
+   "label": null,
+   "accountHex": "950e74ffcaadedcc5b8bc89d11e1d5630636110a17985242e646c3a2d1adc795",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9c6297371f3751b4b75330a025cccd77e950e74ffcaadedcc5b8bc89d11e1d5630636110a17985242e646c3a2d1adc795",
+   "subscanDot": 8451153.277,
+   "chain": {
+    "free": "2731162251804",
+    "reserved": "84508801617100000",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451153.27793518,
+   "deltaDot": 0.0009351801127195358
+  },
+  {
+   "rank": 38,
+   "address": "12WLDL2AXoH3MHr1xj8K4m9rCcRKSWKTUz8A4mX3ah5khJBn",
+   "label": null,
+   "accountHex": "429b067ff314c1fed75e57fcf00a6a4ff8611268e75917b5744ac8c4e1810d17",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92f9ec039a157a77806861cac324ee3b7429b067ff314c1fed75e57fcf00a6a4ff8611268e75917b5744ac8c4e1810d17",
+   "subscanDot": 8451153.01,
+   "chain": {
+    "free": "2748487010000",
+    "reserved": "84508781613800000",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451153.010081,
+   "deltaDot": 0.00008100084960460663
+  },
+  {
+   "rank": 39,
+   "address": "166JJ1tU9JsjsjvKQ6shhvv54L46BDJq2G6HXmauzwu4AvJh",
+   "label": null,
+   "accountHex": "e1379be427de9ecfa452965af602a4bff71d55e6cef89abba566f74d8817c363",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9408f759917a5c4b06f5966962e569beee1379be427de9ecfa452965af602a4bff71d55e6cef89abba566f74d8817c363",
+   "subscanDot": 8451152.874,
+   "chain": {
+    "free": "1729824469000",
+    "reserved": "84509798923350067",
+    "frozen": "84500000000000000"
+   },
+   "chainDot": 8451152.874781907,
+   "deltaDot": 0.0007819067686796188
+  },
+  {
+   "rank": 40,
+   "address": "11yLs2qzU15AhxnH1d7Koqcf83AwutKkDaGbqsJJ6yDWQjc",
+   "label": "Bybit.com (user_wallet)",
+   "accountHex": "00bdaa66508af87b5d6e9aec33e66c99daaa0f6caa35c65793d93eea984ea4d6",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97374b67f5ddd72b5775781672394e07700bdaa66508af87b5d6e9aec33e66c99daaa0f6caa35c65793d93eea984ea4d6",
+   "subscanDot": 8444272.048,
+   "chain": {
+    "free": "84442720484688888",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 8444272.04846889,
+   "deltaDot": 0.0004688892513513565
+  },
+  {
+   "rank": 41,
+   "address": "13yk62yQYctYsRPXDFvC5WzBtanAsHDasenooLAxKvf5bNkK",
+   "label": null,
+   "accountHex": "83bf40ac1231b8b9b539abead87569ae512edd874c710cd249afecab1093cf03",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b09a8fa2c4f9a038587b07f6b7a0711383bf40ac1231b8b9b539abead87569ae512edd874c710cd249afecab1093cf03",
+   "subscanDot": 8401244.01,
+   "chain": {
+    "free": "3391117590000",
+    "reserved": "84009048984565711",
+    "frozen": "84000000000000000"
+   },
+   "chainDot": 8401244.010215571,
+   "deltaDot": 0.00021557137370109558
+  },
+  {
+   "rank": 42,
+   "address": "13uBGH9AMmADhbDrNiCdTxNzynem6bo5FEv6KyJsEDofq2o2",
+   "label": null,
+   "accountHex": "8043c7160b491618980c86b64c67734acd43c35e2baf20289b834701d2dbe620",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9d6871c0056fbe4477a4d147fdc1da9448043c7160b491618980c86b64c67734acd43c35e2baf20289b834701d2dbe620",
+   "subscanDot": 8125719.835,
+   "chain": {
+    "free": "992191851",
+    "reserved": "81264164810930014",
+    "frozen": "0"
+   },
+   "chainDot": 8126416.580312187,
+   "deltaDot": 696.7453121868894
+  },
+  {
+   "rank": 43,
+   "address": "12LdngMrL3xmSSj6bCpAqprZBWWkHBfYdv47RxWMPZtWzuwK",
+   "label": null,
+   "accountHex": "3b35bbee99b3486b060e46a55564344f8f9056e90b8db48318ef8158da393c45",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9700807f4081b6bae974c756a705199593b35bbee99b3486b060e46a55564344f8f9056e90b8db48318ef8158da393c45",
+   "subscanDot": 8090481.143,
+   "chain": {
+    "free": "338687401598093",
+    "reserved": "80566124028764612",
+    "frozen": "0"
+   },
+   "chainDot": 8090481.1430362705,
+   "deltaDot": 0.00003627035766839981
+  },
+  {
+   "rank": 44,
+   "address": "14s2osXEXWEhdcPeh4KARQ1NmXUu4RjcvpjGw1h59xG7nSAz",
+   "label": null,
+   "accountHex": "aadd0ea866c5a097a28c5bebb554c7e763f305b93d311260b23c27a69ea64132",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94dd3882f52ac943539037c03ba3ff4e8aadd0ea866c5a097a28c5bebb554c7e763f305b93d311260b23c27a69ea64132",
+   "subscanDot": 7973136.574,
+   "chain": {
+    "free": "1002191851",
+    "reserved": "79736985828780772",
+    "frozen": "0"
+   },
+   "chainDot": 7973698.683097262,
+   "deltaDot": 562.1090972619131
+  },
+  {
+   "rank": 45,
+   "address": "12XQctYQRUmwtDiKAMEAGFanTQ8viDDLJJgRDhAMCMVTkbqF",
+   "label": null,
+   "accountHex": "436d1a7bb6bc1bb917aa558c1c0ba3e113a598c60ffbdfd23dc50332dc8cfcc4",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9fde8d4d8b0c49e122dda427bc9487a35436d1a7bb6bc1bb917aa558c1c0ba3e113a598c60ffbdfd23dc50332dc8cfcc4",
+   "subscanDot": 7907534.108,
+   "chain": {
+    "free": "79075341089264585",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 7907534.108926459,
+   "deltaDot": 0.0009264592081308365
+  },
+  {
+   "rank": 46,
+   "address": "14n7KYKKjZohVapvNYnWdCVu7oCJMjyWHqehGcC11wE7dKWv",
+   "label": null,
+   "accountHex": "a71c0474c5caa3c45751de5a36f5212aa7d4d37e7b25268d980110d06a962115",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95c54b6ac53146569f8e82bff5a53af45a71c0474c5caa3c45751de5a36f5212aa7d4d37e7b25268d980110d06a962115",
+   "subscanDot": 7752184.203,
+   "chain": {
+    "free": "101298637467",
+    "reserved": "77521740740000000",
+    "frozen": "0"
+   },
+   "chainDot": 7752184.203863747,
+   "deltaDot": 0.0008637476712465286
+  },
+  {
+   "rank": 47,
+   "address": "13HcMvaACjJBLPDWkiZYp3SCNyuTUERNc9EfRof6RKm95bjP",
+   "label": null,
+   "accountHex": "65236da3bf58222fe83af819e2ad1d130c61135fb4d04ee7ba250d318654b331",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a998075abd4373b2cdeee6629ee3b65665236da3bf58222fe83af819e2ad1d130c61135fb4d04ee7ba250d318654b331",
+   "subscanDot": 7647665.29,
+   "chain": {
+    "free": "20546163694355168",
+    "reserved": "55930489209240000",
+    "frozen": "0"
+   },
+   "chainDot": 7647665.290359517,
+   "deltaDot": 0.00035951659083366394
+  },
+  {
+   "rank": 48,
+   "address": "12RYJb5gG4hfoWPK3owEYtmWoko8G6zwYpvDYTyXFVSfJr8Y",
+   "label": "W3F",
+   "accountHex": "3ef37fce11457ebc5f00b154996471fcd30eae17efe69e5a39b12b76034dc7e4",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da90c14f56cad3a694385e575ddb30439ad3ef37fce11457ebc5f00b154996471fcd30eae17efe69e5a39b12b76034dc7e4",
+   "subscanDot": 7605161.754,
+   "chain": {
+    "free": "2550825930970746",
+    "reserved": "73500791613800000",
+    "frozen": "73500000000000000"
+   },
+   "chainDot": 7605161.754477075,
+   "deltaDot": 0.00047707557678222656
+  },
+  {
+   "rank": 49,
+   "address": "13z6tqM18GgaeVD6H9ciwfyQp5dogD58hWJThu5iXKtHfixb",
+   "label": null,
+   "accountHex": "84054b7ba3f01b81bab709d303c4d46a78de37377a2f5d78fbba89e1d4743801",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92d527f9c8c78e8a37c42540f9b414df184054b7ba3f01b81bab709d303c4d46a78de37377a2f5d78fbba89e1d4743801",
+   "subscanDot": 7397539.83,
+   "chain": {
+    "free": "3247798305463339",
+    "reserved": "70727600000000000",
+    "frozen": "67803739868480499"
+   },
+   "chainDot": 7397539.830546334,
+   "deltaDot": 0.0005463343113660812
+  },
+  {
+   "rank": 50,
+   "address": "12ZMM3vPtEwqmNgzjLqELYYeCvoP1cpf3yn2qwD9J8K1Q4pn",
+   "label": null,
+   "accountHex": "44e8937bee393b6a3f2d26bb21b6a6f7978f14a486c81fb70f0fd442167ddd06",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da985a05adb404229cce7809b57b6bb938244e8937bee393b6a3f2d26bb21b6a6f7978f14a486c81fb70f0fd442167ddd06",
+   "subscanDot": 6606064.37,
+   "chain": {
+    "free": "14099862400000",
+    "reserved": "66046543844275422",
+    "frozen": "0"
+   },
+   "chainDot": 6606064.370667542,
+   "deltaDot": 0.0006675422191619873
+  },
+  {
+   "rank": 51,
+   "address": "15sNh1RdsPQtrZ2w8THjGRYBjx2eAj2uWjfHiWiVvUJ6mzf2",
+   "label": null,
+   "accountHex": "d75c37e551bed971fab376a6b78e0750a28fec147dad685193699806cfcc5755",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da903e788b76cc2f43f57f9ca273d5131bfd75c37e551bed971fab376a6b78e0750a28fec147dad685193699806cfcc5755",
+   "subscanDot": 6586825.06,
+   "chain": {
+    "free": "1556940193935514",
+    "reserved": "64311310410000000",
+    "frozen": "0"
+   },
+   "chainDot": 6586825.060393551,
+   "deltaDot": 0.0003935517743229866
+  },
+  {
+   "rank": 52,
+   "address": "1dz7HBjHWYegSw8YhAzDBszQPv62n96xtR3B7sFhYTe9HY9",
+   "label": null,
+   "accountHex": "1c3513fe0da9d96854f82cf71f9aa30862b66c5177c7c5ecc489dfc6d623ee0e",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b0fe5281f13f7980fd202fdc932ab1361c3513fe0da9d96854f82cf71f9aa30862b66c5177c7c5ecc489dfc6d623ee0e",
+   "subscanDot": 6260050.374,
+   "chain": {
+    "free": "62600503748362617",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 6260050.374836261,
+   "deltaDot": 0.000836261548101902
+  },
+  {
+   "rank": 53,
+   "address": "15AbB3HA2wfF4ZkJQxr2MjyYHcs87fZWV2R2JopoDxv25STD",
+   "label": null,
+   "accountHex": "b8412de898dca4ae2679567d4153c5bfeb008899b84481e90d7db70dfb0c8a69",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94f1f2a5af8e0890dcbcd30f64a82457cb8412de898dca4ae2679567d4153c5bfeb008899b84481e90d7db70dfb0c8a69",
+   "subscanDot": 6215829.322,
+   "chain": {
+    "free": "50983021769",
+    "reserved": "62162427035194091",
+    "frozen": "0"
+   },
+   "chainDot": 6216247.801821586,
+   "deltaDot": 418.4798215860501
+  },
+  {
+   "rank": 54,
+   "address": "15kUrbUhWq3B1AUb9LygC8QEkjVo8Vy6YNP3JdPH2tZUC4QC",
+   "label": null,
+   "accountHex": "d21a4137055e3f8c4f9660bd8ef6ff0cbca3efe62ab632e289f309a75c9db3a5",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9dac4a899222ce5dc98ae0a0a7cbd409bd21a4137055e3f8c4f9660bd8ef6ff0cbca3efe62ab632e289f309a75c9db3a5",
+   "subscanDot": 6063111.02,
+   "chain": {
+    "free": "60631110203133211",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 6063111.020313321,
+   "deltaDot": 0.000313321128487587
+  },
+  {
+   "rank": 55,
+   "address": "13iVNghf2zS3gnSc8KEZP7JMyQwxscu1XmAH7TZUXvMLeB26",
+   "label": null,
+   "accountHex": "781d0b1f64e8cb9e59ddf078703fabe780d8e9c51a2645d4d3cd9f74aaa4a353",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da991ecd06e0ad316dfde38503892e531b3781d0b1f64e8cb9e59ddf078703fabe780d8e9c51a2645d4d3cd9f74aaa4a353",
+   "subscanDot": 6003648.202,
+   "chain": {
+    "free": "60434875685007",
+    "reserved": "59976047149554128",
+    "frozen": "59600000000000000"
+   },
+   "chainDot": 6003648.202523913,
+   "deltaDot": 0.0005239136517047882
+  },
+  {
+   "rank": 56,
+   "address": "11U6HjrmqyEiXwnT13TdJx1nCsXGsM869RatR1xt2VHWHgf",
+   "label": null,
+   "accountHex": "005b3271ea03b06e374cf5b08780e9b9865896526e9c39c51e8c7f22e2c9bf66",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91e75156889de29026d1df820880ffab2005b3271ea03b06e374cf5b08780e9b9865896526e9c39c51e8c7f22e2c9bf66",
+   "subscanDot": 5976473.503,
+   "chain": {
+    "free": "10775884453",
+    "reserved": "59764724257617208",
+    "frozen": "0"
+   },
+   "chainDot": 5976473.503350167,
+   "deltaDot": 0.00035016704350709915
+  },
+  {
+   "rank": 57,
+   "address": "13ZcoJFWSwMZng49UmghxNBBWnPEiUz8o5H7GWbfWtNBmyAz",
+   "label": null,
+   "accountHex": "7158d3d2bbd33fb5317126861210d8a426864145798f60655d97e2684f9c7ff3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99309065c66272580be4f210419a6d2727158d3d2bbd33fb5317126861210d8a426864145798f60655d97e2684f9c7ff3",
+   "subscanDot": 5780287.437,
+   "chain": {
+    "free": "57802874371308454",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 5780287.437130845,
+   "deltaDot": 0.00013084523379802704
+  },
+  {
+   "rank": 58,
+   "address": "156U1ffF2ZSR5sBpYNUxvXu3rprh4x4of3WdYuBcReD87qcc",
+   "label": null,
+   "accountHex": "b51c16f16fcc1cf8c35aee9d0b20300af958d1ffa5f64ca8ed9f28bbbca12e07",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9db72b344857ea40b34803922fce3f10ab51c16f16fcc1cf8c35aee9d0b20300af958d1ffa5f64ca8ed9f28bbbca12e07",
+   "subscanDot": 5720138.002,
+   "chain": {
+    "free": "1158030820193054",
+    "reserved": "56043349202072940",
+    "frozen": "55000000000000000"
+   },
+   "chainDot": 5720138.0022265995,
+   "deltaDot": 0.00022659916430711746
+  },
+  {
+   "rank": 59,
+   "address": "12K2F1PeLUiVmt7GfBgiQvtGP4HbtUJ55cLvwbybE8W3nau5",
+   "label": null,
+   "accountHex": "39fad47966a72b7a55d04f81bb56d90d4095aeafce0f8c5f759b335683f9782c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91db7d3897f043b9b95d52bc6802c3d8a39fad47966a72b7a55d04f81bb56d90d4095aeafce0f8c5f759b335683f9782c",
+   "subscanDot": 5669030.631,
+   "chain": {
+    "free": "235278315322482",
+    "reserved": "56455027995689819",
+    "frozen": "56000000000000000"
+   },
+   "chainDot": 5669030.63110123,
+   "deltaDot": 0.00010123010724782944
+  },
+  {
+   "rank": 60,
+   "address": "12WW2nRdq2Xbe6Rjz5A8d9Wcp7fwRg7GFNEU392L9Zy6YtLM",
+   "label": null,
+   "accountHex": "42bc138d73334f766bb2c82bd517590fa1bdb14c4ac95f5746b4f4ad967e8997",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b727bd8929d63755b7bdbfd21f7918c742bc138d73334f766bb2c82bd517590fa1bdb14c4ac95f5746b4f4ad967e8997",
+   "subscanDot": 5617309.259,
+   "chain": {
+    "free": "22495187593960",
+    "reserved": "56150597404461142",
+    "frozen": "56000000000000000"
+   },
+   "chainDot": 5617309.259205511,
+   "deltaDot": 0.00020551122725009918
+  },
+  {
+   "rank": 61,
+   "address": "13Eys5UDcWqV68NbJZwTPHK333pBivRPw6BvqbVCzcrZvafD",
+   "label": null,
+   "accountHex": "6322139064b5485d438ab572a6713ad835be2414d5667dadfa17e355fea699f3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da919d6a7ce6865b0a8ae5801e8ca1d99ac6322139064b5485d438ab572a6713ad835be2414d5667dadfa17e355fea699f3",
+   "subscanDot": 5566191.269,
+   "chain": {
+    "free": "4990979954",
+    "reserved": "55665790097735586",
+    "frozen": "0"
+   },
+   "chainDot": 5566579.5088715535,
+   "deltaDot": 388.23987155314535
+  },
+  {
+   "rank": 62,
+   "address": "14Lk1J2FpGAcDbyTEhYdSESNuXLDet6USqkucd6hkhQhA87Y",
+   "label": null,
+   "accountHex": "93c32187cbb4cab3a480e88cf2a438c63035f4d30f9c6b0a914fe2bc60d43c28",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9f810f16de322b4f0404b86c2cf5fc0a393c32187cbb4cab3a480e88cf2a438c63035f4d30f9c6b0a914fe2bc60d43c28",
+   "subscanDot": 5552601.479,
+   "chain": {
+    "free": "4990979994",
+    "reserved": "55529884561249142",
+    "frozen": "0"
+   },
+   "chainDot": 5552988.955222914,
+   "deltaDot": 387.47622291371226
+  },
+  {
+   "rank": 63,
+   "address": "13aUbVbnthMvYuSLUbfK6eTQWaDWLriRrP89ExD17Ep19BkK",
+   "label": null,
+   "accountHex": "72007512e68a2e1e15316134907a8db2e67458b58ff1a930090b5d1395c54730",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9bbbb58d794b2c293c98e5aeef435da9472007512e68a2e1e15316134907a8db2e67458b58ff1a930090b5d1395c54730",
+   "subscanDot": 5550917.174,
+   "chain": {
+    "free": "514826021280000",
+    "reserved": "54994345720916261",
+    "frozen": "55000000000000000"
+   },
+   "chainDot": 5550917.174219626,
+   "deltaDot": 0.00021962635219097137
+  },
+  {
+   "rank": 64,
+   "address": "1M9kuZi6QkPYv1JWxUbLeGUEX2MqhsPD3z9s9TtfNirisZK",
+   "label": null,
+   "accountHex": "0f5e6304dcc29b3e92465eaa1b2ddc6297d66999acb74d647b53e7829862647a",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9eced4629a3ac95535f1ac49b23bebe940f5e6304dcc29b3e92465eaa1b2ddc6297d66999acb74d647b53e7829862647a",
+   "subscanDot": 5440738.742,
+   "chain": {
+    "free": "54407387422418806",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 5440738.742241881,
+   "deltaDot": 0.00024188123643398285
+  },
+  {
+   "rank": 65,
+   "address": "16UvKYsqojoivDsNXH3d5G48oXMfo1asxA4NtF2GxhoBjZHz",
+   "label": null,
+   "accountHex": "f27848a07cb047a043c0b760f8d0d2f4269d10c943251a4faaf662ed41874596",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ac4b2e98aaa2a358623e4869dc021b96f27848a07cb047a043c0b760f8d0d2f4269d10c943251a4faaf662ed41874596",
+   "subscanDot": 5245832.901,
+   "chain": {
+    "free": "52458329013522245",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 5245832.901352225,
+   "deltaDot": 0.00035222526639699936
+  },
+  {
+   "rank": 66,
+   "address": "16GGq3LSZPGXf6bNeK4B6rBjLfHm9AQge6fEveaZf7ecnzJd",
+   "label": null,
+   "accountHex": "e8d3218deaee629a7773ef3b811917b0d888f3fb7d14e4bb728e8232ddfb6b65",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9da475a489ffa7280e1570a06703d0f19e8d3218deaee629a7773ef3b811917b0d888f3fb7d14e4bb728e8232ddfb6b65",
+   "subscanDot": 5100021.051,
+   "chain": {
+    "free": "10100000007",
+    "reserved": "51000200410000000",
+    "frozen": "40000000000000000"
+   },
+   "chainDot": 5100021.051000001,
+   "deltaDot": 9.313225746154785e-10
+  },
+  {
+   "rank": 67,
+   "address": "14A785mJUZNjX14nnkoeU98hFRegH1TEm59gsMuda7qfmKFo",
+   "label": null,
+   "accountHex": "8ba68491611e0d4c76dcf00baa4d91691e5de76a10c90095f0cd3ef4ca952445",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da96ffa48f56780987bc3b719b04f029b8e8ba68491611e0d4c76dcf00baa4d91691e5de76a10c90095f0cd3ef4ca952445",
+   "subscanDot": 5059011.119,
+   "chain": {
+    "free": "590042595767331",
+    "reserved": "50000068600300002",
+    "frozen": "0"
+   },
+   "chainDot": 5059011.119606733,
+   "deltaDot": 0.0006067333742976189
+  },
+  {
+   "rank": 68,
+   "address": "14kf1LkBz6uKnf5eCytVE98gCsNvwLnFULgz2MRaw7mu7cJ7",
+   "label": null,
+   "accountHex": "a6003120d97d4c3f60941b2aacdc3f8706144b6bfb0152eee2f43ed10d3e4b57",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da996537b7e51f22834ddf3ff631a4dfe65a6003120d97d4c3f60941b2aacdc3f8706144b6bfb0152eee2f43ed10d3e4b57",
+   "subscanDot": 5044756.92,
+   "chain": {
+    "free": "298786974654904",
+    "reserved": "50148782235240190",
+    "frozen": "50000000000000000"
+   },
+   "chainDot": 5044756.92098951,
+   "deltaDot": 0.0009895097464323044
+  },
+  {
+   "rank": 69,
+   "address": "16htn59rxuhMH5VQLYTuE7wpnU91Y3McTLaM7mKPpSZZbxaS",
+   "label": null,
+   "accountHex": "fc5d47dadd736b51755620ae8ac51876645c27ffe00cf797b747276cd05f53d0",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9cd69c29fec0935885dc89bc68bd2a51afc5d47dadd736b51755620ae8ac51876645c27ffe00cf797b747276cd05f53d0",
+   "subscanDot": 5011834.353,
+   "chain": {
+    "free": "2118343531525800",
+    "reserved": "48000000003300000",
+    "frozen": "50000000000000000"
+   },
+   "chainDot": 5011834.35348258,
+   "deltaDot": 0.00048257969319820404
+  },
+  {
+   "rank": 70,
+   "address": "11SPkBG7N2UjDvAPfKYvdBDAzvXxLYxn6rWYHgTtdswPmHT",
+   "label": null,
+   "accountHex": "00557a42bb62f7b6b0c741313bd7117e4894d2984c44bcfe54c0dcb69012887c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b02fd34bed9d57c3d1c714c45b0c554a00557a42bb62f7b6b0c741313bd7117e4894d2984c44bcfe54c0dcb69012887c",
+   "subscanDot": 5000002,
+   "chain": {
+    "free": "50000020001091645",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 5000002.000109165,
+   "deltaDot": 0.00010916497558355331
+  },
+  {
+   "rank": 71,
+   "address": "146NJqYe7w9ug2UDwtLEBQgGbbTBVpyMHyJPB9tJFXgHCJV3",
+   "label": null,
+   "accountHex": "88cca7a9d53dde2cdd51433f996def8aa02714bb1dd9bbb713798be4e8cfa7a2",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ca0b4af832c7e7fdd90b782e739ab5ff88cca7a9d53dde2cdd51433f996def8aa02714bb1dd9bbb713798be4e8cfa7a2",
+   "subscanDot": 4990317.897,
+   "chain": {
+    "free": "1903178967708001",
+    "reserved": "48000000003300000",
+    "frozen": "49000000000000000"
+   },
+   "chainDot": 4990317.8971008,
+   "deltaDot": 0.00010079983621835709
+  },
+  {
+   "rank": 72,
+   "address": "1KEFzgd9JgczHSXD638AVBHFVX9MHDacXh3emWrWpzieA5K",
+   "label": null,
+   "accountHex": "0de70ca93b6a72977c6bc608e76e6ea162d9ddec5cfdfd781dedd89fb8427660",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da911bab7e811d912091bdf105528f89a100de70ca93b6a72977c6bc608e76e6ea162d9ddec5cfdfd781dedd89fb8427660",
+   "subscanDot": 4840052.682,
+   "chain": {
+    "free": "4990929942",
+    "reserved": "48403918078031006",
+    "frozen": "0"
+   },
+   "chainDot": 4840392.306896094,
+   "deltaDot": 339.624896094203
+  },
+  {
+   "rank": 73,
+   "address": "1WqcGu9P9mi9CrMYx2LYfftki6V6Rr8Zrk5kzGvmwGaQANd",
+   "label": null,
+   "accountHex": "16c1bf15e79d8e619528f4521d655df8e27f0f0ebaa673556950c8ce0cb10a37",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9cc889d531c6e8520970ad730256a915816c1bf15e79d8e619528f4521d655df8e27f0f0ebaa673556950c8ce0cb10a37",
+   "subscanDot": 4839375.641,
+   "chain": {
+    "free": "48393756419882988",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4839375.641988299,
+   "deltaDot": 0.0009882990270853043
+  },
+  {
+   "rank": 74,
+   "address": "1vTfju3zruADh7sbBznxWCpircNp9ErzJaPQZKyrUknApRu",
+   "label": null,
+   "accountHex": "28c5c756b5da7978e45b746ab840e8ac27df108750d5e2cbaf310232d3489421",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ce81ef413d48a68964b5257b2495851828c5c756b5da7978e45b746ab840e8ac27df108750d5e2cbaf310232d3489421",
+   "subscanDot": 4789164.649,
+   "chain": {
+    "free": "2891795384927412",
+    "reserved": "44999851110500000",
+    "frozen": "45671590000000000"
+   },
+   "chainDot": 4789164.649542741,
+   "deltaDot": 0.0005427403375506401
+  },
+  {
+   "rank": 75,
+   "address": "1egmWmipVNv7M2HpPBaBKenrR8KRdhDVCkJqhD6Ntys61GG",
+   "label": null,
+   "accountHex": "1cbdf2fecfa24f6d4f04ad8a49d62a8c5553480334e5eb7e3e0c2ed4fca20040",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97c020622576649f0f27ac04e776bc84c1cbdf2fecfa24f6d4f04ad8a49d62a8c5553480334e5eb7e3e0c2ed4fca20040",
+   "subscanDot": 4741342.297,
+   "chain": {
+    "free": "47413422970487973",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4741342.297048798,
+   "deltaDot": 0.00004879757761955261
+  },
+  {
+   "rank": 76,
+   "address": "12z6xUYPAUW3WeDb7uH52DqEfejYQ2wMHEVe18XXdPsSFbER",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "57c945d27be7752192287a0796537eb2982befd772024bd769840be5fecb683e",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da918e065f26de69ab18a4a81aabbfce72357c945d27be7752192287a0796537eb2982befd772024bd769840be5fecb683e",
+   "subscanDot": 4728194.844,
+   "chain": {
+    "free": "3436039267441768",
+    "reserved": "43845909175847368",
+    "frozen": "0"
+   },
+   "chainDot": 4728194.844328914,
+   "deltaDot": 0.00032891426235437393
+  },
+  {
+   "rank": 77,
+   "address": "13oSJ635GZos8UYrrcwXtp3XWC1G3XHrPvN6skMLdxzUr4sr",
+   "label": null,
+   "accountHex": "7be2e79bd99b36476c297ab7fde2091dae2e6936ae128ab19e070ced357b578b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ebc983dfdad6111b22cc0bb30a567ddb7be2e79bd99b36476c297ab7fde2091dae2e6936ae128ab19e070ced357b578b",
+   "subscanDot": 4704359.885,
+   "chain": {
+    "free": "404522997610000",
+    "reserved": "46639075858176219",
+    "frozen": "0"
+   },
+   "chainDot": 4704359.885578621,
+   "deltaDot": 0.0005786214023828506
+  },
+  {
+   "rank": 78,
+   "address": "13sWwbe5kdHSEdmboCdeeXnk532i7HN67evcN1pPKM5BnFTR",
+   "label": null,
+   "accountHex": "7eff8754577bbba608b549279c0baab6f78783bd056801c70ea7cad509a74f46",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9d7ee6620cc080bda3f60ca4ed8103ec87eff8754577bbba608b549279c0baab6f78783bd056801c70ea7cad509a74f46",
+   "subscanDot": 4697508.43,
+   "chain": {
+    "free": "9568968859429",
+    "reserved": "46965515340453977",
+    "frozen": "0"
+   },
+   "chainDot": 4697508.430931341,
+   "deltaDot": 0.0009313412010669708
+  },
+  {
+   "rank": 79,
+   "address": "13c1FsantxSuaNocA6pUsAxiinHSVp2m7hUVg1EJSwxf2L2j",
+   "label": null,
+   "accountHex": "732aeb52b918b6b0a1acebf5f077584308e1c6c9d63ebb26b61e80ba21330479",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94d9735b98f05c534f48cb2e8cc6ab6a2732aeb52b918b6b0a1acebf5f077584308e1c6c9d63ebb26b61e80ba21330479",
+   "subscanDot": 4686205.592,
+   "chain": {
+    "free": "4861212486510000",
+    "reserved": "42000843437640837",
+    "frozen": "42000000000000000"
+   },
+   "chainDot": 4686205.592415084,
+   "deltaDot": 0.00041508395224809647
+  },
+  {
+   "rank": 80,
+   "address": "16PwWCQsBRTduCFzPt5y6wfHCGxFPFHAKwF97ZQCinGqHLYm",
+   "label": null,
+   "accountHex": "eeac0a7aaa53c1a3dc3f7f04fba0b95f45ddc0cb544b14d4ca6da4bf4d03774f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da93e5b0f42cae0fc0a88ab7cf619688975eeac0a7aaa53c1a3dc3f7f04fba0b95f45ddc0cb544b14d4ca6da4bf4d03774f",
+   "subscanDot": 4685859.012,
+   "chain": {
+    "free": "4851418486200000",
+    "reserved": "42007171634115143",
+    "frozen": "42000000000000000"
+   },
+   "chainDot": 4685859.012031514,
+   "deltaDot": 0.00003151409327983856
+  },
+  {
+   "rank": 81,
+   "address": "15fUbpx8ooAWN1mZK6jN4cjeAS3a5remWPmctDu9KRBshhqA",
+   "label": null,
+   "accountHex": "ce492bad303c2687a84b581e5ae9979788336ffc2444d6a54fd00f6414c44ec7",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92a376155f12c9af41f4f37d4751bc794ce492bad303c2687a84b581e5ae9979788336ffc2444d6a54fd00f6414c44ec7",
+   "subscanDot": 4679487.01,
+   "chain": {
+    "free": "4791018781780480",
+    "reserved": "42003851320000000",
+    "frozen": "42000000000000000"
+   },
+   "chainDot": 4679487.010178048,
+   "deltaDot": 0.00017804838716983795
+  },
+  {
+   "rank": 82,
+   "address": "164Hrh9B45T7jbxHcEfJdXDQG5xGytoiEJ37rUCnhxCa4B3C",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "dfafa5fcef20bb65c47105dbd55b418f6ba6d5c10a8fbf4e5af3d5c0b492eb39",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92ef86b0c06a1bee8c372a4650f16abd2dfafa5fcef20bb65c47105dbd55b418f6ba6d5c10a8fbf4e5af3d5c0b492eb39",
+   "subscanDot": 4512836.565,
+   "chain": {
+    "free": "80570222516062",
+    "reserved": "45047795430100642",
+    "frozen": "0"
+   },
+   "chainDot": 4512836.56526167,
+   "deltaDot": 0.00026166997849941254
+  },
+  {
+   "rank": 83,
+   "address": "1Bt1P3QbMnvSvrLUCzRtjSxZgBWgbT4T2TeM5QFWYzLWa4b",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "084c284ba1396679c877f8f808a1e7906aef9b6470f26f40ab26f46446e38c29",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da93c5a93a4d707c5932c3a6ba8b0f545c0084c284ba1396679c877f8f808a1e7906aef9b6470f26f40ab26f46446e38c29",
+   "subscanDot": 4508920.333,
+   "chain": {
+    "free": "20978357710508",
+    "reserved": "45068224973538716",
+    "frozen": "0"
+   },
+   "chainDot": 4508920.333124923,
+   "deltaDot": 0.0001249229535460472
+  },
+  {
+   "rank": 84,
+   "address": "16honGZtr648D3Xg2edwknVLjRNVeSeZX99EwiE5mFuAsAuF",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "fc4c75ea3808c04f31b3b49df04629e2faf017230692a2ebd2417cebc44f9065",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9cdbc27ae09e37636ca7c50da215132e8fc4c75ea3808c04f31b3b49df04629e2faf017230692a2ebd2417cebc44f9065",
+   "subscanDot": 4502331.112,
+   "chain": {
+    "free": "692243805499553",
+    "reserved": "44331067315971391",
+    "frozen": "0"
+   },
+   "chainDot": 4502331.112147095,
+   "deltaDot": 0.0001470949500799179
+  },
+  {
+   "rank": 85,
+   "address": "14cmU7YxjDjMXkvKmyaNZ6cgXFioZt9Z6PENEg6PA5FY74DB",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "9ffbfaf7a3651f065701a62973d0ea1ad55bde23884e884289c8d66a7ddd1579",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9aab7250d384df6ca68f298f63e85ff1d9ffbfaf7a3651f065701a62973d0ea1ad55bde23884e884289c8d66a7ddd1579",
+   "subscanDot": 4499384.039,
+   "chain": {
+    "free": "227751519151",
+    "reserved": "44993612642787088",
+    "frozen": "0"
+   },
+   "chainDot": 4499384.039430624,
+   "deltaDot": 0.00043062400072813034
+  },
+  {
+   "rank": 86,
+   "address": "14MB5KHLdVvqAC5MrNHJj6sCUcNjMUJXZCqLbDYP4UHV34UB",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "9417859b38cc111a5153070db3b2115fe1b933613d0f27aedfadd0bfb6026848",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da902ca74c1a7c10e2ab82f511901647e9a9417859b38cc111a5153070db3b2115fe1b933613d0f27aedfadd0bfb6026848",
+   "subscanDot": 4498138.914,
+   "chain": {
+    "free": "567930414768982",
+    "reserved": "44413458731271804",
+    "frozen": "0"
+   },
+   "chainDot": 4498138.914604078,
+   "deltaDot": 0.0006040781736373901
+  },
+  {
+   "rank": 87,
+   "address": "1hBczpJHSWrEejKT5hevU3h2oBKNBpY26zPo7jTpVanj3JV",
+   "label": null,
+   "accountHex": "1ea59183db163bbff90a5daff53873b4fb20a9d727b5853528dcc3716aa3844b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da919103d7aec09da0c0c36245fb51285db1ea59183db163bbff90a5daff53873b4fb20a9d727b5853528dcc3716aa3844b",
+   "subscanDot": 4486187.97,
+   "chain": {
+    "free": "44861879708115144",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4486187.970811514,
+   "deltaDot": 0.0008115144446492195
+  },
+  {
+   "rank": 88,
+   "address": "162irz3JWpH3dNLo5vUdEz7RTzStkKJyjeYSmSTQE6yYGi1K",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "de7d54fd9260cc1da7a1185229b0ae591d50dc1ba2f256ce850494c6d8520cca",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9984b466a67a1eb11ac6ed45ad5d63d7ade7d54fd9260cc1da7a1185229b0ae591d50dc1ba2f256ce850494c6d8520cca",
+   "subscanDot": 4478499.844,
+   "chain": {
+    "free": "237903484464231",
+    "reserved": "44547094956432834",
+    "frozen": "0"
+   },
+   "chainDot": 4478499.844089706,
+   "deltaDot": 0.00008970685303211212
+  },
+  {
+   "rank": 89,
+   "address": "1665ypcQXKmqXtjE9yuWsZqK5MQmBQokFjPGLq5SvoKAWBjQ",
+   "label": null,
+   "accountHex": "e10e284823bc0728f1850486fd4ccd5546249140e96823ac09f96b30363cd251",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da90508df43c0fa41ec737aa1234d60468ae10e284823bc0728f1850486fd4ccd5546249140e96823ac09f96b30363cd251",
+   "subscanDot": 4470031.891,
+   "chain": {
+    "free": "719889096081",
+    "reserved": "44699599024005231",
+    "frozen": "0"
+   },
+   "chainDot": 4470031.891310131,
+   "deltaDot": 0.00031013134866952896
+  },
+  {
+   "rank": 90,
+   "address": "12dqWe1tovSDPunvXB3jG6o4dMqHhZiuDyktS6188BWc7ixs",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "48545edfed5e2fbfd39c0d307a7272a5ac5015c7ed4237b864f181f1b5da0ae6",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e44ff3c23c7400de61f3de71e4ec311048545edfed5e2fbfd39c0d307a7272a5ac5015c7ed4237b864f181f1b5da0ae6",
+   "subscanDot": 4469987,
+   "chain": {
+    "free": "587481586450583",
+    "reserved": "44112388421906727",
+    "frozen": "0"
+   },
+   "chainDot": 4469987.000835732,
+   "deltaDot": 0.0008357316255569458
+  },
+  {
+   "rank": 91,
+   "address": "14w9qCiwTACDzBfTXebmbfTSP8tiNA5CZhA1gdedY37E62cr",
+   "label": "Coinbase.com (user_wallet)",
+   "accountHex": "ae01ae23884c8b542c23042d67556e79759575627ef3cbae7cf9bc6fc538b39a",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b5f6e245ec1ed4cc2773807aa93eea6cae01ae23884c8b542c23042d67556e79759575627ef3cbae7cf9bc6fc538b39a",
+   "subscanDot": 4464415.782,
+   "chain": {
+    "free": "177739630689001",
+    "reserved": "44466418192643975",
+    "frozen": "0"
+   },
+   "chainDot": 4464415.782333298,
+   "deltaDot": 0.000333297997713089
+  },
+  {
+   "rank": 92,
+   "address": "13cKp89Uh2yWgTG28JA1QEvPUMjEPKejqkjHKf9zqLiFKjH6",
+   "label": "sibling:2034 (Hydration)",
+   "accountHex": "7369626cf2070000000000000000000000000000000000000000000000000000",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9706f6fff18b5e53b77296d8701ab0bb47369626cf2070000000000000000000000000000000000000000000000000000",
+   "subscanDot": 4436555.478,
+   "chain": {
+    "free": "44365414704206212",
+    "reserved": "140079600000",
+    "frozen": "0"
+   },
+   "chainDot": 4436555.4783806205,
+   "deltaDot": 0.0003806203603744507
+  },
+  {
+   "rank": 93,
+   "address": "13NRQGknuzoDWWTu7dmAnN4Ehc4roFRMHoSDprKqkNNHdDnF",
+   "label": null,
+   "accountHex": "68cec3249a38d50cfaa11d9be09cc6b174c4b0687e3fe6f82f67f3c8d8917e02",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9796594de0451124cb857599a977a3aab68cec3249a38d50cfaa11d9be09cc6b174c4b0687e3fe6f82f67f3c8d8917e02",
+   "subscanDot": 4421762.625,
+   "chain": {
+    "free": "44217626256862450",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4421762.625686245,
+   "deltaDot": 0.0006862450391054153
+  },
+  {
+   "rank": 94,
+   "address": "14852kUAanz2uiQizv2iwGC3SZGUUgJpmcLZrW6VhKRXMQKg",
+   "label": null,
+   "accountHex": "8a18fc2435a70b35fcaa1c094c107683b2878f82d5ab06b0bf2c6c6296f22186",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9eb2abfe71e2538638a5a98fa3e586f888a18fc2435a70b35fcaa1c094c107683b2878f82d5ab06b0bf2c6c6296f22186",
+   "subscanDot": 4421307.907,
+   "chain": {
+    "free": "44213079070192669",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4421307.907019267,
+   "deltaDot": 0.00001926720142364502
+  },
+  {
+   "rank": 95,
+   "address": "1odhHWsddwRnDQLpyKypBSNhqQbFi43RuHxVaCgeTVEcQv7",
+   "label": null,
+   "accountHex": "2390d04294c6cd65f01699740dbf7ef9a1b0dd139a262897978e8c761f78cdb0",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e76d62965923ea4b2b4de310d18e700c2390d04294c6cd65f01699740dbf7ef9a1b0dd139a262897978e8c761f78cdb0",
+   "subscanDot": 4378794.956,
+   "chain": {
+    "free": "18969988984651370",
+    "reserved": "24817960583783440",
+    "frozen": "0"
+   },
+   "chainDot": 4378794.9568434805,
+   "deltaDot": 0.0008434802293777466
+  },
+  {
+   "rank": 96,
+   "address": "136fZX6JHbywxoMXZiTY23eGGGkb3HrW7UHWZvZ5JGLzSGNF",
+   "label": null,
+   "accountHex": "5cca802ea1dd64c82a8742a7f07a73b6babe41591b4ab187d4dde15f0c212c0b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da948eeb0525667f15ffec569864af287fa5cca802ea1dd64c82a8742a7f07a73b6babe41591b4ab187d4dde15f0c212c0b",
+   "subscanDot": 4243279.984,
+   "chain": {
+    "free": "1317204490181",
+    "reserved": "42431482643702111",
+    "frozen": "0"
+   },
+   "chainDot": 4243279.984819229,
+   "deltaDot": 0.0008192285895347595
+  },
+  {
+   "rank": 97,
+   "address": "15673ZmaxJRTiGam7Ut1FwoVnLURJ9a5sA9CWTbBUbpmkqtz",
+   "label": null,
+   "accountHex": "b4d581ebd274f73bd405931f4dded48b891176add60c451c3102215a454eee24",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da971f13c956e5e2a94b04a3f196236f34db4d581ebd274f73bd405931f4dded48b891176add60c451c3102215a454eee24",
+   "subscanDot": 4137056.259,
+   "chain": {
+    "free": "41370562593062077",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4137056.259306208,
+   "deltaDot": 0.00030620815232396126
+  },
+  {
+   "rank": 98,
+   "address": "16iNp8A8EU6naBzvDmJR2i4hgP5EQnZHeGQ6omKeK9C4NTkp",
+   "label": null,
+   "accountHex": "fcbba7fad8ed56dbce66213050d923ae1d808d31674a2f90a5ced6295b966390",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99a064a9792e4d54a0288414193126736fcbba7fad8ed56dbce66213050d923ae1d808d31674a2f90a5ced6295b966390",
+   "subscanDot": 4128539.53,
+   "chain": {
+    "free": "41285395300000000",
+    "reserved": "0",
+    "frozen": "41285000000000000"
+   },
+   "chainDot": 4128539.53,
+   "deltaDot": 0
+  },
+  {
+   "rank": 99,
+   "address": "15MwrtvvV56EVHMHTqGDLaNhzm9MettUWyfR7kQBeEqPF7wR",
+   "label": null,
+   "accountHex": "c0ea849c682383e6d74313c8856800fb1e4534c0761dfbe393503d7e20dcbba3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99e8b5ad5eff65b5e2f83a0466cfbbd8fc0ea849c682383e6d74313c8856800fb1e4534c0761dfbe393503d7e20dcbba3",
+   "subscanDot": 4113840.01,
+   "chain": {
+    "free": "41138400100000000",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4113840.01,
+   "deltaDot": 0
+  },
+  {
+   "rank": 100,
+   "address": "143ciMd54A8BsZ5bRzZPVJ3yvr4jJ1iFyARk6zaWCM2SEf48",
+   "label": null,
+   "accountHex": "86b3697463905296a0458d97cbdf3c2b81a7dd9bf03669ae906f76c094c4872d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9bef7790ec82db9a4c366c3a65d641ba486b3697463905296a0458d97cbdf3c2b81a7dd9bf03669ae906f76c094c4872d",
+   "subscanDot": 4107515.453,
+   "chain": {
+    "free": "41075154535540146",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4107515.453554014,
+   "deltaDot": 0.0005540139973163605
+  },
+  {
+   "rank": 101,
+   "address": "12p8TxkyfmQBaSLooHA1NWRVjv7R8qgWfvKbVabEoH41L8jJ",
+   "label": null,
+   "accountHex": "502de5798c411799bc2e975aff8a5c542356ab48254d1d96f15acecdca3d7991",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95b8975b367a60ca5a4dca81762d3b6ba502de5798c411799bc2e975aff8a5c542356ab48254d1d96f15acecdca3d7991",
+   "subscanDot": 4008564.519,
+   "chain": {
+    "free": "40085645196519158",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 4008564.519651916,
+   "deltaDot": 0.0006519160233438015
+  },
+  {
+   "rank": 102,
+   "address": "14wJFjczRBztgEG5yLP8U8xanToLb9s3ruYmBQc8EjSeJyY1",
+   "label": null,
+   "accountHex": "ae1e08d507fa22c415f1c294970a5bf16eaf730bbc8398654721682ed0196876",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97bc2e8161bd567f18dd8e529e4127e5eae1e08d507fa22c415f1c294970a5bf16eaf730bbc8398654721682ed0196876",
+   "subscanDot": 3947472.797,
+   "chain": {
+    "free": "39474727978474730",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3947472.7978474726,
+   "deltaDot": 0.0008474728092551231
+  },
+  {
+   "rank": 103,
+   "address": "165VrAqwFqmghTcWCVaDBPaVgMcqhSpNhrNPak4NeVch2FtU",
+   "label": null,
+   "accountHex": "e09b4252f09bb6cbb07c582d16d66d5e1f655dc7117f57254f597f787362a638",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da98ab727ceff8d25350bfb7c3e30d53cade09b4252f09bb6cbb07c582d16d66d5e1f655dc7117f57254f597f787362a638",
+   "subscanDot": 3876625.424,
+   "chain": {
+    "free": "3032824128621861",
+    "reserved": "35733430112213172",
+    "frozen": "0"
+   },
+   "chainDot": 3876625.4240835034,
+   "deltaDot": 0.00008350331336259842
+  },
+  {
+   "rank": 104,
+   "address": "12HeyrD9BneCcmKZyDFThKraeWXETXKGWJ74D9pXxEBx83pe",
+   "label": null,
+   "accountHex": "38f003327f7a06c76bd35118b2d1dc87c5e71a99d2bb1232f7a3b710a59fe147",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e5bc6b896ffc0a88f92d8120fa0a292538f003327f7a06c76bd35118b2d1dc87c5e71a99d2bb1232f7a3b710a59fe147",
+   "subscanDot": 3843181.448,
+   "chain": {
+    "free": "24244593820109033",
+    "reserved": "14187220659925421",
+    "frozen": "0"
+   },
+   "chainDot": 3843181.4480034458,
+   "deltaDot": 0.0000034458935260772705
+  },
+  {
+   "rank": 105,
+   "address": "12Xt2r83z7By9LkkEFQU83BCsaRcbMUDTBsrkn34S2ANFLVW",
+   "label": null,
+   "accountHex": "43c962533ad2b3c5cec42bc5a0eb87c7beab77e1832c4ea2de43bdee046fbf71",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9914d0d42581e9319a8ce20d023e053b743c962533ad2b3c5cec42bc5a0eb87c7beab77e1832c4ea2de43bdee046fbf71",
+   "subscanDot": 3786794.584,
+   "chain": {
+    "free": "68247731628708",
+    "reserved": "37799698111306041",
+    "frozen": "0"
+   },
+   "chainDot": 3786794.5842934754,
+   "deltaDot": 0.00029347557574510574
+  },
+  {
+   "rank": 106,
+   "address": "12x2JzNyvQsRkKF6dG8FS5rtXMYatGT74ro6kW6AVdXdL8u9",
+   "label": null,
+   "accountHex": "5633241e2b1048ad69f91fec8f7dd81ae63df7c2861602b24d7bd55d0bd2f80e",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da931d29e9e6cd00f470564365a17ccf2765633241e2b1048ad69f91fec8f7dd81ae63df7c2861602b24d7bd55d0bd2f80e",
+   "subscanDot": 3724800.01,
+   "chain": {
+    "free": "2741198486200000",
+    "reserved": "34506801613800000",
+    "frozen": "34500000000000000"
+   },
+   "chainDot": 3724800.01,
+   "deltaDot": 0
+  },
+  {
+   "rank": 107,
+   "address": "16exbdjFr5x9CfPXHztZA3HUzQGNiFggfZFLM1k33QZW8gK7",
+   "label": null,
+   "accountHex": "fa2067618f6a59a2397677e9c2136a9d988df5181b7c2a465b8e777f75d40b89",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91daa5bc3346b0f1cea8dc5c9cb7166e4fa2067618f6a59a2397677e9c2136a9d988df5181b7c2a465b8e777f75d40b89",
+   "subscanDot": 3707017.61,
+   "chain": {
+    "free": "5561204486200000",
+    "reserved": "31508971613800000",
+    "frozen": "31500000000000000"
+   },
+   "chainDot": 3707017.61,
+   "deltaDot": 0
+  },
+  {
+   "rank": 108,
+   "address": "16MbsDpnL3WtpPGkF4peSi4zxVNqtJSLvDdjbCHAcSh6tvAo",
+   "label": null,
+   "accountHex": "ece371c23d24f938f71484d92e187ac02992291689ec44aae5dc24bdbbc36c25",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99d53e0d4cffc46b7b2fb4385dceeebd2ece371c23d24f938f71484d92e187ac02992291689ec44aae5dc24bdbbc36c25",
+   "subscanDot": 3693774.34,
+   "chain": {
+    "free": "9865005562922649",
+    "reserved": "27072737840106945",
+    "frozen": "0"
+   },
+   "chainDot": 3693774.340302959,
+   "deltaDot": 0.00030295923352241516
+  },
+  {
+   "rank": 109,
+   "address": "16AGX9MvKjnraLWeJPTFA5YGwRPbDTuigcq86eAmu99tYAyH",
+   "label": null,
+   "accountHex": "e43e9eb5c9d1cc329ce58f431af1f0de9624aed648a524013efa2f6e7223fc4b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9fe154307394c6e73eb32c9b6f618e49ae43e9eb5c9d1cc329ce58f431af1f0de9624aed648a524013efa2f6e7223fc4b",
+   "subscanDot": 3628548.552,
+   "chain": {
+    "free": "1710493837214245",
+    "reserved": "34574991690736537",
+    "frozen": "0"
+   },
+   "chainDot": 3628548.5527950786,
+   "deltaDot": 0.0007950784638524055
+  },
+  {
+   "rank": 110,
+   "address": "14Xs22PogFVE4nfPmsRFhmnqX3RqdrUANZRaVJU7Hik8DArR",
+   "label": null,
+   "accountHex": "9c3e6fda7870bcc2ffa7ffe63aa71522fc18be9e96517541b5af492c7910f0f0",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97e204290f543d1de468b1624458fb72f9c3e6fda7870bcc2ffa7ffe63aa71522fc18be9e96517541b5af492c7910f0f0",
+   "subscanDot": 3600099.576,
+   "chain": {
+    "free": "100000000",
+    "reserved": "36000995662746189",
+    "frozen": "0"
+   },
+   "chainDot": 3600099.576274619,
+   "deltaDot": 0.00027461908757686615
+  },
+  {
+   "rank": 111,
+   "address": "14KpWaVT6BoVoSNMTqAjVAcr4B6pad97ZQGuy5rH8ooJ1V59",
+   "label": null,
+   "accountHex": "930f0ce74e14259e2720953328a533f96bb0b70fc468432423ab8acb8e13da76",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9251cbcc7281a5b1b475bb155671c712a930f0ce74e14259e2720953328a533f96bb0b70fc468432423ab8acb8e13da76",
+   "subscanDot": 3472107.484,
+   "chain": {
+    "free": "80084682200355",
+    "reserved": "34640990163525907",
+    "frozen": "0"
+   },
+   "chainDot": 3472107.484572626,
+   "deltaDot": 0.0005726260133087635
+  },
+  {
+   "rank": 112,
+   "address": "11gqpAyU17G9EFW5n5MNngh824F3Y2as72V2rgc7Wq5JVRd",
+   "label": null,
+   "accountHex": "00861e6a60017b6faab11f38246aa536a85f95be2baacb495c9a9f5fe3a97964",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e819b5f2975625878252711ade8dde1900861e6a60017b6faab11f38246aa536a85f95be2baacb495c9a9f5fe3a97964",
+   "subscanDot": 3457715.575,
+   "chain": {
+    "free": "138402258758127",
+    "reserved": "34438753497620585",
+    "frozen": "0"
+   },
+   "chainDot": 3457715.5756378714,
+   "deltaDot": 0.0006378712132573128
+  },
+  {
+   "rank": 113,
+   "address": "14MwMnvX6LkSQke7vszkZEu3YhUamfPJaTFGmZ4vSSRo1oDi",
+   "label": null,
+   "accountHex": "94ac986bf87853648f2313f8ebb0fe85f12ac3eceef2163874f1159089475d23",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9f3a38f8eac3a9bf97c205f533a6e5c9094ac986bf87853648f2313f8ebb0fe85f12ac3eceef2163874f1159089475d23",
+   "subscanDot": 3441944.334,
+   "chain": {
+    "free": "34419443341397426",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3441944.3341397424,
+   "deltaDot": 0.000139742624014616
+  },
+  {
+   "rank": 114,
+   "address": "13Agjkd5embbwk3rZ1zrf66E2TbL11gNgWGaa6pTj7Ar41Nr",
+   "label": null,
+   "accountHex": "5fdb714bfaf3ea4c543cd3157b291fcb2eaad224905d8b90bee90045efe76ac0",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9c6c6fe643dd1f00c18b4ee3fb9984dae5fdb714bfaf3ea4c543cd3157b291fcb2eaad224905d8b90bee90045efe76ac0",
+   "subscanDot": 3427741.874,
+   "chain": {
+    "free": "917464615628316",
+    "reserved": "33359954125688021",
+    "frozen": "0"
+   },
+   "chainDot": 3427741.8741316334,
+   "deltaDot": 0.00013163359835743904
+  },
+  {
+   "rank": 115,
+   "address": "12igtt6fUvXtKymg6Lvfruo4b2sQjh32G1d6F9CEEM3Tswg2",
+   "label": null,
+   "accountHex": "4c079786171ee2835b36a9f02586be7aaea1499e79abd8e9f9fcd303d9e1b23c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ba848a093c6122396d2dc2dfc85128394c079786171ee2835b36a9f02586be7aaea1499e79abd8e9f9fcd303d9e1b23c",
+   "subscanDot": 3335079.492,
+   "chain": {
+    "free": "83436239987",
+    "reserved": "33350711488912800",
+    "frozen": "0"
+   },
+   "chainDot": 3335079.492515279,
+   "deltaDot": 0.0005152788944542408
+  },
+  {
+   "rank": 116,
+   "address": "143VKnUS6QyPRngaciPoHLMDWRARZNRZg1X7ovk8nJWnyo51",
+   "label": null,
+   "accountHex": "869a89ac739983534cf1ba1c326505cf3321a4a46ebcb894a87ce3836f21f928",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9c74020c3d54d805f0db80e0591f7a848869a89ac739983534cf1ba1c326505cf3321a4a46ebcb894a87ce3836f21f928",
+   "subscanDot": 3319443.239,
+   "chain": {
+    "free": "7095182420892082",
+    "reserved": "26099249977053217",
+    "frozen": "390085071240034"
+   },
+   "chainDot": 3319443.23979453,
+   "deltaDot": 0.000794529914855957
+  },
+  {
+   "rank": 117,
+   "address": "15yXD7x2Cy8uVuTdtujRjAtjdi2FHZc6wUyFrjCNqYiBjPUQ",
+   "label": null,
+   "accountHex": "dc0c5e6f6c8265265f0bb9bbfa5c46a2471c05152066ed925e450361ad229913",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a8a839c4aedfa143b8aa4f24bbc814d0dc0c5e6f6c8265265f0bb9bbfa5c46a2471c05152066ed925e450361ad229913",
+   "subscanDot": 3295552.918,
+   "chain": {
+    "free": "32955529187584328",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3295552.918758433,
+   "deltaDot": 0.0007584327831864357
+  },
+  {
+   "rank": 118,
+   "address": "19iU6Qxw7LBrKyVcVu4wjd1o5B2ZWGvc28DX3cV1ejWmyhk",
+   "label": null,
+   "accountHex": "06a58dd49ed98ac184b88a3425d6416990de24bb2297a8b620c9d97a263c3b58",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a001f18dbac955b5b7254cdd86cfdb0906a58dd49ed98ac184b88a3425d6416990de24bb2297a8b620c9d97a263c3b58",
+   "subscanDot": 3273983.783,
+   "chain": {
+    "free": "32739837834442561",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3273983.783444256,
+   "deltaDot": 0.0004442562349140644
+  },
+  {
+   "rank": 119,
+   "address": "15SBQ3sdJZ7jEbpMABwr6hF7ZPjZuaPBAuN29tpPdCovjTDE",
+   "label": null,
+   "accountHex": "c42511d86cd9d697899ee2e8a0f6bd265848771d8a2d88bbb89ddae917f921db",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a59c5562f08bde69c2b873b93882482fc42511d86cd9d697899ee2e8a0f6bd265848771d8a2d88bbb89ddae917f921db",
+   "subscanDot": 3208226.356,
+   "chain": {
+    "free": "10775781947",
+    "reserved": "32082252792847641",
+    "frozen": "0"
+   },
+   "chainDot": 3208226.356862959,
+   "deltaDot": 0.0008629588410258293
+  },
+  {
+   "rank": 120,
+   "address": "12X17rreXsYsVBGYqTwiNmEWhNCtRN2njVst28eHVT7tfJ1F",
+   "label": null,
+   "accountHex": "431dfe63e639673561c03ca84ae3d046ef0519b97c6b1f87fbc4cc28279a3a6b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91f9b095e1e861df782522cafb830fa2c431dfe63e639673561c03ca84ae3d046ef0519b97c6b1f87fbc4cc28279a3a6b",
+   "subscanDot": 3169886.317,
+   "chain": {
+    "free": "21100000000",
+    "reserved": "31698842070530452",
+    "frozen": "0"
+   },
+   "chainDot": 3169886.317053045,
+   "deltaDot": 0.00005304533988237381
+  },
+  {
+   "rank": 121,
+   "address": "14qbvYjaQfqLDSkp6dY4HDyubgfy4pzJo7rn2caiJvLD3KLM",
+   "label": null,
+   "accountHex": "a9c60ab54463d9a735da11a8edfb77fc729eb9cbf22b449abdc425104863f7a8",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ccad6f2aa016415d9e738b1e48d91886a9c60ab54463d9a735da11a8edfb77fc729eb9cbf22b449abdc425104863f7a8",
+   "subscanDot": 3164367.255,
+   "chain": {
+    "free": "147605851035126",
+    "reserved": "31496066704528312",
+    "frozen": "0"
+   },
+   "chainDot": 3164367.255556344,
+   "deltaDot": 0.0005563441663980484
+  },
+  {
+   "rank": 122,
+   "address": "13KjpoC6rn9NsKzweB5p68oBcsp77NvMSGdp6BZTMHjHTupB",
+   "label": null,
+   "accountHex": "66c30af9d21a59646c3edd33975f25cb3453b4a03c95df4fc4eb74b5dd271565",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92f4b38b18b45b7d0af473485b8ff8edd66c30af9d21a59646c3edd33975f25cb3453b4a03c95df4fc4eb74b5dd271565",
+   "subscanDot": 3101013.58,
+   "chain": {
+    "free": "22700601649758",
+    "reserved": "30987435201316402",
+    "frozen": "0"
+   },
+   "chainDot": 3101013.580296616,
+   "deltaDot": 0.00029661599546670914
+  },
+  {
+   "rank": 123,
+   "address": "14PMwAsi83ng3tZQLxEHZRvd5PxyrngsVXx6QuTsw2irxjLi",
+   "label": null,
+   "accountHex": "95c291bc42f7d5117bdc008e2e0c3a41ef50a886584896660b881a8bbaa12908",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da968307dc60e59b25efe0eb9b4393d045d95c291bc42f7d5117bdc008e2e0c3a41ef50a886584896660b881a8bbaa12908",
+   "subscanDot": 3100045.135,
+   "chain": {
+    "free": "240945546237",
+    "reserved": "31000210410000000",
+    "frozen": "0"
+   },
+   "chainDot": 3100045.135554624,
+   "deltaDot": 0.0005546240136027336
+  },
+  {
+   "rank": 124,
+   "address": "13fk4DpduiyA4eNneneAHekZvRLBHKAYxE1S5ZUeEK5t68XC",
+   "label": null,
+   "accountHex": "7604bae967e4167ae7453c62809fa6712c7c1a11b49cf375a813a1e13b54c735",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9df18483db2554d3f8827e6cd767575ec7604bae967e4167ae7453c62809fa6712c7c1a11b49cf375a813a1e13b54c735",
+   "subscanDot": 3097697.774,
+   "chain": {
+    "free": "39392365224651",
+    "reserved": "30937585378700240",
+    "frozen": "0"
+   },
+   "chainDot": 3097697.7743924893,
+   "deltaDot": 0.00039248913526535034
+  },
+  {
+   "rank": 125,
+   "address": "12TDMTPkNFvkKvRxJh3hD9eH3VrZqE14x96k9Nwo3RJWehjn",
+   "label": null,
+   "accountHex": "403a325f8fe992bf81250b2ce6b0bf8556f11c045096ac539c43552302540092",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9c74bd8c7d653375cfb6455bab44d0ffe403a325f8fe992bf81250b2ce6b0bf8556f11c045096ac539c43552302540092",
+   "subscanDot": 3086100.612,
+   "chain": {
+    "free": "30861006127909728",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3086100.612790973,
+   "deltaDot": 0.0007909727282822132
+  },
+  {
+   "rank": 126,
+   "address": "13UVJyLkAxdQn6zM3GrLGvrFgN9jWneRX2NGvf3u92iunZq1",
+   "label": "modldap/buff",
+   "accountHex": "6d6f646c6461702f627566660000000000000000000000000000000000000000",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92acc3fa3d0cc237b2a5c1df9335875dc6d6f646c6461702f627566660000000000000000000000000000000000000000",
+   "subscanDot": 3022315.368,
+   "chain": {
+    "free": "30224797721804336",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3022479.7721804334,
+   "deltaDot": 164.40418043360114
+  },
+  {
+   "rank": 127,
+   "address": "13cKp89Msu7M2PiaCuuGr1BzAsD5V3vaVbDMs3YtjMZHdGwR",
+   "label": "sibling:2000 (Acala)",
+   "accountHex": "7369626cd0070000000000000000000000000000000000000000000000000000",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da990e962428b12d284e7216d1405edf7ea7369626cd0070000000000000000000000000000000000000000000000000000",
+   "subscanDot": 3006486.848,
+   "chain": {
+    "free": "30064868486090740",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 3006486.848609074,
+   "deltaDot": 0.0006090737879276276
+  },
+  {
+   "rank": 128,
+   "address": "1NyqRuFPcCXjYneddrmXxKQKSGGTdJSnCQxV3k6Yp2wu6nH",
+   "label": null,
+   "accountHex": "10c37a2459dce76735425b33559089b4a711c11a9718aa39f34d3d5c0f2ef06b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9bc79e431c326053d51f67f5ef029cc7410c37a2459dce76735425b33559089b4a711c11a9718aa39f34d3d5c0f2ef06b",
+   "subscanDot": 2984979.92,
+   "chain": {
+    "free": "29848799298159317",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2984879.9298159317,
+   "deltaDot": -99.99018406821415
+  },
+  {
+   "rank": 129,
+   "address": "14L17exLLetxx1Mg3Hk1THLRdxVnPQuuJKwJbeVbZGJrGWAD",
+   "label": null,
+   "accountHex": "9332bfcf7c3ed472369d0dd70e5a6708671b03e65886bfbe2cf38881aad85446",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da96c6aa70b58ff5df2cbcdaba438d539889332bfcf7c3ed472369d0dd70e5a6708671b03e65886bfbe2cf38881aad85446",
+   "subscanDot": 2839479.306,
+   "chain": {
+    "free": "28394793067661401",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2839479.30676614,
+   "deltaDot": 0.0007661399431526661
+  },
+  {
+   "rank": 130,
+   "address": "1idmp9DpQdmEShg4PeHCGDBT3KdEe6Jv1EdYB1NhJ5r9xKx",
+   "label": null,
+   "accountHex": "1fc0d96bc0304bfaa1672d2ee84bfeed86ed2db1bdccedab95fa9792a4438a24",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9661740d59519c1bd1397b9e409af91301fc0d96bc0304bfaa1672d2ee84bfeed86ed2db1bdccedab95fa9792a4438a24",
+   "subscanDot": 2813999.806,
+   "chain": {
+    "free": "28139998069621827",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2813999.8069621827,
+   "deltaDot": 0.000962182879447937
+  },
+  {
+   "rank": 131,
+   "address": "14gV6s4whdfezXgnT6tJ79nCKLy2GutDpnEVSMBR9TmDpw5m",
+   "label": null,
+   "accountHex": "a2d1de2a37106efd685165bd5e4e232a8c1bb3a3e19b1b842a23696c84bebd00",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9d770c4a18ce01d7c4b894f74c422b6c5a2d1de2a37106efd685165bd5e4e232a8c1bb3a3e19b1b842a23696c84bebd00",
+   "subscanDot": 2753212.5,
+   "chain": {
+    "free": "2988318240838",
+    "reserved": "27529136683673700",
+    "frozen": "0"
+   },
+   "chainDot": 2753212.5001914534,
+   "deltaDot": 0.00019145337864756584
+  },
+  {
+   "rank": 132,
+   "address": "13PwrD5KB2eHd8ebBWiv8sCF38pj7FN9Nda6chQ9j3y6HXJE",
+   "label": "Bifrost/Staker Proxy",
+   "accountHex": "69f880852768f2d00acfa7824533aa4378e48d1b9fbc6b44500e8b98debeaccd",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9d9ff4ff522532ed5367613521624cdc669f880852768f2d00acfa7824533aa4378e48d1b9fbc6b44500e8b98debeaccd",
+   "subscanDot": 2733452.177,
+   "chain": {
+    "free": "462969917166",
+    "reserved": "27334058803615577",
+    "frozen": "9691407234046130"
+   },
+   "chainDot": 2733452.1773532745,
+   "deltaDot": 0.0003532744012773037
+  },
+  {
+   "rank": 133,
+   "address": "13i264UcaMtDkJaXE96aKkEFvULKCzfDAy3hkQC7g8Yjvwgq",
+   "label": "Bifrost/Staker Proxy",
+   "accountHex": "77c1303f053dc000bcacd591d0267f79ef5124a5b1a9207e8e1b29da9270e3a8",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99a8455b5eb8489f724047e7ee1d262f677c1303f053dc000bcacd591d0267f79ef5124a5b1a9207e8e1b29da9270e3a8",
+   "subscanDot": 2727141.263,
+   "chain": {
+    "free": "5107917489051",
+    "reserved": "27266304720048967",
+    "frozen": "1666666666666"
+   },
+   "chainDot": 2727141.2637538016,
+   "deltaDot": 0.0007538017816841602
+  },
+  {
+   "rank": 134,
+   "address": "12Joi61Ep7yJgfuAtFeRR7za27LmGuTtkPWL66Cc2T79Pt6i",
+   "label": "Bifrost/Staker Proxy",
+   "accountHex": "39d0a3c793549eda79b5cd3f8ab1c5879326352eb6583696249e38684b9451c1",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99dfcc07767648a632773ffae878c8bf439d0a3c793549eda79b5cd3f8ab1c5879326352eb6583696249e38684b9451c1",
+   "subscanDot": 2721880.484,
+   "chain": {
+    "free": "1248625829696",
+    "reserved": "27217556220323680",
+    "frozen": "356298816053535"
+   },
+   "chainDot": 2721880.4846153376,
+   "deltaDot": 0.000615337397903204
+  },
+  {
+   "rank": 135,
+   "address": "16W4TM66WzXEbrxHTqd7jrhuRPQCk5p3pApfYxsY4MCXGdgP",
+   "label": null,
+   "accountHex": "f356e97a6c0d88611f18f184bf8a744ed6da00fedcd8db790abb81738bac0881",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9bebfc61f1167f051d9028486ef12be4ff356e97a6c0d88611f18f184bf8a744ed6da00fedcd8db790abb81738bac0881",
+   "subscanDot": 2694356.27,
+   "chain": {
+    "free": "564902705705347",
+    "reserved": "26378660000000000",
+    "frozen": "0"
+   },
+   "chainDot": 2694356.2705705347,
+   "deltaDot": 0.0005705347284674644
+  },
+  {
+   "rank": 136,
+   "address": "13H4raKC2QinCo8v7yz5AzGVXSvtrt3AfQ4HjZbhUcbjWEm1",
+   "label": null,
+   "accountHex": "64b95e9b31185f47f81cd4e71443db5752c3d38386a0c87f2a685b2806a639f9",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e99b26b1e64c009e4322edcd8c279f2064b95e9b31185f47f81cd4e71443db5752c3d38386a0c87f2a685b2806a639f9",
+   "subscanDot": 2659316.83,
+   "chain": {
+    "free": "10000000000",
+    "reserved": "26593158303428783",
+    "frozen": "0"
+   },
+   "chainDot": 2659316.8303428786,
+   "deltaDot": 0.0003428785130381584
+  },
+  {
+   "rank": 137,
+   "address": "1uUWVJwxsKzqGNsvgQmoXXqrRudcfjgABMf8osUT9ERvdFS",
+   "label": null,
+   "accountHex": "28055cd3db4b5275221858e586a3071660d0d07a3409163c55cdf37cac539cc5",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91a6c99247c9ee4811263da29dd0537f728055cd3db4b5275221858e586a3071660d0d07a3409163c55cdf37cac539cc5",
+   "subscanDot": 2659287.31,
+   "chain": {
+    "free": "10000000000",
+    "reserved": "26592863100454682",
+    "frozen": "0"
+   },
+   "chainDot": 2659287.310045468,
+   "deltaDot": 0.000045468099415302277
+  },
+  {
+   "rank": 138,
+   "address": "12wugR6G3Qxtej6nzDastWnDnaS867qEbjksEUpyNo56Y4Nf",
+   "label": null,
+   "accountHex": "561cd20f50696e9f486a5863a1752dafa1b4c4e6aa6d4dd2c9516dcc600f5a89",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da98bd7ecd786f2be8a07fa95d8f8108cbf561cd20f50696e9f486a5863a1752dafa1b4c4e6aa6d4dd2c9516dcc600f5a89",
+   "subscanDot": 2659227.685,
+   "chain": {
+    "free": "10000000000",
+    "reserved": "26592266859784801",
+    "frozen": "0"
+   },
+   "chainDot": 2659227.68597848,
+   "deltaDot": 0.0009784800931811333
+  },
+  {
+   "rank": 139,
+   "address": "12oC6EBvXTce697K9z4vCKCd69F9XSiYJ5ps7RknJejiyBru",
+   "label": null,
+   "accountHex": "4f76dad0e68de0d783030e32fddf26796a4adede7ea06eccd93421f4e7328e53",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97c0014c8aea3a7fc9b008a285b9e5a884f76dad0e68de0d783030e32fddf26796a4adede7ea06eccd93421f4e7328e53",
+   "subscanDot": 2617272.804,
+   "chain": {
+    "free": "12172728046843962",
+    "reserved": "14000000000000000",
+    "frozen": "0"
+   },
+   "chainDot": 2617272.804684396,
+   "deltaDot": 0.0006843958981335163
+  },
+  {
+   "rank": 140,
+   "address": "13FEMA1MJBXpPQjuTaHAFns51EYjAeJUV46t4Xb1Btpny4Rv",
+   "label": null,
+   "accountHex": "6352d592efb61864d3174dd3634c7163a6d6c321564f4123eb3eaa741b82ad69",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99037edf29ac9b69ab0df3aace3f730ea6352d592efb61864d3174dd3634c7163a6d6c321564f4123eb3eaa741b82ad69",
+   "subscanDot": 2612194.177,
+   "chain": {
+    "free": "121953693540129",
+    "reserved": "25999988084135827",
+    "frozen": "0"
+   },
+   "chainDot": 2612194.1777675957,
+   "deltaDot": 0.0007675956003367901
+  },
+  {
+   "rank": 141,
+   "address": "16R9pLJxKXa4DT2nRzGuHzX89hByzxpXNUkKZNLW1NFfDcrm",
+   "label": null,
+   "accountHex": "ef98bc0be9d834c43f72c803b50463993a3e0b596a9dbb9bdf1a4cbd307349b6",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94f96cd7c2467d6402cf6ffd3f44f88f2ef98bc0be9d834c43f72c803b50463993a3e0b596a9dbb9bdf1a4cbd307349b6",
+   "subscanDot": 2611497.564,
+   "chain": {
+    "free": "114975648293668",
+    "reserved": "26000000000000000",
+    "frozen": "0"
+   },
+   "chainDot": 2611497.5648293667,
+   "deltaDot": 0.0008293669670820236
+  },
+  {
+   "rank": 142,
+   "address": "1243tzEb446NSpWzPcaeMGpJh2YZ4TwMb4B85yVCt4275fD8",
+   "label": null,
+   "accountHex": "2e8fb835389573e253889f3e3bc83aa47981e32a701da05bf2fd1977c236d03d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b56f6878f096e5d1d49e15eb892f6afa2e8fb835389573e253889f3e3bc83aa47981e32a701da05bf2fd1977c236d03d",
+   "subscanDot": 2560294.057,
+   "chain": {
+    "free": "2520191290704",
+    "reserved": "25600420382781526",
+    "frozen": "0"
+   },
+   "chainDot": 2560294.057407223,
+   "deltaDot": 0.0004072231240570545
+  },
+  {
+   "rank": 143,
+   "address": "131AUdeYZz5kPcazyzzNvNkgB7BgVLVeij1HH3ckwRuc7q5H",
+   "label": null,
+   "accountHex": "58985e0aa1d056ef383a659c6e70315eb9a79a0452469814f9dc4a68a87aca74",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da93ca5e88d9b83affa9cb9c117186239f058985e0aa1d056ef383a659c6e70315eb9a79a0452469814f9dc4a68a87aca74",
+   "subscanDot": 2554815.15,
+   "chain": {
+    "free": "25548151504119008",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2554815.1504119006,
+   "deltaDot": 0.00041190069168806076
+  },
+  {
+   "rank": 144,
+   "address": "14GQzaZ5WoJpdodqRaF3sVFLsESh3HsFDaAEHxusjSFJBfCT",
+   "label": null,
+   "accountHex": "907625edfa994ad5d3384176a8166fab2fceede497a292bafbf0b8c3d9239e15",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da960d5b59ba5814c2f8ba57e4c0bffcdd6907625edfa994ad5d3384176a8166fab2fceede497a292bafbf0b8c3d9239e15",
+   "subscanDot": 2544127.88,
+   "chain": {
+    "free": "25441278807479800",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2544127.88074798,
+   "deltaDot": 0.0007479800842702389
+  },
+  {
+   "rank": 145,
+   "address": "15krc9n21DNmYu79p7XeF6dtvphHxjt5W89Hp7Hqe2tvMYYb",
+   "label": null,
+   "accountHex": "d263799e67453c07b6195e2fc9d229d908af4d517a9f5b8340ef02e601aa753f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da96952ac6ce0c6b7bb3dded268b79f1b9ed263799e67453c07b6195e2fc9d229d908af4d517a9f5b8340ef02e601aa753f",
+   "subscanDot": 2528276.128,
+   "chain": {
+    "free": "2565141501444",
+    "reserved": "25280196143610919",
+    "frozen": "0"
+   },
+   "chainDot": 2528276.1285112365,
+   "deltaDot": 0.0005112364888191223
+  },
+  {
+   "rank": 146,
+   "address": "1557maBaLnFDxmXTSFGTP6gvy5GrXrj2RL15uFu3E1Q8EZfJ",
+   "label": null,
+   "accountHex": "b414b33efa4ab00417dad67c82ac28d55cdb0b3a863b465fb724860b47fd1110",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9317e9d2cd84c55d2ebaa2bb57312918db414b33efa4ab00417dad67c82ac28d55cdb0b3a863b465fb724860b47fd1110",
+   "subscanDot": 2408608.294,
+   "chain": {
+    "free": "111535744561063",
+    "reserved": "23974547199274206",
+    "frozen": "0"
+   },
+   "chainDot": 2408608.294383527,
+   "deltaDot": 0.0003835265524685383
+  },
+  {
+   "rank": 147,
+   "address": "13HwPLqoJwJeCHxNaWF6PL7Hw2L6xEYxtyp3YLKe8FbqCQVq",
+   "label": null,
+   "accountHex": "656378660cf2705ff0122a4cdf321f9900cea37a989337d480ba9f2013dcff14",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9cd2110c2ae440b7e4d3771f956266651656378660cf2705ff0122a4cdf321f9900cea37a989337d480ba9f2013dcff14",
+   "subscanDot": 2394824.731,
+   "chain": {
+    "free": "4113537302883",
+    "reserved": "23944133781696712",
+    "frozen": "0"
+   },
+   "chainDot": 2394824.7318999595,
+   "deltaDot": 0.0008999593555927277
+  },
+  {
+   "rank": 148,
+   "address": "16UPpLJ5xZae2RUWJ9GgpFg1tFYwDhRbpMLqARMS3FpfV8bp",
+   "label": null,
+   "accountHex": "f21199552d36549cdc9ff01a19ddc3925785b8bd573dbb03c5c0795aac516949",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91677f30080bde94b68b92a1ef3b7674ff21199552d36549cdc9ff01a19ddc3925785b8bd573dbb03c5c0795aac516949",
+   "subscanDot": 2381720.933,
+   "chain": {
+    "free": "231926341408",
+    "reserved": "23816977410010585",
+    "frozen": "0"
+   },
+   "chainDot": 2381720.933635199,
+   "deltaDot": 0.0006351987831294537
+  },
+  {
+   "rank": 149,
+   "address": "12nmCpPXDDub8VyRRUzLnvuPLAuvB1LaGVhqM922UPxeaYx9",
+   "label": null,
+   "accountHex": "4f231467d723c145ae75a00d5acd85af8c216986feaade5f0e2bd280f02d5e8d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9479f66bf8b08c307a15d04c702aad7f54f231467d723c145ae75a00d5acd85af8c216986feaade5f0e2bd280f02d5e8d",
+   "subscanDot": 2373609.933,
+   "chain": {
+    "free": "233160818985",
+    "reserved": "23735866173497717",
+    "frozen": "0"
+   },
+   "chainDot": 2373609.9334316705,
+   "deltaDot": 0.00043167034164071083
+  },
+  {
+   "rank": 150,
+   "address": "15BWkPmv1fJkDZEFVZyNZa97ugTxcR61WRNSkTeA5M2xN1DP",
+   "label": null,
+   "accountHex": "b8f5877002b174e952ad65718627fca063267dd80a6998f3d63cbd30dea0c51b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b19473592789b4c394a0ac5634ac2078b8f5877002b174e952ad65718627fca063267dd80a6998f3d63cbd30dea0c51b",
+   "subscanDot": 2300027,
+   "chain": {
+    "free": "23000270000000000",
+    "reserved": "0",
+    "frozen": "7631230593418496"
+   },
+   "chainDot": 2300027,
+   "deltaDot": 0
+  },
+  {
+   "rank": 151,
+   "address": "14TcoSZsog42urx2Jh6zB4f1MH8BeNnLMo4rXsZcu85c3pkd",
+   "label": null,
+   "accountHex": "990198c6cd5a64e6e3d20c6f75b50146d2bea26e12a3f12074f9dae6a4675130",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95e54fa94b09595eef29a17dc9ab08c38990198c6cd5a64e6e3d20c6f75b50146d2bea26e12a3f12074f9dae6a4675130",
+   "subscanDot": 2258700.264,
+   "chain": {
+    "free": "99945313697489",
+    "reserved": "22487057332909223",
+    "frozen": "0"
+   },
+   "chainDot": 2258700.2646606714,
+   "deltaDot": 0.0006606713868677616
+  },
+  {
+   "rank": 152,
+   "address": "138gCeHtfU6zpmVB7SiCyyVd25CyLXmVMrbQDCN7uSB8Dq62",
+   "label": null,
+   "accountHex": "5e53256cdcd5c188ed04b6c7bd932b7b98d136140f65cae7c23e199fdba4eea1",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da903be3e54a5b08e25e7cc703a323df5795e53256cdcd5c188ed04b6c7bd932b7b98d136140f65cae7c23e199fdba4eea1",
+   "subscanDot": 2235690.091,
+   "chain": {
+    "free": "22356900919850833",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2235690.091985083,
+   "deltaDot": 0.000985083170235157
+  },
+  {
+   "rank": 153,
+   "address": "15HwwajDna9DGavCnP2kszgbtd15jM36wY5FxV1sCMUnULq8",
+   "label": null,
+   "accountHex": "bdddcef1dfed52949a463a09b886f4186a9e45edf997eb7a9baa249f5d9667de",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ef02236331a93ad1dcb5fb29e45d515abdddcef1dfed52949a463a09b886f4186a9e45edf997eb7a9baa249f5d9667de",
+   "subscanDot": 2205514.621,
+   "chain": {
+    "free": "22055146219440639",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2205514.621944064,
+   "deltaDot": 0.0009440639987587929
+  },
+  {
+   "rank": 154,
+   "address": "1JkG8ewDUtLGQVVsWDAEA18BtdwvdCUuHLZumhZLtDEes8R",
+   "label": null,
+   "accountHex": "0d88cd1066acc50a8a51a4458591f827337d305418618820eda44200e3da0235",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ee31923638a7302e841ac1c4b958b6ca0d88cd1066acc50a8a51a4458591f827337d305418618820eda44200e3da0235",
+   "subscanDot": 2200029.89,
+   "chain": {
+    "free": "22000298904172071",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 2200029.890417207,
+   "deltaDot": 0.00041720690205693245
+  },
+  {
+   "rank": 155,
+   "address": "1419ASE7ohmDvm69BwC55n8ZDFARQY2Z7Q8XWvG9RchXkEBp",
+   "label": null,
+   "accountHex": "84d02da8fdd97b5b780665466202de87d6471b42f5103fa012136f62398941e5",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94a86cbdc4c08f987a0f26220b68f901984d02da8fdd97b5b780665466202de87d6471b42f5103fa012136f62398941e5",
+   "subscanDot": 2200024.883,
+   "chain": {
+    "free": "38428607255",
+    "reserved": "22000210410000000",
+    "frozen": "0"
+   },
+   "chainDot": 2200024.8838607254,
+   "deltaDot": 0.0008607255294919014
+  },
+  {
+   "rank": 156,
+   "address": "1xwtoxDaT8fMb6bKaeh3ZG4daqLnwdkRDsWTz8t8wr3Cndh",
+   "label": null,
+   "accountHex": "2aab48d1c05b5ab92af0004bad73a200d721d4337c81e10d9235617ce7e3f341",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ac8e18bbc5bc472849747ce454e666a42aab48d1c05b5ab92af0004bad73a200d721d4337c81e10d9235617ce7e3f341",
+   "subscanDot": 2190234.404,
+   "chain": {
+    "free": "83314129429646",
+    "reserved": "21819029917169188",
+    "frozen": "0"
+   },
+   "chainDot": 2190234.404659883,
+   "deltaDot": 0.0006598830223083496
+  },
+  {
+   "rank": 157,
+   "address": "13cKp89TtYknbyYnqnF6dWN75q5ZosvFSuqzoEVkUAaNR47A",
+   "label": "sibling:2030 (Bifrost)",
+   "accountHex": "7369626cee070000000000000000000000000000000000000000000000000000",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da919459308eef3f4dcada31d6b9a5124247369626cee070000000000000000000000000000000000000000000000000000",
+   "subscanDot": 2169244.392,
+   "chain": {
+    "free": "21692435868980570",
+    "reserved": "8055400000",
+    "frozen": "0"
+   },
+   "chainDot": 2169244.392438057,
+   "deltaDot": 0.0004380568861961365
+  },
+  {
+   "rank": 158,
+   "address": "12pw22Qyy3o28BLshjce9yrSMs3fhSiLsAjqLPAzGktbXYV7",
+   "label": null,
+   "accountHex": "50ca9b6bf6c83ca2a918b9861788d6facd26e5fd78a07f9848070697683745b3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da98a0dda506289a7c561042108287e785850ca9b6bf6c83ca2a918b9861788d6facd26e5fd78a07f9848070697683745b3",
+   "subscanDot": 2158709.295,
+   "chain": {
+    "free": "1210518904479150",
+    "reserved": "20376574045913942",
+    "frozen": "0"
+   },
+   "chainDot": 2158709.295039309,
+   "deltaDot": 0.00003930926322937012
+  },
+  {
+   "rank": 159,
+   "address": "1k5WZHRTbEw3XNRh2xZGLHJPihFhP3ahz5VWbTW8oJiLQMS",
+   "label": null,
+   "accountHex": "20dabba8b66417da1eb22ceb95cc9c4df4b1548d68f93d7e6a96162a6354a215",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9f7dec73c21356394601f0d1eec7ddd4520dabba8b66417da1eb22ceb95cc9c4df4b1548d68f93d7e6a96162a6354a215",
+   "subscanDot": 2106682.514,
+   "chain": {
+    "free": "10775781947",
+    "reserved": "21066814366500899",
+    "frozen": "0"
+   },
+   "chainDot": 2106682.514228285,
+   "deltaDot": 0.00022828485816717148
+  },
+  {
+   "rank": 160,
+   "address": "15TsfDDbbmLHQUibHq6kuEqNyDXNvxCPr9RJKkp2j2TLryhD",
+   "label": null,
+   "accountHex": "c56fd8d906d13855c203dc62b45d33b19d94d9fe4b5e713e844a10ce0b543895",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94cc7fe385148ff6615ddcaa15bd020e1c56fd8d906d13855c203dc62b45d33b19d94d9fe4b5e713e844a10ce0b543895",
+   "subscanDot": 2104623.517,
+   "chain": {
+    "free": "10775581947",
+    "reserved": "21046224402466924",
+    "frozen": "0"
+   },
+   "chainDot": 2104623.517804887,
+   "deltaDot": 0.0008048871532082558
+  },
+  {
+   "rank": 161,
+   "address": "1RfySQN1m2zwieujyt8kdsmEiSVxtkA8mRmpVFtpSg1j2QX",
+   "label": null,
+   "accountHex": "12d115b2135a7c49d3570ee7b90cd4666c7d70fa9d7e4e394704c9fa11e56c97",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a981d8fcbcf0fc201794e474636dadc112d115b2135a7c49d3570ee7b90cd4666c7d70fa9d7e4e394704c9fa11e56c97",
+   "subscanDot": 2085991.258,
+   "chain": {
+    "free": "5467385262204",
+    "reserved": "20854445196666027",
+    "frozen": "0"
+   },
+   "chainDot": 2085991.2581928233,
+   "deltaDot": 0.0001928233541548252
+  },
+  {
+   "rank": 162,
+   "address": "14AfZGdMXoch65o1BeGCnnskBV96nD5rTmAuSN4fff2KqzXp",
+   "label": null,
+   "accountHex": "8c13b388e4039d8547379ba35fb4ba097e034b55ce2dfe82d9d8d1ec2545cbd3",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a99f9fde6c9840bf9387f18cd995d38f8c13b388e4039d8547379ba35fb4ba097e034b55ce2dfe82d9d8d1ec2545cbd3",
+   "subscanDot": 2000024.114,
+   "chain": {
+    "free": "30733830451",
+    "reserved": "20000210410000000",
+    "frozen": "0"
+   },
+   "chainDot": 2000024.1143830451,
+   "deltaDot": 0.0003830450586974621
+  },
+  {
+   "rank": 163,
+   "address": "15E4FjmszoSqEcFTi6HRFGnp8nFJHFJsh53DtwaLhk19q4Qz",
+   "label": null,
+   "accountHex": "bae6140d3e0bcdf221fe13bbb147661dd353b63020cb73763ae66fbb962e1e4f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92bf959c5638f190c49cf838d167561e1bae6140d3e0bcdf221fe13bbb147661dd353b63020cb73763ae66fbb962e1e4f",
+   "subscanDot": 1978141.134,
+   "chain": {
+    "free": "19823333410114",
+    "reserved": "19761588010600000",
+    "frozen": "0"
+   },
+   "chainDot": 1978141.1344010113,
+   "deltaDot": 0.0004010112024843693
+  },
+  {
+   "rank": 164,
+   "address": "15RxCCzAW8RAwWEyNUZitGd8XA5YzgUHSM28MdGgkhnxZgTr",
+   "label": null,
+   "accountHex": "c3f89ed5dbfe3e6c5a84575e0fc121341fe3274f8e40c8e72e7d6859fcbc17f1",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9eecc529545e6677f0644d1a0fdbefd32c3f89ed5dbfe3e6c5a84575e0fc121341fe3274f8e40c8e72e7d6859fcbc17f1",
+   "subscanDot": 1956481.163,
+   "chain": {
+    "free": "41630491180",
+    "reserved": "19564770000000000",
+    "frozen": "0"
+   },
+   "chainDot": 1956481.163049118,
+   "deltaDot": 0.00004911795258522034
+  },
+  {
+   "rank": 165,
+   "address": "13vMMGkUCBTmZvXYi3iPrGV4Pto9DgGrfRmNTmDQL4gFsGAf",
+   "label": null,
+   "accountHex": "8128f9d40ec8fb78789ee24c3988467dfcf90f05f2f35916ee333433e85bd7fb",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b552d25495db6921ee45e2f6e44b2ec38128f9d40ec8fb78789ee24c3988467dfcf90f05f2f35916ee333433e85bd7fb",
+   "subscanDot": 1928324.812,
+   "chain": {
+    "free": "10775781947",
+    "reserved": "19283237344732925",
+    "frozen": "0"
+   },
+   "chainDot": 1928324.8120514872,
+   "deltaDot": 0.000051487237215042114
+  },
+  {
+   "rank": 166,
+   "address": "13XgFhsShrbZ82g4vp5CWbGTXtRMfWjFWAzzGCh3NTTP7P6R",
+   "label": null,
+   "accountHex": "6fddf7db782d05aa0ae6186b483828da130af911121662dc57a16e4933a6a164",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da93c8ff979e19142cc323ecac8fd8396516fddf7db782d05aa0ae6186b483828da130af911121662dc57a16e4933a6a164",
+   "subscanDot": 1916920.288,
+   "chain": {
+    "free": "19169202883908892",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1916920.2883908893,
+   "deltaDot": 0.0003908893559128046
+  },
+  {
+   "rank": 167,
+   "address": "14V5WZrJohmP4kkbiL5dy5SCsAfwezLhrAx3AtzmwapkMcrA",
+   "label": null,
+   "accountHex": "9a1ec0be50cd558583f97dcffb6fbf639af90649ad3dd8a79f0e8ecfc9ecdf8d",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da941233a0e6cbb0fd9184d7ee57fae73659a1ec0be50cd558583f97dcffb6fbf639af90649ad3dd8a79f0e8ecfc9ecdf8d",
+   "subscanDot": 1870434.718,
+   "chain": {
+    "free": "10812241851",
+    "reserved": "18704336371097811",
+    "frozen": "0"
+   },
+   "chainDot": 1870434.7183339663,
+   "deltaDot": 0.0003339662216603756
+  },
+  {
+   "rank": 168,
+   "address": "12Rrp6mNTC9733DwAoTY9gSXzFEBgHcAYmFVDMzq8pxc1Q8R",
+   "label": null,
+   "accountHex": "3f31ce34dd2767b6b2f7a89ecce69ccf05d1a91ee70714bd8c3db47249d58c4b",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da98ae8eaf3b13c335041b1031c29f45f2d3f31ce34dd2767b6b2f7a89ecce69ccf05d1a91ee70714bd8c3db47249d58c4b",
+   "subscanDot": 1853776.584,
+   "chain": {
+    "free": "18537765844958555",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1853776.5844958555,
+   "deltaDot": 0.000495855463668704
+  },
+  {
+   "rank": 169,
+   "address": "16QWvuDqk8uVoCdabCY9q8PaAekpBNxLaqUAgToAzdJGjzUC",
+   "label": null,
+   "accountHex": "ef1c900846ab376fff1e24e00e9f800b815c09166143deb27b6ade956f5f7b2a",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9701a02d891471830cedd6606a4b01c24ef1c900846ab376fff1e24e00e9f800b815c09166143deb27b6ade956f5f7b2a",
+   "subscanDot": 1835234.516,
+   "chain": {
+    "free": "18352345163753910",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1835234.5163753913,
+   "deltaDot": 0.0003753912169486284
+  },
+  {
+   "rank": 170,
+   "address": "1ZqC4oA9Cf1UiZEdw4AnESFc2rMaNjzDMYxCePwPB4hTRRt",
+   "label": null,
+   "accountHex": "190a13dc23e0264a648f6ced9511c31eff2b16460d18e37e7ba96147ef3257d8",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da97e006842d0e5932f82aa61f9fb238d49190a13dc23e0264a648f6ced9511c31eff2b16460d18e37e7ba96147ef3257d8",
+   "subscanDot": 1814996.757,
+   "chain": {
+    "free": "18149967578127415",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1814996.7578127417,
+   "deltaDot": 0.0008127416949719191
+  },
+  {
+   "rank": 171,
+   "address": "12nvDCzXkBtG1dRomQ9xMKSu1JrToGNd7Jj1xpUtbTRa7f33",
+   "label": null,
+   "accountHex": "4f416626c75e103c89d6c1020c522c8f341ef96d025bd4fb65da0a6d51f07498",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da95349eb80aaf524f22ce2edaf9cb279e54f416626c75e103c89d6c1020c522c8f341ef96d025bd4fb65da0a6d51f07498",
+   "subscanDot": 1811690.025,
+   "chain": {
+    "free": "22020083753",
+    "reserved": "18116878236981994",
+    "frozen": "0"
+   },
+   "chainDot": 1811690.0257065748,
+   "deltaDot": 0.0007065748795866966
+  },
+  {
+   "rank": 172,
+   "address": "15uUWtmKAryDvFxuXHxiHBxRNAMtWBxfYpaNdHU3eAQaDR7C",
+   "label": null,
+   "accountHex": "d8f651e453265508090e096f16c4bd790f0405a44973125e469d7742b68800a4",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da957b862c789a78199ca3f1b051b5b0777d8f651e453265508090e096f16c4bd790f0405a44973125e469d7742b68800a4",
+   "subscanDot": 1805499.48,
+   "chain": {
+    "free": "18054994806081697",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1805499.4806081697,
+   "deltaDot": 0.0006081697065383196
+  },
+  {
+   "rank": 173,
+   "address": "14n8ferDrb3uorc5esxHgt2gePPFDTSn4qvxBywVEosejVFL",
+   "label": null,
+   "accountHex": "a7208d10c6622f3f7eca1551de8355fde9de577dbb308d38994ace561738a51f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92faab7217a93d1616ffd18d1dd874250a7208d10c6622f3f7eca1551de8355fde9de577dbb308d38994ace561738a51f",
+   "subscanDot": 1783928.793,
+   "chain": {
+    "free": "17839287935570526",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1783928.7935570525,
+   "deltaDot": 0.0005570524372160435
+  },
+  {
+   "rank": 174,
+   "address": "13Y7U7HHGjd5gcHUQHW55qPCpRuQox4ykCeriYq6aPhPTJHX",
+   "label": null,
+   "accountHex": "7032d879113ea2eb438fe32eae7bdaf7f86e21cc37b0ddac13da894e75b56f21",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da979788e8fbbbc5b8fff2b293bb9b131177032d879113ea2eb438fe32eae7bdaf7f86e21cc37b0ddac13da894e75b56f21",
+   "subscanDot": 1763611.079,
+   "chain": {
+    "free": "1284176558428846",
+    "reserved": "16351934235148019",
+    "frozen": "0"
+   },
+   "chainDot": 1763611.0793576865,
+   "deltaDot": 0.0003576865419745445
+  },
+  {
+   "rank": 175,
+   "address": "1oJ65RyN3Ht7SMzWjdVKAbv9FBC6gUXNd97h4AjeVNTFqQn",
+   "label": null,
+   "accountHex": "234ecf7208ce27b4f273651fdfb82574f95d4829a9e8642ffc67948fa8e897a6",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e87172e84ce777863541e9801e43261c234ecf7208ce27b4f273651fdfb82574f95d4829a9e8642ffc67948fa8e897a6",
+   "subscanDot": 1725687.928,
+   "chain": {
+    "free": "17256879288116016",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1725687.9288116016,
+   "deltaDot": 0.0008116015233099461
+  },
+  {
+   "rank": 176,
+   "address": "16a7bp7uZwp5V1K4EA3VuN9NXfXXYrtwmyban97eiCKFWS4k",
+   "label": null,
+   "accountHex": "f66e7be1741705cf1646bf4907dfa9e4a6895ff087b1715b32fec213f771fdc1",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9936a020c9e28969a84c38f72aec5541df66e7be1741705cf1646bf4907dfa9e4a6895ff087b1715b32fec213f771fdc1",
+   "subscanDot": 1705755.31,
+   "chain": {
+    "free": "17057553101161212",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1705755.3101161213,
+   "deltaDot": 0.00011612125672399998
+  },
+  {
+   "rank": 177,
+   "address": "12G1TaAHobt2qZ1zAPVmF122NrTMCDpC4nXuubddkQjTiScD",
+   "label": null,
+   "accountHex": "37ae74ec68adf86f38dca156c78d83aace08e16ea17a2664306c0eeb8e7f51ff",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b1510f847c8dafcd2927733d9654e47e37ae74ec68adf86f38dca156c78d83aace08e16ea17a2664306c0eeb8e7f51ff",
+   "subscanDot": 1702960.548,
+   "chain": {
+    "free": "179785499986",
+    "reserved": "17029425701430440",
+    "frozen": "0"
+   },
+   "chainDot": 1702960.5486930427,
+   "deltaDot": 0.0006930427625775337
+  },
+  {
+   "rank": 178,
+   "address": "12YM39uv2K7YpMoQL8eUYhsMGyXG19kYFrcEbUasLcWZMcjc",
+   "label": null,
+   "accountHex": "44244abfaff604c10076a30de26291a51efea2ea76f0d393449cd100ba7f5d2f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da986b073762a77eb37820b915a4a5e3b6844244abfaff604c10076a30de26291a51efea2ea76f0d393449cd100ba7f5d2f",
+   "subscanDot": 1700031.289,
+   "chain": {
+    "free": "17000312899685874",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1700031.2899685875,
+   "deltaDot": 0.000968587351962924
+  },
+  {
+   "rank": 179,
+   "address": "13fnouKsAaWxBxCx9VarXBNyYo7vUCeTUbRmQBjytju8YqqB",
+   "label": "Bitbank (hot_wallet)",
+   "accountHex": "760dff7a53d6f8b39cdfcc49719bd9c253063592db618d08682f6ddfe02fb620",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9f2af791886e50941e3f8d236e6e42f51760dff7a53d6f8b39cdfcc49719bd9c253063592db618d08682f6ddfe02fb620",
+   "subscanDot": 1698412.302,
+   "chain": {
+    "free": "16984123027752569",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1698412.3027752568,
+   "deltaDot": 0.0007752568926662207
+  },
+  {
+   "rank": 180,
+   "address": "14Cuc2nobDZpTitnHPoQdXmRaUqkMfpvNaYm9iiCNWtPy2n1",
+   "label": null,
+   "accountHex": "8dc97b07edde775aabb6838e379103694c69c7cb97ded60c284e71e8fb08148f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a92f0f88695834f48dadc79f5c10c5f38dc97b07edde775aabb6838e379103694c69c7cb97ded60c284e71e8fb08148f",
+   "subscanDot": 1694779.989,
+   "chain": {
+    "free": "16947799890106941",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1694779.989010694,
+   "deltaDot": 0.000010693911463022232
+  },
+  {
+   "rank": 181,
+   "address": "12t4n3uK5EcasY21xTHGhH9GkKkCjuAMxLyhF8Rm9WgZLNBA",
+   "label": null,
+   "accountHex": "532e7671279356839ef689d5ce39ff67b49f2bed82b0887234b8965f432a0944",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da91777bd610d046b88cfd2539310531101532e7671279356839ef689d5ce39ff67b49f2bed82b0887234b8965f432a0944",
+   "subscanDot": 1646974.765,
+   "chain": {
+    "free": "16469747657905451",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1646974.7657905451,
+   "deltaDot": 0.0007905452512204647
+  },
+  {
+   "rank": 182,
+   "address": "14Tr4bz2q2btvESBZF88UWTjHxSADerpgHqxVUsBRcLxAmAr",
+   "label": null,
+   "accountHex": "992e3d1b96aeae9215a3f8d96dedbdd67abdf56f78bbd2850db0d335389d0f7c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da932169d37549dadd5a9e4e6a56a06538f992e3d1b96aeae9215a3f8d96dedbdd67abdf56f78bbd2850db0d335389d0f7c",
+   "subscanDot": 1628844.495,
+   "chain": {
+    "free": "16288444958619052",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1628844.4958619052,
+   "deltaDot": 0.0008619050495326519
+  },
+  {
+   "rank": 183,
+   "address": "15dNts8bktTXAos6UaNjFGyp83eZhQi5MBpRc6Rojzgfdrg5",
+   "label": null,
+   "accountHex": "ccaf788a2b5988e5aaaa89071b94739c17ab420dbd7b09fbd7708f7a053b6e3c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9134a00c422777c73fbc0000cd7adef1eccaf788a2b5988e5aaaa89071b94739c17ab420dbd7b09fbd7708f7a053b6e3c",
+   "subscanDot": 1628844.495,
+   "chain": {
+    "free": "16288444958619052",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1628844.4958619052,
+   "deltaDot": 0.0008619050495326519
+  },
+  {
+   "rank": 184,
+   "address": "16fM2nc4mxA65FLsCqxxpJthdh8f79KYC5V9QeC3YL6EEYG2",
+   "label": "chax",
+   "accountHex": "fa6bec1c59118bb967eacc2d3f52b46779d20a6301fbed69d536e505caf75919",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92004aee82ca3ddd40098d161cdd6490cfa6bec1c59118bb967eacc2d3f52b46779d20a6301fbed69d536e505caf75919",
+   "subscanDot": 1593613.146,
+   "chain": {
+    "free": "6260345342660",
+    "reserved": "15929871122840120",
+    "frozen": "0"
+   },
+   "chainDot": 1593613.146818278,
+   "deltaDot": 0.0008182779420167208
+  },
+  {
+   "rank": 185,
+   "address": "16fzN77u7YkPG6hZveCTMaH9QRN8BixKbfxdZo35PNfrF9TH",
+   "label": null,
+   "accountHex": "fae998c0bb14cdb1806387c6da5308a9577d9a2c57b31401581218ced689aa73",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da98a6d399d324fdc44f8c917023c494c28fae998c0bb14cdb1806387c6da5308a9577d9a2c57b31401581218ced689aa73",
+   "subscanDot": 1592898.702,
+   "chain": {
+    "free": "11593281662",
+    "reserved": "15928975429542266",
+    "frozen": "1529290000000000"
+   },
+   "chainDot": 1592898.702282393,
+   "deltaDot": 0.00028239283710718155
+  },
+  {
+   "rank": 186,
+   "address": "12onjRpNWHEHNL2gWoghmzbikcDUz9bS8o6DTgcKmr61koQf",
+   "label": null,
+   "accountHex": "4feb77d2894de38aa9faabc745e47b78f73ddad0f6fc7e0495d3e17eb213acd7",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9bf8a617d3da656591d9663876c50d5304feb77d2894de38aa9faabc745e47b78f73ddad0f6fc7e0495d3e17eb213acd7",
+   "subscanDot": 1591268.447,
+   "chain": {
+    "free": "104764474818957",
+    "reserved": "15807920000000000",
+    "frozen": "0"
+   },
+   "chainDot": 1591268.4474818956,
+   "deltaDot": 0.00048189563676714897
+  },
+  {
+   "rank": 187,
+   "address": "12xHzb3NT4e8MAWwJUGfhTD7R41Abyfa3NdYDGqqL3V64PLG",
+   "label": null,
+   "accountHex": "5667ef0ebcda5f2b8a71ed50d4afe7f1af07ed87d19aac2f0029fed9ccf58cb4",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9a89017397969e395e202d86989a2bfab5667ef0ebcda5f2b8a71ed50d4afe7f1af07ed87d19aac2f0029fed9ccf58cb4",
+   "subscanDot": 1571403.89,
+   "chain": {
+    "free": "15714038903811758",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1571403.8903811758,
+   "deltaDot": 0.0003811758942902088
+  },
+  {
+   "rank": 188,
+   "address": "16DuQNYsgfsAZcg1BARVEbuvKazmZJoDo3UWDWQ2Wmdmvw4S",
+   "label": null,
+   "accountHex": "e704842585794c77556c9219214140852c748c5f48a23601b2278198fd8146bc",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9b91160314bc6de3047137cb1d22bd923e704842585794c77556c9219214140852c748c5f48a23601b2278198fd8146bc",
+   "subscanDot": 1570062.423,
+   "chain": {
+    "free": "245486336525447",
+    "reserved": "15455137902594136",
+    "frozen": "15000000000000000"
+   },
+   "chainDot": 1570062.4239119585,
+   "deltaDot": 0.0009119585156440735
+  },
+  {
+   "rank": 189,
+   "address": "16azb9zHJYnb4WqM8zJiMT2xNRsnBE5aLJj4Cd4kjT4cruXB",
+   "label": null,
+   "accountHex": "f71a2086b0600784ef2d03f797e4c11d8acf11fdeaac2a4830ec939796037d16",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9912e39973b1df9383764918b4f02f3fbf71a2086b0600784ef2d03f797e4c11d8acf11fdeaac2a4830ec939796037d16",
+   "subscanDot": 1522194.174,
+   "chain": {
+    "free": "15221941743898978",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1522194.1743898978,
+   "deltaDot": 0.00038989773020148277
+  },
+  {
+   "rank": 190,
+   "address": "155Krq7agA2N6jnGCwavJ7UcyEL9zJnAk8yaPurPfZtFKjEZ",
+   "label": null,
+   "accountHex": "b43d66a2b57b14f16e36701ddcd8e1b81b89d0bef0e825e22239affe3ad93f45",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da99d896be666f68d996b87ca60a28f1018b43d66a2b57b14f16e36701ddcd8e1b81b89d0bef0e825e22239affe3ad93f45",
+   "subscanDot": 1521770.483,
+   "chain": {
+    "free": "15217704830334087",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1521770.4830334089,
+   "deltaDot": 0.00003340886905789375
+  },
+  {
+   "rank": 191,
+   "address": "15Y4KTMsSbeUP45kMbfBY9VAZHnKsghsZFsFpr1YckuqZyCB",
+   "label": null,
+   "accountHex": "c8a0b61a505c283374f4950cb4abffd05fa7e91d8fec22e0fb4da72d15f2f24f",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da96b848f450824cda22d4ece5cfd58ab85c8a0b61a505c283374f4950cb4abffd05fa7e91d8fec22e0fb4da72d15f2f24f",
+   "subscanDot": 1466904.24,
+   "chain": {
+    "free": "14669042408533775",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1466904.2408533776,
+   "deltaDot": 0.0008533776272088289
+  },
+  {
+   "rank": 192,
+   "address": "15yJvvMP8LRsEyAWyCXKMYUKQkVeM3218Nue2zhNjCGtqoba",
+   "label": null,
+   "accountHex": "dbe30875c6cfff0e7f361b8606d0a97bd65c301f760b72b1375f2030887384e9",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da94a2bcebe124562a43d6436345b983472dbe30875c6cfff0e7f361b8606d0a97bd65c301f760b72b1375f2030887384e9",
+   "subscanDot": 1462733.011,
+   "chain": {
+    "free": "14627330112462907",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1462733.0112462908,
+   "deltaDot": 0.0002462908159941435
+  },
+  {
+   "rank": 193,
+   "address": "12or3wdfmn3tKnCd8rZMpA4r3a5TVTXRZzMPsouHNquuRxXN",
+   "label": null,
+   "accountHex": "4ff6a439bfd5fc80cfb767cb0160ace52a2ec6335a54937dafb6ea6ef0bce091",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da924648efee32fae4f9f88ce71bb78a2d34ff6a439bfd5fc80cfb767cb0160ace52a2ec6335a54937dafb6ea6ef0bce091",
+   "subscanDot": 1459611.52,
+   "chain": {
+    "free": "14596115201417790",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1459611.520141779,
+   "deltaDot": 0.00014177896082401276
+  },
+  {
+   "rank": 194,
+   "address": "1kyH6C7sivf9Q6r1ahZqKDywH1jkSY7uvCkhB1zwLVYgtsg",
+   "label": null,
+   "accountHex": "2188ffbfdfc7b9846427e1e2d69fbc4a5274dae7cdb5edaec6f064bec7e382e9",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da93537f2ca069fc3bbfbccedac59e0fc892188ffbfdfc7b9846427e1e2d69fbc4a5274dae7cdb5edaec6f064bec7e382e9",
+   "subscanDot": 1450001.759,
+   "chain": {
+    "free": "7590842180",
+    "reserved": "14500010000000000",
+    "frozen": "0"
+   },
+   "chainDot": 1450001.759084218,
+   "deltaDot": 0.00008421787060797215
+  },
+  {
+   "rank": 195,
+   "address": "14mtBrBsDoTeT17S9SQYyMqiU7MqLdrvT5UEA3tCwGUf19pr",
+   "label": null,
+   "accountHex": "a6efcf1f5b85bb2ceb541602479a94462d56fcad093e8492dc862e66943e2896",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da90172ffdde9d6979b9496a84b92836efda6efcf1f5b85bb2ceb541602479a94462d56fcad093e8492dc862e66943e2896",
+   "subscanDot": 1443099.679,
+   "chain": {
+    "free": "43560174876347",
+    "reserved": "14387436619541494",
+    "frozen": "0"
+   },
+   "chainDot": 1443099.679441784,
+   "deltaDot": 0.0004417840391397476
+  },
+  {
+   "rank": 196,
+   "address": "12YqTiDANgi7AHQBNdWbwCLiYgVihsB9rR9pcqYNFhR3GowA",
+   "label": null,
+   "accountHex": "4483f941d460eec764c209e80ab86bf37d8d56c06d481bfd69530852bc0e0511",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da952f5f3413e383bde48e8613971eed80b4483f941d460eec764c209e80ab86bf37d8d56c06d481bfd69530852bc0e0511",
+   "subscanDot": 1380976.442,
+   "chain": {
+    "free": "13809764429061400",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1380976.44290614,
+   "deltaDot": 0.0009061398450285196
+  },
+  {
+   "rank": 197,
+   "address": "13AE11jLvxcxsjqaSoWFXCTGUfbjXb1gmZTY8x3TXJzWutmf",
+   "label": "Bitfinex.com (user_wallet)",
+   "accountHex": "5f81702c5a0b49065f747ba7f437b658cdf9fed7962f3b00543c7bc7f8b22eae",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9e48c5b4cdae83e1f97ad95e1e171ea585f81702c5a0b49065f747ba7f437b658cdf9fed7962f3b00543c7bc7f8b22eae",
+   "subscanDot": 1380018.883,
+   "chain": {
+    "free": "5393528145037195",
+    "reserved": "8406660693844526",
+    "frozen": "0"
+   },
+   "chainDot": 1380018.883888172,
+   "deltaDot": 0.0008881720714271069
+  },
+  {
+   "rank": 198,
+   "address": "13SisGeRWGofqSdSXSuzrqmiiVQRYpdZGrJJ3FRJxuzGe8EW",
+   "label": null,
+   "accountHex": "6c1689b789c9b118920c9eadcbcc817a9ed1fc01411065811c479cb06dc2fb14",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da92948bf3fe4f24bb571fa105895d340a56c1689b789c9b118920c9eadcbcc817a9ed1fc01411065811c479cb06dc2fb14",
+   "subscanDot": 1361869.233,
+   "chain": {
+    "free": "2080911851529",
+    "reserved": "13616611427456028",
+    "frozen": "0"
+   },
+   "chainDot": 1361869.2339307556,
+   "deltaDot": 0.0009307556319981813
+  },
+  {
+   "rank": 199,
+   "address": "135nxuMsA8riU5vcLt7fG3xnEGaJg2Kds93seRqEXmH4Be46",
+   "label": null,
+   "accountHex": "5c202d35e1f3134cfdba01c2d75b926c756d80716316697d5ead451085dbc91c",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9f4f567c6f93c3cb01936e5a03a39b8df5c202d35e1f3134cfdba01c2d75b926c756d80716316697d5ead451085dbc91c",
+   "subscanDot": 1295461.062,
+   "chain": {
+    "free": "1465830992816155",
+    "reserved": "11488779636453834",
+    "frozen": "0"
+   },
+   "chainDot": 1295461.0629269988,
+   "deltaDot": 0.0009269989095628262
+  },
+  {
+   "rank": 200,
+   "address": "1UBxPJ8PudpXjBRcip1gu8ScAcJC5KbMCPhpRCWLbctzg8q",
+   "label": null,
+   "accountHex": "14bc80df7d28095ea03663cc017f50ad2e3e345275048317c3a452dc96685864",
+   "key": "0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9ad462259796e024a279448be3f01dbeb14bc80df7d28095ea03663cc017f50ad2e3e345275048317c3a452dc96685864",
+   "subscanDot": 1292685.748,
+   "chain": {
+    "free": "12926857487387155",
+    "reserved": "0",
+    "frozen": "0"
+   },
+   "chainDot": 1292685.7487387157,
+   "deltaDot": 0.0007387157529592514
+  }
+ ]
+}

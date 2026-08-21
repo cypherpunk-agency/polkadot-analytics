@@ -518,9 +518,33 @@ export function createApp({
       startWorker()
 
       if (pollMs > 0 && !poller) {
+        // The tick re-warms as well as starting the worker, and the re-warm is the half that is
+        // easy to leave out. `warmStore` at boot alone would mean an instance warms the months
+        // that exist the moment it starts and never again — but the list grows by three
+        // identities a month, so a long-lived instance silently reverts to reader-triggered
+        // fetching for every month after its own boot, which is the behaviour decision 0014
+        // exists to remove. It also gives a boot-time upstream outage a second chance instead of
+        // costing the instance its whole warm-up.
+        //
+        // Cheap enough to do every minute BECAUSE of the refusal `warmStore` already enforces:
+        // a `done` identity is skipped, not re-enqueued (enqueue is find-or-create over LIVE
+        // states, and `done` is not one — it would mint a second job with a null cursor and
+        // refetch from segment one). So the steady state is a list walk and nothing else.
+        let rewarming = false
         poller = setInterval(() => {
           try {
             startWorker()
+            // Guarded because a slow warm must not overlap itself: `warmStore` reads the whole
+            // identity list, and two concurrent passes would each see the other's not-yet-created
+            // jobs as absent.
+            if (!rewarming) {
+              rewarming = true
+              warmStore({ store: ctx.store, queue: ctx.queue, ...options })
+                .catch((problem) => console.error('[warm] re-warm failed:', problem?.message ?? problem))
+                .finally(() => {
+                  rewarming = false
+                })
+            }
           } catch (problem) {
             // A poll that throws must not become an unhandled rejection that kills the process.
             console.error('[warm] poll failed:', problem?.message ?? problem)

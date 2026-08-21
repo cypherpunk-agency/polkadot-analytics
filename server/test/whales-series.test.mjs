@@ -102,7 +102,7 @@ const fakeDay = (date, over = {}) => ({
   network: 'polkadot',
   token: 'DOT',
   decimals: 10,
-  accounts: 990,
+  accounts: whaleCohort().accounts.length,
   relay: { block: 1, at: `${date}T23:59:54.000Z` },
   assetHub: { block: 2, at: `${date}T23:59:48.000Z` },
   aggregate: { sumPlanck: '30', relayPlanck: '10', ahPlanck: '20', nonzero: 2, top10Planck: '30', top: 10 },
@@ -235,7 +235,9 @@ test('a fully stored series is complete and cacheable', async (t) => {
   assert.equal(body.data.coverage.incomplete, 0)
   assert.equal(body.data.stream, null)
   // The seed's provenance travels with the numbers, because the page is required to state it.
-  assert.equal(body.data.seed.block, 19727122)
+  // Asserted against the cohort file rather than a literal: a re-seed is a new pinned block, and
+  // a hardcoded height here failed the first time one happened.
+  assert.equal(body.data.seed.block, whaleCohort().seedBlock)
   assert.match(body.data.notes.join(' '), /survivorship|invisible here by construction/)
 })
 

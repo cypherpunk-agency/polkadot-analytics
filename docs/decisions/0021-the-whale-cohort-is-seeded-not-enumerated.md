@@ -34,14 +34,25 @@ account, only the rich ones, and chasing 4.14 M rows to find 1,000 is the expens
   cross-check (all 200 of the first capture agreed to a median of 0.000 DOT), and the committed
   dataset re-ranks by what the chain said, not by Subscan's ordering.
 
-The result is `src/data/dot-whales.json`: cohort `2026-08-21`, 990 accounts (seeded from the
-top-1000 list; ten rows fell across page boundaries as balances reshuffled between fetches, and
-the cohort deliberately stays at 990 rather than mixing two block heights), read at Asset Hub
-block #19,727,122 — **1,130,529,331 DOT free+reserved, 66.54 % of `Balances::TotalIssuance`**,
-floor 102,433 DOT. 53 accounts carry Subscan's labels (exchanges, treasury, sovereigns, staking
-proxies) plus one this repo knew and Subscan did not (the Kusama Asset Hub global-consensus
-sovereign); 8 are system accounts by account-id prefix and must be labeled on any page, never
-ranked as people.
+The result is `src/data/dot-whales.json`: cohort `2026-08-21-full`, **1,000 accounts read at
+Asset Hub block #19,730,050 — 1,412,928,784 DOT free+reserved, 83.16 % of
+`Balances::TotalIssuance`**, floor 102,433 DOT. 54 accounts carry Subscan's labels (exchanges,
+treasury, sovereigns, staking proxies) plus one this repo knew and Subscan did not (the Kusama
+Asset Hub global-consensus sovereign); 9 are system accounts by account-id prefix and must be
+labeled on any page, never ranked as people.
+
+> **Corrected the same day, and the wrong version taught the real lesson.** The first cohort
+> (`2026-08-21`, 990 accounts, 66.54 % of issuance) silently lost **seed ranks 1–10 — the ten
+> largest accounts, including the Treasury at 24.31 M DOT** — because Subscan renders the top ten
+> with medal-styled rows that lack the rank-badge markup the capture parser keyed on, and the
+> parser skipped rows whose rank it could not read. This decision originally explained the ten
+> missing rows as "page-boundary reshuffling", an inference that was never checked and was wrong;
+> the miss was caught by the page-build agent comparing the file's `seedRank` field against its
+> chain-derived `rank` (11–1000, no gaps) and then reading the Treasury live at the pinned block.
+> The capture now derives rank from row position and cross-checks the badge where present, and
+> the superseded cohort's partially-filled series stays in the store unread (decision 0006 never
+> deletes). The lesson is the probe-versus-inference rule this repo already states: the
+> reshuffling story was plausible, unverified, and off by the ten most important rows.
 
 **The cohort is fixed, dated, and versioned in git.** Tommi's scope decisions, same day: current
 cohort only — no historical cohorts, no union of dated snapshots (dropped from the earlier

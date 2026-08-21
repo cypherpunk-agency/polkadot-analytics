@@ -230,7 +230,7 @@ export const PAGES = [
     nav: 'DOT whales',
     title: 'DOT whales, 2022 → today',
     blurb:
-      'What the 990 largest DOT accounts hold, every UTC day since January 2022 — traced backwards from a cohort fixed on 2026-08-21, so it answers what TODAY’s whales held in the past rather than who was large at the time. Read from the chains themselves at each day’s last block, across both legs: `System::Account` on the Polkadot relay chain and on Asset Hub. The 2025-11-04 Asset Hub Migration is drawn rather than described.',
+      'What the 1,000 largest DOT accounts hold, every UTC day since January 2022 — traced backwards from a cohort fixed on 2026-08-21, so it answers what TODAY’s whales held in the past rather than who was large at the time. Read from the chains themselves at each day’s last block, across both legs: `System::Account` on the Polkadot relay chain and on Asset Hub. The 2025-11-04 Asset Hub Migration is drawn rather than described.',
     // The accounts are DISCOVERED from Subscan’s public holder list, once, on a stated date
     // (decision 0021) — attribution that the page repeats from the payload’s own `seed.source`.
     // Every number published is read from the chains, which is what this line names first.

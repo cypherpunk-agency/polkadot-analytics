@@ -1,4 +1,4 @@
-// The DOT whale cohort's daily balance series: what the 990 largest DOT accounts held at the
+// The DOT whale cohort's daily balance series: what the 1,000 largest DOT accounts held at the
 // close of every UTC day since January 2022, on the relay chain and on Asset Hub.
 //
 // ── what this page is, and the caveat that defines it ────────────────────────────────────────
@@ -8,12 +8,12 @@
 // published. The consequence is survivorship and it is not a detail: this series answers "what
 // did TODAY'S whales hold on each past day", so an account that was large in 2023 and exited
 // before the seed date is invisible here by construction. The second chart is that caveat made
-// visible — in 2022-01 only 271 of the 990 existed anywhere at all.
+// visible — in 2022-01 only ~270 of the 1,000 existed anywhere at all.
 //
 // ── one request, and the rest arrives over a stream ──────────────────────────────────────────
 // `asset-hub/whales-series` answers every settled month in ONE response (decision 0020), as
 // per-day AGGREGATES — the day's sum, its two legs, how many of the cohort held anything. The
-// per-account detail (990 rows × ~1,700 days) stays in the store. A page whose request count
+// per-account detail (1,000 rows × ~1,700 days) stays in the store. A page whose request count
 // grows with its history is a page that eventually 429s itself against the edge's rate limit, so
 // this file makes exactly one `/api` call in steady state and subscribes for what is missing.
 //
@@ -38,6 +38,27 @@
 // survivorship-contaminated: measuring 2026's top ten in 2024 is not the same measurement as
 // measuring 2024's, and the difference between "real deconcentration" and "an artefact of the
 // cohort" has to be settled before either number goes on a page. Research queue O87.
+//
+// ── the roster, and the hole that USED to be at the top of it ────────────────────────────────
+// The cohort's accounts are listed at the foot of the page, each linking through to
+// `/account/`. Two things about that list are not guessable from it and are stated on it:
+//
+//   • THE FIRST COHORT WAS NOT THE LARGEST ACCOUNTS, AND THE MECHANISM THAT CAUGHT IT STAYS.
+//     Cohort `2026-08-21` silently lost seed ranks 1–10 — Subscan renders the top ten with medal
+//     markup that lacks the rank badge the capture parser keyed on — and was superseded the same
+//     day by `2026-08-21-full` (rank derived from row position, cross-checked against the badge).
+//     The miss was caught here, by comparing `seedRank` against `rank` and then verifying against
+//     the chain: at the old seed's block the Treasury held 24,310,104 DOT, 2.05× that cohort's
+//     rank 1, and was absent. The notice below the roster header derives "how many top seed ranks
+//     are missing" from the FILE (lowest `seedRank` minus one), so it said "10" then, says
+//     nothing now, and will say the right thing about any future re-seed without being edited.
+//
+//   • A LABEL AND A SYSTEM FLAG ARE DIFFERENT KINDS OF CLAIM. `system` is decoded from the
+//     account id's own bytes — `modl`, `sibl`, a global-consensus sovereign — and cannot be wrong
+//     about what KIND of account it is. `label` is Subscan's, about WHO operates an address, and
+//     this site cannot check it. They are rendered as different things for that reason, and the
+//     eight system accounts are marked on every row so that a pallet or a sovereign can never be
+//     read off this page as a large individual holder (CLAUDE.md's `modl` rule).
 
 import '../../design/app.css'
 import { renderPage } from '../../design/page.js'
@@ -46,19 +67,31 @@ import { append, clear, el, notice, statRow, statTile, style } from '../../desig
 import { multiLine, seriesColor } from '../../design/charts.js'
 import { read } from '../../core/client.js'
 import { followStore } from '../../core/follow.js'
-import { compact, formatCount, percent } from '../../core/format.js'
+import { shortAddress } from '../../core/codec/ss58.js'
+import { compact, formatCount, percent, tokenAmount } from '../../core/format.js'
+// The cohort itself — the same file the server reads, bundled rather than fetched. It is an
+// INPUT committed to git, not an upstream (decision 0021), so it belongs in the build the way
+// `src/data/netflows.json` does on /netflows/. Rule 2 is satisfied without a request being made.
+import whales from '../../data/dot-whales.json'
 
 /**
  * The cohort id, which is also its seed date and half of the store identity.
  *
- * A constant rather than an import of `src/data/dot-whales.json`: that file is 290 kB of account
- * rows this page never draws, and shipping it to the browser to read one string would triple the
- * page weight. A constant that drifts from the file fails LOUDLY — the operation's schema declares
- * `oneOf` from the file itself, so an unknown cohort is a 400 with the valid ids in the message,
- * never a quiet answer about a different set of accounts. A re-seed is a NEW id here, beside this
- * one, never an edit to what it means.
+ * This was a bare constant, and its comment argued for staying one: the cohort file is 290 kB of
+ * account rows "this page never draws". It draws them now — the roster at the foot of the page is
+ * that file — so the argument is gone and the file is imported. What survives is the reason the id
+ * is still WRITTEN HERE rather than read out of `whales.cohort`: this constant is the page's own
+ * declaration of which set of accounts it is about, and a re-seed is a NEW id beside this one,
+ * never an edit to what this one means. Taking the id from the file would make a re-seed silently
+ * repoint every sentence on this page at a different set of accounts.
+ *
+ * Both directions of drift now fail LOUDLY instead. Against the SERVER: the operation's schema
+ * declares `oneOf` from the file, so an unknown cohort is a 400 listing the valid ids. Against the
+ * BUNDLED FILE: `assertCohortMatches` below compares this id, the seed block, the account count
+ * and the seed total against what the server answered, so a deployed server holding a different
+ * copy of the file than this bundle cannot quietly draw one cohort's chart above another's roster.
  */
-const COHORT = '2026-08-21'
+const COHORT = '2026-08-21-full'
 
 const DAY_MS = 86_400_000
 const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10)
@@ -92,6 +125,35 @@ const amountOf = (token) => (value) => (value === null ? '—' : `${compact(valu
 
 /* ═════════════════════════════════════════════════════════════════════════════════ load ═════ */
 
+/**
+ * The bundled cohort file and the server's copy of it must be the SAME reading.
+ *
+ * Both halves of this page now come from `src/data/dot-whales.json` — the charts by way of the
+ * server, which reads it to know whose balances to fetch, and the roster straight out of the
+ * bundle. Nothing else makes them agree. A deploy that ships a browser bundle built from one
+ * commit against a server running another is an ordinary thing to do by accident, and the result
+ * would be one cohort's four-year series sitting directly above a different cohort's account list,
+ * under one heading, with every figure internally consistent and no request failing. Four fields
+ * are compared because any one of them moving means the file moved.
+ */
+function assertCohortMatches(series) {
+  const seedTotal = whales.accounts.reduce((sum, account) => sum + BigInt(account.free) + BigInt(account.reserved), 0n)
+  const mismatch = [
+    ['cohort id', String(whales.cohort), String(COHORT)],
+    ['seed block', String(whales.blockNumber), String(series.seed?.block ?? '')],
+    ['account count', String(whales.accounts.length), String(series.accounts ?? '')],
+    ['seed total (planck)', seedTotal.toString(), String(series.seed?.cohortPlanck ?? '')],
+  ].find(([, mine, theirs]) => mine !== theirs)
+  if (!mismatch) return
+  const [field, mine, theirs] = mismatch
+  throw Object.assign(
+    new Error(
+      `The account list in this page's bundle and the one the server measured are not the same reading — their ${field} is \`${theirs}\` and this bundle's is \`${mine}\`. The charts and the roster below them would be about different sets of accounts.`,
+    ),
+    { kind: 'decode' },
+  )
+}
+
 async function load({ progress }) {
   progress({ stage: 'Reading the stored series', done: 0, total: 1 })
 
@@ -123,6 +185,7 @@ async function load({ progress }) {
       { kind: 'decode' },
     )
   }
+  assertCohortMatches(series)
 
   progress({ stage: 'Drawing', done: 1, total: 1 })
   return {
@@ -274,7 +337,12 @@ function followMissing(host, data) {
       const series = await read('asset-hub', 'whales-series', { cohort: COHORT })
       // The same identity gate as `load`. A poll that silently accepted another cohort's answer
       // would redraw this page with somebody else's accounts and nothing would look wrong.
-      if (series?.cohort !== COHORT || series?.token !== data.payload.token || series?.decimals !== data.payload.decimals) {
+      if (
+        series?.cohort !== COHORT ||
+        series?.token !== data.payload.token ||
+        series?.decimals !== data.payload.decimals ||
+        series?.seed?.block !== data.payload.seed?.block
+      ) {
         return { complete: false }
       }
       data.payload = series
@@ -352,6 +420,9 @@ function draw(host, data) {
         'This page is drawn from a store that fills on demand: this request is what started the fetch. Each month is read one UTC day at a time from two public RPCs, so a cold store fills over minutes rather than seconds. The page stays subscribed and draws each month the moment it lands — no reload needed.',
         payload.coverage?.note ?? '',
       ),
+      // The roster does not depend on the store at all — it is the seed reading, in the bundle —
+      // so a cold store still has something true to show while it fills.
+      cohortCard(payload),
       notes(series, payload),
     )
   }
@@ -374,6 +445,10 @@ function draw(host, data) {
     series.coverage.missing > 0 ? gapNotice(series, payload, followEnded) : null,
     survivorshipCard(series, payload),
     monthTable(series, payload),
+    // Last of the content sections, and directly above the data notes on purpose: the notes open
+    // with where the account list came from and who is attributed for it, so the roster's
+    // provenance is the next thing a reader meets after the roster.
+    cohortCard(payload),
     notes(series, payload),
   )
 }
@@ -619,6 +694,219 @@ function monthTable(series, payload) {
   )
 }
 
+/* ═════════════════════════════════════════════════════════════════════════════ the roster ═════ */
+
+/**
+ * What KIND of account a row is — and, just as important, on whose authority.
+ *
+ * Two different claims live in the cohort file and they must not render as one badge:
+ *
+ *   STRUCTURAL (`system`) is decoded from the account id's own bytes. `modl` is a pallet's own
+ *   account — a treasury, a bounty, a nomination pool, an XCM channel — and `sibl`/`para` and the
+ *   global-consensus form are sovereign accounts of other chains. This cannot be wrong about what
+ *   kind of account it is, and it is the reason the tone is `warning` rather than `muted`: the
+ *   pill is not hedging, it is saying "whatever else you conclude, THIS IS NOT A PERSON".
+ *
+ *   THIRD-PARTY (`label`) is Subscan's claim about who operates an address, and this site has no
+ *   way to check it. Custodial roles are picked out by Subscan's own `(hot_wallet)`/`(user_wallet)`
+ *   convention rather than by a hand-kept list of exchange names, so the marker fails by going
+ *   quiet on an unfamiliar venue rather than by guessing. Tone `muted`, which on this site means
+ *   exactly "we cannot tell", and the question mark is in the word.
+ *
+ * The pill's TEXT always carries the meaning. Three of the light-mode hues sit under 3:1 contrast,
+ * so nothing on this site is allowed to mean something by its colour alone.
+ */
+const CUSTODIAL_RE = /\((?:hot|cold|warm|user|deposit|withdraw)[\s_-]?wallet\)/i
+const PROXY_RE = /\b(?:proxy|staker)\b/i
+
+function kindOf(account) {
+  const label = account.label ?? ''
+  if (account.system === 'modl') {
+    return { text: 'pallet', tone: 'warning', title: 'A pallet’s own account, decoded from the account id (modl…). Nobody holds the key; the runtime does.' }
+  }
+  if (account.system === 'sibl' || account.system === 'para' || account.system === 'sovereign') {
+    return { text: 'sovereign', tone: 'warning', title: 'Another chain’s sovereign account here, decoded from the account id. It holds that chain’s users’ DOT, not one holder’s.' }
+  }
+  if (CUSTODIAL_RE.test(label)) {
+    return { text: 'custodial?', tone: 'muted', title: 'Subscan labels this a custody wallet, so the balance is many people’s. This site cannot verify the label.' }
+  }
+  if (PROXY_RE.test(label)) {
+    return { text: 'protocol?', tone: 'muted', title: 'Subscan labels this a protocol proxy, so the balance is many people’s. This site cannot verify the label.' }
+  }
+  return null
+}
+
+/** `/account/?address=…`, built the way `/account/`'s own hop links are, so the escaping matches. */
+function accountHref(address) {
+  const query = new URLSearchParams()
+  query.set('address', address)
+  return `/account/?${query}`
+}
+
+/**
+ * The roster is built ONCE per page load and re-attached on every redraw.
+ *
+ * `render` runs once per UPDATE, not once per page: this page stays subscribed and redraws as each
+ * missing month lands, which on a cold store is fifty-five times. The charts and the month table
+ * genuinely change on each of those; a thousand rows of a file that is pinned to a block do not. Building
+ * ~9,000 nodes per landing month would be the page's dominant cost for the entire fill, spent
+ * producing the identical DOM. `clear(host)` only detaches the node — appending it again moves it
+ * back — so the cache is a plain reference, keyed by the divisor in case it ever moved.
+ */
+let roster = null
+
+function cohortCard(payload) {
+  // ⚠️ THE DIVISOR, and where it comes from. Not a constant in this file and not a field of the
+  // cohort file: it is the `decimals` the SERVER declared for this series, which `load` has
+  // already tripwired to be an integer and to belong to a payload calling its token DOT. The
+  // roster's planck strings and the charts' planck strings are then divided by the same thing —
+  // which is what makes the roster's total and the seed tile above it comparable at all. KSM is 12
+  // and DOT is 10, and the wrong one is a factor of 100 that renders perfectly on a plausible
+  // axis; `/netflows/` shipped exactly that once.
+  const decimals = payload.decimals
+  if (roster?.decimals === decimals) return roster.node
+
+  const amount = (planck) => units(planck, decimals)
+  const cohortTotal = whales.accounts.reduce((sum, account) => sum + BigInt(account.free) + BigInt(account.reserved), 0n)
+  const cohortDot = amount(cohortTotal.toString())
+
+  const body = el('tbody')
+  for (const account of whales.accounts) {
+    const held = amount((BigInt(account.free) + BigInt(account.reserved)).toString())
+    const kind = kindOf(account)
+    append(
+      body,
+      el(
+        'tr',
+        null,
+        el('td.num', { text: formatCount(account.rank) }),
+        el(
+          'td.mono',
+          null,
+          // The full address is in the href — copyable as a link, and what `/account/` receives —
+          // while the cell shows the middle-truncated form. The tail is kept because it is what
+          // disambiguates two addresses that share a prefix, which on one network most do.
+          el('a', { href: accountHref(account.address), text: shortAddress(account.address, 8), title: account.address }),
+        ),
+        el('td', null, kind ? el('span.pill', { text: kind.text, data: { tone: kind.tone }, title: kind.title }) : null),
+        el('td', { text: account.label ?? '—', title: account.label ? 'Subscan’s label for this address. Not verified here.' : 'No label on the seed list' }),
+        el('td.num', { text: tokenAmount(amount(account.free)) }),
+        el('td.num', { text: tokenAmount(amount(account.reserved)) }),
+        el('td.num', { text: tokenAmount(held) }),
+        el('td.num', { text: percent(cohortDot > 0 ? (held / cohortDot) * 100 : 0, 3) }),
+      ),
+    )
+  }
+
+  const node = el(
+    // An id, so the roster can be linked to directly: /whales/#cohort.
+    'section.card',
+    { id: 'cohort' },
+    el(
+      'header',
+      null,
+      el('h2', { text: 'Every account in the cohort' }),
+      el('p.note', {
+        text:
+          `All ${formatCount(whales.accounts.length)} accounts, ranked by what the chain said they held when the cohort was fixed: ` +
+          `Asset Hub #${formatCount(whales.blockNumber)}, ${whales.readAt.slice(0, 10)}. Every row links through to that account's own ` +
+          `page. These are the balances the ranking was MADE from and they are a dated snapshot — nothing in this table has been ` +
+          `re-read since, and it is the charts above, not this list, that move.`,
+      }),
+    ),
+    seedShortfallNote(),
+    el('p.note', {
+      text:
+        `Eight of these accounts are not holders at all and are marked on their row: a "pallet" is the runtime's own account — a ` +
+        `treasury, a bounty, a nomination pool — and a "sovereign" is another chain holding its users' ${payload.token} here. Those two ` +
+        `are decoded from the account id itself and cannot be wrong. "custodial?" and "protocol?" are a different kind of claim ` +
+        `entirely: they come from the seed list's label, they mean the balance is many people's rather than one, and this site has no ` +
+        `way to check them. Where the list and its labels came from, and who is attributed for them, is in the data notes directly below.`,
+    }),
+    el('p.note', {
+      text:
+        `Following the money from here is a RECENT-WINDOW view, not this page's four years. The account screen answers from a window ` +
+        `of the last few days on each upstream it reads, so it will show what an address has been doing lately rather than the history ` +
+        `drawn above. Widening it is an open question in this project's research queue.`,
+    }),
+    el(
+      // Open by default. The rows are built either way — a closed `details` hides its content, it
+      // does not skip building it — so collapsing would cost the same and hide the thing that was
+      // asked for. What the disclosure buys is the ability to fold a thousand rows away again, and the
+      // 28rem scroller under it means the roster costs about a screen until someone wants more.
+      'details.data-table',
+      { open: true },
+      el('summary', { text: `All ${formatCount(whales.accounts.length)} accounts, largest first` }),
+      el(
+        // `.tablewrap` is the design system's own horizontal scroller and `.scroll-y` caps the
+        // height; `table.data th` is sticky, so the header stays put inside it. Note that
+        // `.scroll-y` turns on horizontal clipping too — that is fine HERE, because this element
+        // is deliberately a scroller in both axes, and it is why the overflow check for this
+        // section has to measure a ROW rather than the document.
+        'div.tablewrap.scroll-y',
+        null,
+        el(
+          'table.data',
+          null,
+          el(
+            'thead',
+            null,
+            el(
+              'tr',
+              null,
+              el('th.num', { text: 'Rank' }),
+              el('th', { text: 'Account' }),
+              el('th', { text: 'Kind' }),
+              el('th', { text: 'Label' }),
+              el('th.num', { text: `Free (${payload.token})` }),
+              el('th.num', { text: 'Reserved' }),
+              el('th.num', { text: 'Held' }),
+              el('th.num', { text: 'Of cohort' }),
+            ),
+          ),
+          body,
+        ),
+      ),
+    ),
+    el('p.note', {
+      text:
+        `${compact(cohortDot)} ${payload.token} across the ${formatCount(whales.accounts.length)} rows, which is ` +
+        `${percent((cohortDot / units(whales.totalIssuancePlanck, decimals)) * 100, 2)} of ${payload.token}'s total issuance at that ` +
+        `block. Held is free plus reserved; reserved is DOT the account cannot move — staked, bonded to a deposit, or locked by ` +
+        `governance — and on several of the largest rows it is nearly the whole balance.`,
+    }),
+  )
+
+  roster = { decimals, node }
+  return node
+}
+
+/**
+ * The hole at the top of the list, stated on the page rather than in a commit message.
+ *
+ * The count is DERIVED from the file — the lowest seed rank present, minus one — so it cannot go
+ * stale against a re-seed that loses a different number of rows, and it disappears by itself if a
+ * re-seed loses none. The Treasury figure beside it is the part that made this a fact rather than
+ * an inference about a field nothing documents: it is a live read, at the block the file pins, of
+ * an account that outranks the entire cohort and is absent from it.
+ */
+function seedShortfallNote() {
+  const lowestSeedRank = whales.accounts.reduce((low, account) => Math.min(low, account.seedRank ?? Infinity), Infinity)
+  if (!Number.isFinite(lowestSeedRank) || lowestSeedRank <= 1) return null
+  const lost = lowestSeedRank - 1
+  return notice(
+    'warning',
+    `This is not the ${formatCount(whales.accounts.length)} largest accounts on the chain — the top ${formatCount(lost)} are missing`,
+    `The cohort was seeded from a public holder list and ${formatCount(lost)} rows were lost while it was being read. They came off the ` +
+      `TOP: the seed ranks that survived run ${formatCount(lowestSeedRank)} to ${formatCount(lowestSeedRank + whales.accounts.length - 1)} ` +
+      `with no gaps in between, so every account the list ranked above rank ${formatCount(lowestSeedRank)} is absent. The cohort was ` +
+      `deliberately left as it is rather than topped up from a second block height, because mixing two readings would be a worse fault ` +
+      `than a stated one.`,
+    `Everything on this page is therefore an honest answer to "what did THESE ${formatCount(whales.accounts.length)} accounts do" ` +
+      `and is not an answer to "what did the biggest holders do".`,
+  )
+}
+
 /* ------------------------------------------------------------------------- the caveats ---- */
 
 function gapNotice(series, payload, followEnded) {
@@ -763,12 +1051,13 @@ function notes(series, payload) {
 renderPage({
   page: pageByKey('whales'),
   intro:
-    `The 990 largest DOT accounts on Polkadot Asset Hub as they stood on ${COHORT}, read backwards through every UTC day since ` +
-    `January 2022, on both chains they can hold DOT on. The list is fixed and dated: this is what TODAY’s whales held in the ` +
-    `past, not who was large at the time.`,
+    `The ${formatCount(whales.accounts.length)} largest DOT accounts on Polkadot Asset Hub as they stood on ` +
+    `${(whales.readAt ?? '').slice(0, 10)}, read backwards through every UTC day since January 2022, on both chains they can ` +
+    `hold DOT on. The list is fixed and dated: this is what TODAY’s whales held in the past, not who was large at the time. ` +
+    `Every account is listed at the foot of the page, each linking through to its own activity.`,
   // The shape the page actually lands, so the layout is reserved and nothing jumps when the data
-  // arrives: the lead chart, the tiles under it, the survivorship chart, then the month table.
-  skeleton: ['chart', 'stats', 'chart', 'table'],
+  // arrives: the lead chart, the tiles under it, the survivorship chart, then the two tables.
+  skeleton: ['chart', 'stats', 'chart', 'table', 'table'],
   loadingLabel: 'Reading the stored series',
   load,
   render,

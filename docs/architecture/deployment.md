@@ -111,8 +111,9 @@ That is worth stating plainly, because the list is so short and because it used 
 > volume is there.** `/api/health` reports `store.available`; CI now asserts it in both directions.
 >
 > The size is settled on a measured fill rate rather than a guess: **1 GB**, against a measured
-> terminal size of **≈ 60 MB** for full backfills of all three store-backed handlers, growing
-> **≈ 19–20 MB/year**. A full 19-month Hydration backfill is 9 MB; the 2022 → 2026 Polkadot
+> terminal size of **≈ 100 MB** — full backfills of all three store-backed handlers (≈ 60 MB)
+> plus the superseded whale cohort's stranded partial fill, with each future whale re-seed adding
+> ~43 MB beside the old series — growing **≈ 19–20 MB/year**. A full 19-month Hydration backfill is 9 MB; the 2022 → 2026 Polkadot
 > netflows series is 2.33 MB and Kusama's 2021 → 2026 one is 2.73 MB; the DOT whale cohort's
 > 2022 → 2026 series is **≈ 43 MB** (8.5–35.6 kB/day, ~26× netflows — added 2026-08-21, and infra
 > was told, because the earlier ~16 MB terminal figure was sized over two handlers). The

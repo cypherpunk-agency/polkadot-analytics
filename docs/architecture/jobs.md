@@ -462,9 +462,13 @@ holdings where a netflows day is ~50. The complete `whales-series` aggregate res
 ~0.36 MB because it ships per-day headers only; the per-account detail never leaves the store in
 bulk.
 
-**The store's terminal size is therefore ≈ 60 MB for full backfills of all three handlers**
-(9 + 2.3 + 2.7 + 43.3), growing **≈ 19–20 MB/year**, against a 1 GB volume. Infra was told on
-2026-08-21 when the third handler moved these figures.
+**The store's terminal size is therefore ≈ 100 MB** against a 1 GB volume: ≈ 60 MB for full
+backfills of all three handlers (9 + 2.3 + 2.7 + 43.3) **plus the superseded whale cohort's
+partial fill** — cohort `2026-08-21` was replaced by `2026-08-21-full` the same day it shipped
+(decision 0021's correction note), its ~30–40 MB of stored months stay per decision 0006, and
+every future re-seed adds a full ~43 MB series beside the old one. Growth is **≈ 19–20 MB/year**
+(only the current cohort fills forward). Infra was told on 2026-08-21 when the third handler
+moved these figures, including the re-seed arithmetic.
 
 ⚠️ **A per-day request count is easy to under-measure by forgetting what runs per BATCH.**
 `netflows-daily` was recorded at "~2.2 requests per day" on 2026-08-20; counting real `fetch` calls

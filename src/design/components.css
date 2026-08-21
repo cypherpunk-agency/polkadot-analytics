@@ -458,8 +458,94 @@
   color: var(--ink-muted);
 }
 
+/* ── rank rows ────────────────────────────────────────────────────────────────────────────
+ * `.row` plus an ordinal in front and a second number behind: rank, name, bar, dollars,
+ * count. Two of those five columns are content-sized and neither can shrink, so the row has a
+ * hard floor — see the narrow-viewport block below, which is where that floor is measured. */
+
 .rank-row {
   grid-template-columns: 2.5rem minmax(7rem, 1fr) 2fr auto auto;
+}
+
+.rank-row .rank {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  text-align: end;
+}
+
+/* ── narrow: the bar gets its own line ────────────────────────────────────────────────────
+ *
+ * The same failure as `.seg-row` below, in a row with one more content-sized column — and it
+ * surfaces two completely different ways depending on what the list is drawn inside, which is
+ * why it survived this long.
+ *
+ * Measured 2026-08-21, before this block existed. On /netflows/ the five columns bottom out at
+ * a row 382px wide (`2.5rem` rank + `7rem` name + `16.36M DOT` + `ended 101.5k` + four gaps)
+ * and stay there however narrow the viewport gets: the `2fr` track is the only column with no
+ * floor of its own — the first is fixed, the name stops at `7rem`, the two `auto`s stop at
+ * their text — so the track absorbs the whole squeeze, and once it is at zero the row cannot
+ * give back another pixel. /netflows/ appends its list straight into the card, so the row
+ * simply overran the page: `documentElement.scrollWidth` read 423 at a 390px viewport and 422
+ * at 360px, and the whole document scrolled sideways. /hydration/ and /hyperfx/ put the same
+ * list inside `.scroll-y` — whose `overflow-y: auto` forces the computed `overflow-x` to
+ * `auto` too — so on those two the overflow is CLIPPED, the page measures a clean 390, and the
+ * only evidence left is a track that resolves to 9px at 390 and 0px at 360, plus an address so
+ * squeezed that its own ellipsis was being ellipsised. Identical broken row; on two of the
+ * three pages the page width says nothing at all about it.
+ *
+ * So the row restacks: name and both numbers on the first two lines, bar full-width beneath.
+ * The bar spans every column because its length IS the comparison, and a bar you have to
+ * scroll to reach cannot be compared with the one above it.
+ *
+ * The rank keeps its own 2.5rem gutter, spanning both text rows rather than sitting inline in
+ * the name. An `auto` column here would be as wide as that row's own ordinal, so `1` and `250`
+ * would indent their names differently and the ranking would stop reading as a column.
+ *
+ * The breakpoint is `.seg-row`'s rather than this measurement's. Swept before the fix,
+ * /netflows/ still overflowed at 412px and fitted by 480px — so 36rem restacks earlier than
+ * the overflow strictly demands. It is the right place anyway: at 480px that fitting row's
+ * track is 15px, which is a bar in name only. And these two are the same form with a
+ * different number of columns, so a page drawing both — nothing stops one — would look broken
+ * if they restacked at two different widths. */
+@media (max-width: 36rem) {
+  .rank-row {
+    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+    grid-template-areas:
+      'rank name  usd'
+      'rank name  cnt'
+      'track track track';
+    row-gap: 2px;
+  }
+
+  .rank-row .rank {
+    grid-area: rank;
+  }
+
+  .rank-row .name {
+    grid-area: name;
+  }
+
+  .rank-row .track {
+    grid-area: track;
+  }
+
+  /* The two numbers close up against each other rather than each centring in its own row.
+     `.name` spans both rows, so when it wraps — /netflows/ lets it, so that a `left 2025-12-20`
+     pill cannot vanish — the rows grow with it and centred numbers drift apart: measured 36px
+     between the dollars and the count at 390px, which reads as two unrelated figures rather
+     than one amount and its denominator. */
+  .rank-row .amt {
+    grid-area: usd;
+    align-self: end;
+  }
+
+  /* The second `.amt` is the count. Both places that build a rank row emit exactly two of
+     them, dollars then count, so the adjacent sibling names the right one without the markup
+     needing a class it does not already have. */
+  .rank-row .amt + .amt {
+    grid-area: cnt;
+    align-self: start;
+  }
 }
 
 /* ── segmented rank row ───────────────────────────────────────────────────────────────────
@@ -607,12 +693,6 @@
 
 .meta ul + p {
   margin-block-start: var(--s3);
-}
-
-.rank-row .rank {
-  font-family: var(--font-mono);
-  color: var(--ink-muted);
-  text-align: end;
 }
 
 /* ── tables ───────────────────────────────────────────────────────────────────────────────

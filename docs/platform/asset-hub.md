@@ -623,6 +623,30 @@ the window either**: pre-2023 `AccountData` is `{free, reserved, misc_frozen, fe
 read out of a 2022 block are `misc_frozen` and `fee_frozen` under the wrong names and must not be
 reported. This series does not report them.
 
+### The Migration emptied the relay's account map — a top-holders read there returns small change
+
+Measured 2026-08-21. The relay's **entire** `System::Account` map is **1,493 accounts holding
+220,772.38 DOT in total** — read in full (2 `state_getKeysPaged` pages + 5 `state_queryStorageAt`
+calls of ≤300 keys) against `rpc.polkadot.io`, pinned to the finalized head. The largest entry is
+Hydration's `para 2034` sovereign at 21,417.81 DOT (20,957.81 free + 460 reserved); only two
+accounts hold ≥ 10,000 DOT and fifty hold ≥ 1,000; 45 of the 1,493 are `para` sovereigns, 2 are
+`sibl`, 3 are `modl` pallet accounts, and the reserved-heavy remainder is deposit dust. Asset Hub's
+map, estimated the same day by hashed-key density (a 1,000-key `state_getKeysPaged` page covers a
+measurable fraction of the uniform blake2_128 space — here 0.0242 %, so total ≈ 1000/0.000242,
+±~3 % at that sample size), holds **~4.14 million accounts**.
+
+So "who holds DOT" is an Asset-Hub-only question today: a ranking read from the relay returns
+sovereign remnants and deposit dust and renders perfectly. At pre-Migration blocks the relay map is
+fully populated and the archive serves it — the netflows backfill reads it daily across 2022–2026 —
+so any per-account series spanning 2025-11-04 must read both chains on every day and sum, exactly
+as the sovereign netflows series already does.
+
+Cost of ranking Asset Hub's full map, extrapolated from per-request timings measured the same day
+(key pages 195–345 ms; a 300-key `state_queryStorageAt` at a pinned block 444 ms, all 300 values
+non-null): ~4,141 key pages + ~13,803 storage reads ≈ **2 hours sequential** against the public
+endpoint — a one-off, resumable snapshot job, not a standing cost. A pinned-block read stays
+answerable for the whole sweep because the endpoint is a full archive.
+
 ### Block rates are not constant, and Asset Hub's has sped up more than fivefold
 
 Never extrapolate a height from a date here. Measured across the range:

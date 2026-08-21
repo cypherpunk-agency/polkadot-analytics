@@ -497,6 +497,11 @@ npm run check     # syntax, secrets, source registry, no external URLs, docs, no
   nobody reads is indistinguishable from no alarm. The discriminator is the stored payload's own
   `coverage`: only a day holding INDEXED content that now sits below the floor has actually been
   lost. See `docs/decisions/0019-the-store-canaries-its-own-derivability.md`.
+- **The Asset Hub Migration left the relay's account map effectively empty: 1,493 accounts holding
+  220,772 DOT in total, the largest a parachain sovereign** (full sweep, 2026-08-21; Asset Hub holds
+  ~4.14 M accounts the same day). A "top DOT holders" ranking read from the relay returns sovereign
+  remnants and deposit dust and renders perfectly. Today's holders live on Asset Hub; only
+  pre-Migration history needs the relay leg. See `docs/platform/asset-hub.md`.
 - **A page's request count must not scale with history length, and an endpoint a page polls for
   progress must not be mode B.** Both halves failed silently once (2026-08-21): `/netflows/` grew
   to ~56 per-month requests per load and the edge's 30-req/min limit cut it off mid-fan-out — a

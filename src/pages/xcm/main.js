@@ -1,10 +1,15 @@
 // XCM message flow across Polkadot.
 //
+// The subject is the relation between the chains — who talks to whom — so the corridor graph
+// opens the page and the matrix, the same relation drawn exactly, sits directly under it.
+// Everything else is a property of that traffic and comes after. See
+// docs/decisions/0011-a-page-has-one-subject.md.
+//
 // Two kinds of number share this page and they are not equally trustworthy, so they are not
 // drawn the same way.
 //
-// **Message counts are exact.** Dotlake either saw a message or it did not. They lead, and the
-// matrix — the first chart, and the biggest — is drawn in them.
+// **Message counts are exact.** Dotlake either saw a message or it did not. The matrix is
+// drawn in them and in nothing else: a pair is either observed or it is not.
 //
 // **Dollars are our arithmetic over somebody else's rows, and rows get thrown away.** The
 // aggregate `total_value_usd` is unusable: it is 0.0 for anything Dotlake could not price AND
@@ -12,9 +17,12 @@
 // more than a whole honest year. So the value on this page is computed row by row by
 // `dotlake.xcm-value`, under a stated exclusion rule, and every row it removed is named
 // underneath the figure it was removed from. See "What moved, in dollars".
+//
+// The graph is the one picture here that can be drawn in either measure, and the control that
+// chooses which is on its own card — because it changes nothing else on the page.
 
 import '../../design/app.css'
-import { choiceControl, renderPage } from '../../design/page.js'
+import { choiceControl, localChoiceControl, renderPage } from '../../design/page.js'
 import { read } from '../../core/client.js'
 import { pageByKey } from '../../sources/pages.js'
 import { append, clear, el, notice, statRow, statTile } from '../../design/dom.js'
@@ -30,6 +38,11 @@ const exactUsd = (value) => (Math.abs(Number(value)) >= 1 ? money2(value) : mone
 const params = new URLSearchParams(location.search)
 const RELAY = params.get('relay') === 'kusama' ? 'kusama' : 'polkadot'
 const DAYS = Math.min(90, Math.max(7, Number(params.get('days')) || 14))
+/**
+ * The edge weighting the page LOADS with. Deliberately not a load parameter — `load()` never
+ * reads it, and the control that changes it lives on the graph card and redraws in place. See
+ * `graphCard`.
+ */
 const EDGES = params.get('edges') === 'messages' ? 'messages' : 'value'
 
 /** How many chains the two pictures draw. The tables always carry every one of them. */
@@ -110,12 +123,17 @@ function render(host, { summary, routes, daily, value }) {
     )
   }
 
+  // The graph first, then the matrix. The page is named for the traffic BETWEEN chains, and
+  // for a while it opened on a bar chart of daily totals instead — true, and a different
+  // subject. The two pictures of the relation stay adjacent: the matrix is the exact reading
+  // of what the graph draws, and separating them would leave the graph's caveats a screen
+  // away from the numbers that settle them.
   const days = buildDaily(daily)
   append(
     host,
-    dailyCard(days),
-    matrixCard(value),
     graphCard(value),
+    matrixCard(value),
+    dailyCard(days),
     valueCard(value),
     sovereignCard(value),
     routesCard(routes),
@@ -330,6 +348,19 @@ function matrixCard(value) {
 
 /* ------------------------------------------------------------------------ corridor graph ---- */
 
+/**
+ * The graph, and the one control that changes it.
+ *
+ * The weighting control used to sit in the page's global control row, next to Network and
+ * Window, which said it affected the page. It affects this card and nothing else — so it is on
+ * this card, and it redraws from data already in memory.
+ *
+ * That is not only tidiness. As a `choiceControl` it navigated, and `edges` is not a load
+ * parameter: flipping "by value / by messages" re-ran the whole load, including the row-level
+ * read that pages Dotlake up to twenty times and is the slow half by design. Changing how one
+ * picture was drawn cost about forty seconds and a full re-read of an upstream we do not own.
+ * `localChoiceControl` still writes the choice into the URL, so the view is still linkable.
+ */
 function graphCard(value) {
   const card = el('section.card', null, el('header', null, el('h2', { text: 'The corridor graph' })))
   const nodes = chainNodes(value).slice(0, GRAPH_CHAINS)
@@ -341,7 +372,33 @@ function graphCard(value) {
     return card
   }
 
-  const byValue = EDGES === 'value'
+  const drawn = el('div')
+  append(
+    card,
+    localChoiceControl({
+      label: 'Edges',
+      param: 'edges',
+      value: EDGES,
+      options: [
+        { value: 'value', label: 'by value' },
+        { value: 'messages', label: 'by messages' },
+      ],
+      onChange: (next) => drawGraph(drawn, { nodes, corridors, byValue: next === 'value' }),
+    }),
+    drawn,
+  )
+  queueMicrotask(() => drawGraph(drawn, { nodes, corridors, byValue: EDGES === 'value' }))
+  return card
+}
+
+/**
+ * Everything the weighting changes: the sentence describing the encoding, the count of what the
+ * value view had to drop, the picture and the table. All of it from `corridors`, which is
+ * already in memory — nothing here fetches.
+ */
+function drawGraph(host, { nodes, corridors, byValue }) {
+  clear(host)
+
   // A corridor whose every message was unpriced has `usd === 0`, and that is "we could not
   // value any of this", not "this moved nothing". It is dropped from the value view rather
   // than drawn as a hairline at zero — and the count of what was dropped is on the card.
@@ -351,21 +408,21 @@ function graphCard(value) {
   const unvalued = byValue ? corridors.length - edges.length : 0
 
   append(
-    card,
+    host,
     el('p.note', {
       text: byValue
-        ? 'Edge width and shade are the dollars that moved along a corridor, after the exclusions below. Nodes sit on a circle in a fixed order and their size means nothing — a circle’s area is the encoding people misread, and the number is one hover away.'
+        ? 'Edge width and shade are the dollars that moved along a corridor, after the exclusions further down the page. Nodes sit on a circle in a fixed order and their size means nothing — a circle’s area is the encoding people misread, and the number is one hover away.'
         : 'Edge width and shade are the number of messages along a corridor. Nodes sit on a circle in a fixed order and their size means nothing.',
     }),
   )
 
   if (unvalued) {
     append(
-      card,
+      host,
       notice(
         'info',
         `${unvalued} of ${corridors.length} corridors carried no message we could value`,
-        'They are absent from this picture rather than drawn at zero, because "nothing we could price" and "nothing moved" are different facts and a zero-width edge would state the second. Every one of them appears in the matrix table above, with its exact message count.',
+        'They are absent from this picture rather than drawn at zero, because "nothing we could price" and "nothing moved" are different facts and a zero-width edge would state the second. Every one of them appears in the matrix table below, with its exact message count.',
       ),
     )
   }
@@ -378,12 +435,9 @@ function graphCard(value) {
 
   const plot = el('div.plot')
   const table = el('div')
-  append(card, plot, table)
-  queueMicrotask(() => {
-    flowGraph(plot, { nodes, edges, groups, format: byValue ? money : formatCount, unit: byValue ? 'USD' : 'messages' })
-    flowTable(table, { nodes, edges, format: byValue ? exactUsd : formatCount, unit: byValue ? 'USD' : 'Messages', countLabel: 'Priced' })
-  })
-  return card
+  append(host, plot, table)
+  flowGraph(plot, { nodes, edges, groups, format: byValue ? money : formatCount, unit: byValue ? 'USD' : 'messages' })
+  flowTable(table, { nodes, edges, format: byValue ? exactUsd : formatCount, unit: byValue ? 'USD' : 'Messages', countLabel: 'Priced' })
 }
 
 /* ------------------------------------------------------------------------------ value ---- */
@@ -812,15 +866,10 @@ renderPage({
       options: [7, 14, 30, 90].map((n) => ({ value: n, label: `${n}d` })),
       hint: 'Summary and route figures cap at 30 days (720 hours), which is Dotlake’s limit. The row-level value read caps at 10,000 messages — about a fortnight — and says on the page how much of the window it reached.',
     }),
-    choiceControl({
-      label: 'Corridor graph',
-      param: 'edges',
-      value: EDGES,
-      options: [
-        { value: 'value', label: 'by value' },
-        { value: 'messages', label: 'by messages' },
-      ],
-    }),
+    // Network and Window and nothing else. Both are read by `load()`, so both cost a re-read
+    // of Dotlake — which is what a control in this row promises. The graph's edge weighting
+    // was here and did not belong: it changes one card, from data already in memory, and it
+    // now lives on that card. See `graphCard`.
   ],
   load,
   render,

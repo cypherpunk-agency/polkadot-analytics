@@ -12,6 +12,14 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* Two sticky bars sit above the page — the site header, and a dashboard's control row. So
+     anything scrolled to, a focused control or a fragment link, has to clear both or it lands
+     underneath them and reads as "nothing happened". Both heights are measured and published
+     by `measureStickyChrome()` in design/page.js; each is 0 until a page publishes it.
+     The extra step is for the focus ring, which is drawn 4px OUTSIDE the box it belongs to:
+     landing a focused control exactly flush with the bar clips the only mark that says where
+     the keyboard is. */
+  scroll-padding-top: calc(var(--head-h, 0px) + var(--controls-h, 0px) + var(--s2));
 }
 
 body {
@@ -304,6 +312,86 @@ kbd {
 .theme-btn:hover {
   color: var(--ink);
   border-color: var(--rule-strong);
+}
+
+/* The selected option in a control row. Hangs off the attribute rather than a class, for the
+   same reason the nav does: the accessible state and the visible state cannot then disagree. */
+.theme-btn[aria-current] {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+/* ── the control row ──────────────────────────────────────────────────────────────────────
+ *
+ * The settings a dashboard is read through. They STAY PUT: a page here is several screens
+ * long — /xcm/ is about 6,800px at 1280 — and a control you have to scroll back to the top to
+ * reach is one nobody uses twice.
+ *
+ * `--head-h` is measured, not declared, and design/page.js explains why: the header wraps on a
+ * narrow screen, so it is 53px at 1280 and 143px at 390, and any offset written down here
+ * would be right at exactly one width.
+ *
+ * The bar never changes height. That is a constraint, not a preference — a sticky element's
+ * flow box is the box it paints, so a bar that compacted when it stuck would shift everything
+ * below it at the moment the reader scrolled past. It is born compact instead: the hints come
+ * out into `.control-hints` underneath, and what is left is one line of buttons per control.
+ */
+
+.controls-bar {
+  position: sticky;
+  top: var(--head-h, 0px);
+  /* Under the site header (10). Above a chart tooltip (5), which is transient and would
+     otherwise paint across a control that is not. */
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2) var(--s5);
+  padding-block: var(--s3);
+  /* Matches the header exactly: content has to scroll UNDER this, and a translucent bar with a
+     blur behind it is the one place on the site where that reads as chrome rather than as a
+     rendering fault. */
+  background: color-mix(in srgb, var(--plane) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: var(--border);
+}
+
+.controls-bar > .controls {
+  /* The bar's own `gap` spaces the groups; the stacking margin below is for a control a page
+     places in its own body, where there is no bar. */
+  margin-bottom: 0;
+}
+
+.control-hints {
+  padding-top: var(--s3);
+  margin-bottom: var(--s5);
+}
+
+.control-hints:empty {
+  padding-top: 0;
+}
+
+.control-hints .note {
+  display: block;
+  margin-top: 0;
+}
+
+.control-hints .note + .note {
+  margin-top: var(--s2);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-bottom: var(--s5);
+}
+
+/* Inside a control row these are parts of one line, not blocks with their own rhythm. */
+.controls .eyebrow,
+.controls .note {
+  margin: 0;
 }
 
 /* ── page head ────────────────────────────────────────────────────────────────────────── */

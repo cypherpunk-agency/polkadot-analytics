@@ -101,8 +101,12 @@ That is worth stating plainly, because the list is so short and because it used 
 > refuses to start because a volume is missing is a worse outage than a site with two of
 > thirty-seven endpoints down.
 >
-> The consequence, stated plainly, because it happened: **`/netflows/` and `hydration/swaps-daily`
-> return 503 for every visitor** in that state. It shipped that way on 2026-08-20 and nothing went
+> The consequence, stated plainly, because it happened: **the `/netflows/` page and the
+> `/api/hydration/swaps-daily` endpoint return 503 for every visitor** in that state. Note the two
+> shapes — one is a page, the other is an API path. An earlier draft of this line listed them as
+> `/netflows/` and `hydration/swaps-daily` side by side, which reads as two pages, and someone
+> duly tried `/hydration/swaps-daily` and got a 404. There is no such page; `swaps-daily` is a job
+> operation and lives under `/api/`. It shipped that way on 2026-08-20 and nothing went
 > red, which is the real lesson here — **an image that boots and serves is not evidence that the
 > volume is there.** `/api/health` reports `store.available`; CI now asserts it in both directions.
 >
@@ -319,9 +323,15 @@ What is still owed:
 
 ## The volume, and the change an operator has to make
 
-**This repository cannot make this change.** The deploy workflow's last step is
-`sudo /usr/local/bin/deploy-service polkadot-analytics <digest>`, which recreates a service defined
-in a compose file **on the VM**. That file is not in this repository and is not reachable from it.
+**This repository cannot make this change, but the file is not a mystery.** The deploy workflow's
+last step is `sudo /usr/local/bin/deploy-service polkadot-analytics <digest>`, which recreates a
+service defined in a compose file on the VM at `/mnt/pd/stack/docker-compose.yml`. That file is
+**tracked**, in the `cypherpunk-agency/server-setup` repository as `stack/docker-compose.yml`;
+find our block under the `polkadot-analytics` service key. It is a single file covering every
+service on the host, each with its own hardening posture, which is why one session editing it is
+an infra decision rather than ours — two writers is the split-brain the snapshot discipline exists
+to prevent. Infra-shape changes (volumes, resources, Caddy) go to them and turn around in minutes.
+
 Everything on our side is done: the image sets `ANALYTICS_DATA_DIR=/data`, creates `/data` owned by
 uid 1000, and CI proves the store opens when something is mounted there and degrades cleanly when
 nothing is.
@@ -333,13 +343,16 @@ What has to happen on `web-server` (`europe-west1-b`), once:
    ```yaml
    services:
      polkadot-analytics:
-       # … unchanged: image, read_only: true, mem_limit, ports …
+       # … unchanged: image, read_only: true, networks, deploy.resources.limits …
        volumes:
          - polkadot-analytics-data:/data
 
    volumes:
      polkadot-analytics-data:
    ```
+
+   Nothing is published: Caddy reverse-proxies over the shared `web` network, so this service has
+   no `ports`. Resource limits live under `deploy.resources.limits`, not `mem_limit`.
 
    A **named** volume, not a bind mount: Docker seeds a fresh named volume from the image's `/data`,
    ownership included, so the container's uid 1000 can write to it with no `chown` and no root. A
@@ -348,8 +361,12 @@ What has to happen on `web-server` (`europe-west1-b`), once:
 
 2. Keep `read_only: true`. The volume is the only writable path and that is the design.
 
-3. Cap the volume at **1 GB** if the host's storage driver supports it. Nothing enforces a size from
-   inside the container, and the measured fill rate (14–17 kB per source-day) means 1 GB is roughly
+3. **Nothing enforces 1 GB — not the app, and not the volume.** A Docker named volume here is a
+   directory on the host's data disk with no per-volume quota, and this service never deletes a
+   stored fact (decision 0006 defers eviction until storage pressure is real, and it has not been
+   implemented). So 1 GB is a sizing estimate, not a limit, and the honest control is a disk alert
+   on the host rather than a number in this document. The measured fill rate (14–17 kB per source-day)
+   means 1 GB is roughly
    160,000 source-days — but a runaway job is a runaway job.
 
 4. Redeploy, then confirm from off the box:
